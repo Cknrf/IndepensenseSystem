@@ -1,0 +1,17 @@
+[project]
+name = "indepensense"
+version = "0.1.0"
+description = "IoT wearable navigation and safety assistance system"
+requires-python = ">=3.11"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/indepensense"]
+python_files = ["test_*.py"]

@@ -1,0 +1,3 @@
+# Raspberry Pi-only runtime dependencies. Install on the Pi with:
+#   pip install -r requirements.txt -r requirements-pi.txt
+pyserial>=3.5
