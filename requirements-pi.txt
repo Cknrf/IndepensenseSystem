@@ -8,11 +8,11 @@ pyserial>=3.5
 
 # YOLOv8 object detection.
 #
-# Torch is pinned because torch>=2.7 ships its wheel with hard dependencies on
-# NVIDIA CUDA libraries (nvidia-cublas, nvidia-cudnn, ...) even on aarch64 Linux.
-# On a Pi 5 (no NVIDIA GPU) those libraries are ~3 GB of dead weight.
-# torch 2.5.1 is the latest version known to install cleanly on Pi 5 (aarch64,
-# Python 3.13) without pulling CUDA libraries.
-torch==2.5.1
-torchvision==0.20.1
+# Torch is pinned because recent torch wheels (~2.10+) ship with hard
+# dependencies on NVIDIA CUDA libraries (nvidia-cublas, nvidia-cudnn, ...) even
+# on aarch64 Linux. On a Pi 5 (no NVIDIA GPU) those libraries are ~3 GB of dead
+# weight. 2.6.0 is the oldest aarch64 cp313 wheel available and should predate
+# the CUDA-deps-as-hard-requirements packaging change.
+torch==2.6.0
+torchvision==0.21.0
 ultralytics>=8.0
