@@ -65,13 +65,10 @@ CAM/DISP 0
 
 I²C device. Will use Pi's primary I²C (I2C1).
 
-| Sensor pin | Pi physical pin | Pi GPIO  | Notes |
-|------------|-----------------|----------|-------|
-| VCC        | 1 or 17         | 3.3V     |       |
-| GND        | any GND         | GND      |       |
-| SDA        | 3               | GPIO2    | I2C1 SDA |
-| SCL        | 5               | GPIO3    | I2C1 SCL |
-| INT        | TBD             | TBD      | optional, for interrupt-driven reads |
+Pin 2 (VCC)
+Pin 9 (GND)
+Pin 3 (GPIO 2)
+Pin 5 (GPIO 3)
 
 ### Active Buzzer — STATUS: planned
 

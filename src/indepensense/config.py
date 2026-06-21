@@ -17,6 +17,10 @@ DYP_A22_PRIMARY_PORT = "/dev/ttyAMA0"
 DYP_A22_SECONDARY_PORT = "/dev/ttyAMA4"
 DYP_A22_BAUDRATE = 115200
 
+# MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus)
+MPU6050_I2C_BUS = 1
+MPU6050_ADDRESS = 0x68
+
 # Mock ultrasonic sensor — used for off-device development on macOS
 MOCK_ULTRASONIC_MIN_CM = 20.0
 MOCK_ULTRASONIC_MAX_CM = 200.0

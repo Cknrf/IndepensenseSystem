@@ -6,7 +6,7 @@ on a machine without real hardware (e.g. a Mac dev box).
 import math
 import time
 
-from indepensense.sensors.base import UltrasonicReading
+from indepensense.sensors.base import IMUReading, UltrasonicReading
 
 
 class MockUltrasonic:
@@ -22,6 +22,29 @@ class MockUltrasonic:
         midpoint = self._min + amplitude
         distance_cm = midpoint + amplitude * math.sin(2 * math.pi * (now - self._start) / self._period)
         return UltrasonicReading(distance_cm=distance_cm, timestamp=now)
+
+    def close(self) -> None:
+        pass
+
+
+class MockIMU:
+    """Mock IMU returning a still device on a level surface (gravity on +Z).
+
+    Good enough for exercising navigation/safety logic on a Mac; not realistic
+    enough to develop fall detection against — for that, replay a recorded
+    real-IMU trace (TODO when fall detection lands).
+    """
+    def read(self) -> IMUReading | None:
+        return IMUReading(
+            accel_x=0.0,
+            accel_y=0.0,
+            accel_z=1.0,
+            gyro_x=0.0,
+            gyro_y=0.0,
+            gyro_z=0.0,
+            temperature_c=25.0,
+            timestamp=time.time(),
+        )
 
     def close(self) -> None:
         pass
