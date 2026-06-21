@@ -26,6 +26,8 @@ class PiCamera:
         time.sleep(0.5)
         self._width = width
         self._height = height
+        self._encoder = None
+        self._output = None
 
     def capture(self) -> Frame:
         image = self._picam.capture_array()
@@ -35,6 +37,20 @@ class PiCamera:
             width=self._width,
             height=self._height,
         )
+
+    def start_recording(self, output_path: str) -> None:
+        """Begin recording video to `output_path`. Frame capture continues to work."""
+        from picamera2.encoders import H264Encoder
+        from picamera2.outputs import FfmpegOutput
+
+        self._encoder = H264Encoder()
+        self._output = FfmpegOutput(output_path)
+        self._picam.start_encoder(self._encoder, self._output)
+
+    def stop_recording(self) -> None:
+        self._picam.stop_encoder()
+        self._encoder = None
+        self._output = None
 
     def close(self) -> None:
         self._picam.stop()
