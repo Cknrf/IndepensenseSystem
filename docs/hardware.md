@@ -65,10 +65,10 @@ CAM/DISP 0
 
 I²C device. Will use Pi's primary I²C (I2C1).
 
-Pin 2 (VCC)
-Pin 9 (GND)
-Pin 3 (GPIO 2)
-Pin 5 (GPIO 3)
+Pin 2 (VCC)     VCC
+Pin 9 (GND)     GND
+Pin 3 (GPIO 2)  SDA
+Pin 5 (GPIO 3)  SCL
 
 ### Active Buzzer — STATUS: planned
 
