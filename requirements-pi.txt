@@ -5,3 +5,7 @@ pyserial>=3.5
 # picamera2 is NOT installable via pip — it depends on system libcamera bindings.
 # Install via apt:  sudo apt install -y python3-picamera2
 # Then create the venv with --system-site-packages so it can be imported.
+
+# YOLOv8 object detection. Pulls torch as a transitive dependency (~700 MB);
+# first install on the Pi can take 5-10 minutes.
+ultralytics>=8.0

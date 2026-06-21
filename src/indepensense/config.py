@@ -27,3 +27,7 @@ CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 15
 TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
+
+# YOLOv8 object detection
+YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8n.pt"
+YOLO_CONFIDENCE_THRESHOLD = 0.5

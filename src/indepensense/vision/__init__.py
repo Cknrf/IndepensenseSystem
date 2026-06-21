@@ -1,3 +1,3 @@
-from indepensense.vision.base import Camera, Frame
+from indepensense.vision.base import Camera, Detection, Detector, Frame
 
-__all__ = ["Camera", "Frame"]
+__all__ = ["Camera", "Detection", "Detector", "Frame"]

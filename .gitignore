@@ -29,3 +29,8 @@ htmlcov/
 # Local logs and data
 *.log
 data/
+
+# ML model weights (large binaries, downloaded on first run)
+models/
+*.pt
+*.onnx

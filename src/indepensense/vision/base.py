@@ -19,9 +19,26 @@ class Frame:
     height: int
 
 
+@dataclass(frozen=True)
+class Detection:
+    """A single object detected in a frame.
+
+    `bbox` is in pixel coordinates of the source frame as
+    (x_min, y_min, x_max, y_max).
+    """
+    class_name: str
+    confidence: float
+    bbox: tuple[int, int, int, int]
+
+
 class Camera(Protocol):
     def capture(self) -> Frame:
         """Capture a single frame. Blocks until a frame is ready."""
 
     def close(self) -> None:
         ...
+
+
+class Detector(Protocol):
+    def detect(self, frame: Frame) -> list[Detection]:
+        """Run inference on the frame and return detected objects."""
