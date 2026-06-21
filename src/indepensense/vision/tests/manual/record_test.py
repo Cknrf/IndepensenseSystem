@@ -9,7 +9,6 @@ filename based on the current time (e.g. `March-06-2026_14-32-05.mp4`).
 """
 import time
 from datetime import datetime
-from pathlib import Path
 
 from indepensense.config import (
     CAMERA_FPS,
@@ -23,11 +22,10 @@ DURATION_SECONDS = 5
 
 
 def main():
-    recording_dir = Path(TEST_RECORDING_DIR)
-    recording_dir.mkdir(parents=True, exist_ok=True)
+    TEST_RECORDING_DIR.mkdir(parents=True, exist_ok=True)
 
     filename = datetime.now().strftime("%B-%d-%Y_%H-%M-%S") + ".mp4"
-    output_path = recording_dir / filename
+    output_path = TEST_RECORDING_DIR / filename
 
     camera = PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
     print(f"Recording {DURATION_SECONDS}s to {output_path}")

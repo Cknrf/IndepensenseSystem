@@ -8,6 +8,9 @@ Hardware **protocol** constants that are fixed by the chip itself (frame
 layout, header byte, checksum formula) stay inside their driver module — they
 are not configuration, they are part of the chip's contract.
 """
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # DYP-A22 ultrasonic sensors — UART wiring on the Raspberry Pi 5
 DYP_A22_PRIMARY_PORT = "/dev/ttyAMA0"
@@ -23,4 +26,4 @@ MOCK_ULTRASONIC_PERIOD_S = 5.0
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS = 15
-TEST_RECORDING_DIR = "data/test/recordings/"
+TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
