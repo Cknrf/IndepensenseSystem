@@ -1,4 +1,4 @@
-"""Manual hardware test: read distance from one DYP-A22 on /dev/ttyAMA0.
+"""Manual hardware test: read distance from one DYP-A22.
 
 Run on a Raspberry Pi 5 with the sensor wired to the GPIO UART pins.
 Run from repo root with:
@@ -6,14 +6,13 @@ Run from repo root with:
 """
 import time
 
+from indepensense.config import DYP_A22_BAUDRATE, DYP_A22_PRIMARY_PORT
 from indepensense.sensors.dyp_a22 import DYPA22
-
-PORT = "/dev/ttyAMA0"
 
 
 def main():
-    sensor = DYPA22(PORT)
-    print(f"Reading DYP-A22 on {PORT}. Ctrl-C to stop.")
+    sensor = DYPA22(DYP_A22_PRIMARY_PORT, baudrate=DYP_A22_BAUDRATE)
+    print(f"Reading DYP-A22 on {DYP_A22_PRIMARY_PORT}. Ctrl-C to stop.")
     try:
         while True:
             reading = sensor.read()
