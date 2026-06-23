@@ -105,6 +105,9 @@ Software Stack
 - Edge Device OS: Raspberry Pi OS
 - Hardware Interface: GPIO, I2C, UART
 
+External Services (run locally on the Raspberry Pi, see `docs/` for setup)
+- GraphHopper — offline pedestrian routing (port 8989). See `docs/graphhopper.md`.
+- Photon — offline geocoding, place-name to coordinates and reverse (port 2322). See `docs/photon.md`.
 
 System Workflow
 - Sensors continuously collect environmental data
@@ -115,3 +118,22 @@ System Workflow
 - Feedback system triggers vibration/audio output
 - Data is sent to backend for guardian monitoring
 - Alerts are triggered if emergency conditions are detected
+
+We don't need to do the swapping stuff, let's make it work/setup first before optimizing (if there is actual slowdown)
+
+cknrf@cknrf:~ $ free -h
+               total        used        free      shared  buff/cache   available
+Mem:           7.9Gi       493Mi       7.0Gi        45Mi       506Mi       7.4Gi
+Swap:          2.0Gi          0B       2.0Gi
+cknrf@cknrf:~ $ cat /etc/os-release | grep PRETTY                                                                                                                               
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+cknrf@cknrf:~ $  df -h /     
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/mmcblk0p2  246G   13G  223G   6% /
+cknrf@cknrf:~ $ 
+
+Since, I will also need photon geocoding search engine, for transferring the coordinates to an actual location known by graphhopper
+should I just download java 21 instead of 17, since it is the requirement of the photon
+
+Anyway, I haven't done any single of the steps yet, let me know if there would changes in it
+
