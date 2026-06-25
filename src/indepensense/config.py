@@ -40,3 +40,9 @@ YOLO_CONFIDENCE_THRESHOLD = 0.5
 # When running from a Mac against the Pi, replace 127.0.0.1 with the Pi's LAN IP.
 GRAPHHOPPER_URL = "http://127.0.0.1:8989"
 PHOTON_URL = "http://127.0.0.1:2322"
+
+# Voice — see docs/voice.md for model downloads
+PIPER_VOICE_PATH = PROJECT_ROOT / "models" / "voices" / "en_US-lessac-medium.onnx"
+WHISPER_MODEL_DIR = PROJECT_ROOT / "models" / "whisper"
+WHISPER_MODEL_SIZE = "tiny"
+VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
