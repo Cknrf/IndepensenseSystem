@@ -35,3 +35,8 @@ TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 # YOLOv8 object detection
 YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8n.pt"
 YOLO_CONFIDENCE_THRESHOLD = 0.5
+
+# Local routing / geocoding services (see docs/graphhopper.md, docs/photon.md).
+# When running from a Mac against the Pi, replace 127.0.0.1 with the Pi's LAN IP.
+GRAPHHOPPER_URL = "http://127.0.0.1:8989"
+PHOTON_URL = "http://127.0.0.1:2322"
