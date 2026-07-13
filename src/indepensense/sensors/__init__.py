@@ -1,4 +1,6 @@
 from indepensense.sensors.base import (
+    GPSFix,
+    GPSSensor,
     IMUReading,
     IMUSensor,
     UltrasonicReading,
@@ -6,6 +8,8 @@ from indepensense.sensors.base import (
 )
 
 __all__ = [
+    "GPSFix",
+    "GPSSensor",
     "IMUReading",
     "IMUSensor",
     "UltrasonicReading",

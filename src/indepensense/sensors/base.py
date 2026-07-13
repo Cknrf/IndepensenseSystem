@@ -46,3 +46,32 @@ class IMUSensor(Protocol):
 
     def close(self) -> None:
         ...
+
+
+@dataclass(frozen=True)
+class GPSFix:
+    """A GPS position derived by combining NMEA sentences from the receiver.
+
+    Named "fix" rather than "reading" because that is the standard GPS term
+    for a computed position — a fix is what a receiver produces when enough
+    satellites are locked to solve for location. Fields sourced only from
+    RMC or GGA can be None if that sentence has not been seen recently.
+    """
+    lat: float
+    lon: float
+    altitude_m: float | None
+    speed_knots: float | None
+    course_deg: float | None
+    satellites: int | None
+    hdop: float | None
+    fix_quality: int              # 0=no fix, 1=GPS, 2=DGPS, ...
+    utc_time: str | None          # HHMMSS.sss from the source sentence
+    timestamp: float              # local time.time() when the fix was assembled
+
+
+class GPSSensor(Protocol):
+    def read(self) -> GPSFix | None:
+        """Return the latest available fix, or None if no fix yet or bus error."""
+
+    def close(self) -> None:
+        ...

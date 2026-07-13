@@ -6,7 +6,7 @@ on a machine without real hardware (e.g. a Mac dev box).
 import math
 import time
 
-from indepensense.sensors.base import IMUReading, UltrasonicReading
+from indepensense.sensors.base import GPSFix, IMUReading, UltrasonicReading
 
 
 class MockUltrasonic:
@@ -43,6 +43,35 @@ class MockIMU:
             gyro_y=0.0,
             gyro_z=0.0,
             temperature_c=25.0,
+            timestamp=time.time(),
+        )
+
+    def close(self) -> None:
+        pass
+
+
+class MockGPS:
+    """Mock GPS returning a fixed position — Manila (Rizal Park) by default.
+
+    Enough to exercise navigation/routing code on a Mac without the SIM7600
+    hardware. Not intended for realistic movement simulation — replay a real
+    NMEA log if that becomes needed.
+    """
+    def __init__(self, lat: float = 14.5824, lon: float = 120.9760):
+        self._lat = lat
+        self._lon = lon
+
+    def read(self) -> GPSFix | None:
+        return GPSFix(
+            lat=self._lat,
+            lon=self._lon,
+            altitude_m=15.0,
+            speed_knots=0.0,
+            course_deg=None,
+            satellites=8,
+            hdop=1.2,
+            fix_quality=1,
+            utc_time=None,
             timestamp=time.time(),
         )
 

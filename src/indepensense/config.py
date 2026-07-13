@@ -21,6 +21,11 @@ DYP_A22_BAUDRATE = 115200
 MPU6050_I2C_BUS = 1
 MPU6050_ADDRESS = 0x68
 
+# SIM7600G-H — GPS serial port. ModemManager labels this as (gps) in
+# `mmcli -m <id>`. Enable GPS with `AT+CGPS=1` on /dev/ttyUSB2 first.
+SIM7600_GPS_PORT = "/dev/ttyUSB1"
+SIM7600_GPS_BAUDRATE = 115200
+
 # Mock ultrasonic sensor — used for off-device development on macOS
 MOCK_ULTRASONIC_MIN_CM = 20.0
 MOCK_ULTRASONIC_MAX_CM = 200.0
