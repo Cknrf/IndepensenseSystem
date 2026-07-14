@@ -51,3 +51,11 @@ PIPER_VOICE_PATH = PROJECT_ROOT / "models" / "voices" / "en_US-lessac-medium.onn
 WHISPER_MODEL_DIR = PROJECT_ROOT / "models" / "whisper"
 WHISPER_MODEL_SIZE = "tiny"
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
+
+# Fall detection thresholds (starting from the literature; tune empirically)
+FALL_FREEFALL_THRESHOLD_G = 0.5
+FALL_FREEFALL_MIN_DURATION_S = 0.1
+FALL_IMPACT_THRESHOLD_G = 2.0
+FALL_IMPACT_WINDOW_S = 0.5
+FALL_STILLNESS_MAX_STDDEV_G = 0.15
+FALL_STILLNESS_DURATION_S = 2.0

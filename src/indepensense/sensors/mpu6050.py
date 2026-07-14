@@ -1,7 +1,7 @@
 """MPU6050 6-axis IMU driver over I²C.
 
 Register map (datasheet §3, §4):
-    0x1C  ACCEL_CONFIG   bits 4:3 select accel full-scale range (default ±2 g)
+    0x1C  ACCEL_CONFIG   bits 4:3 select accel full-scale range
     0x1B  GYRO_CONFIG    bits 4:3 select gyro full-scale range (default ±250 °/s)
     0x3B  ACCEL_XOUT_H   first byte of a 14-byte block:
                          6 bytes accel (X,Y,Z), 2 bytes temp, 6 bytes gyro
@@ -9,6 +9,11 @@ Register map (datasheet §3, §4):
                          device must be woken before any read.
 
 All measurement registers are big-endian 16-bit signed (two's complement).
+
+Accel range configured to ±8 g (AFS_SEL=2). The chip default is ±2 g, but fall
+impacts routinely peak above 2 g and clip at that range. ±8 g captures accurate
+peak amplitudes; the resulting resolution (~0.244 mg / LSB) is still finer than
+the thresholds our fall-detection algorithm uses.
 """
 import time
 
@@ -17,11 +22,15 @@ from indepensense.sensors.base import IMUReading
 MPU6050_DEFAULT_ADDRESS = 0x68
 
 _PWR_MGMT_1 = 0x6B
+_ACCEL_CONFIG = 0x1C
 _ACCEL_XOUT_H = 0x3B
 _DATA_BLOCK_LENGTH = 14
 
-# Default full-scale sensitivities (LSB per unit) — see datasheet §6.2.
-_ACCEL_SENSITIVITY = 16384.0   # LSB / g    at AFS_SEL=0 (±2 g)
+# Accel full-scale range selection. AFS_SEL lives in bits 4:3 of ACCEL_CONFIG.
+_ACCEL_CONFIG_8G = 0x10        # AFS_SEL = 0b10 -> ±8 g
+
+# Full-scale sensitivities (LSB per unit) — datasheet §6.2.
+_ACCEL_SENSITIVITY = 4096.0    # LSB / g    at AFS_SEL=2 (±8 g)
 _GYRO_SENSITIVITY = 131.0      # LSB / dps  at FS_SEL=0  (±250 °/s)
 
 
@@ -56,6 +65,8 @@ class MPU6050:
         self._address = address
         # Clear the SLEEP bit so the device starts sampling.
         self._bus.write_byte_data(self._address, _PWR_MGMT_1, 0x00)
+        # Widen accel range to ±8 g for fall-detection headroom.
+        self._bus.write_byte_data(self._address, _ACCEL_CONFIG, _ACCEL_CONFIG_8G)
         time.sleep(0.1)
 
     def read(self) -> IMUReading | None:
