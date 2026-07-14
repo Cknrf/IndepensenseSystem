@@ -126,10 +126,19 @@ def test_impact_without_freefall_does_not_trigger():
 
 def test_freefall_and_impact_but_no_stillness_does_not_trigger():
     """User falls but catches themselves — freefall + impact but keeps moving after."""
-    # Post-impact behavior is high-variance motion, not stillness.
+    # Post-impact behaviour is high-variance motion, so magnitudes must vary
+    # too — not just axes. An earlier version of this test alternated the
+    # sign of a single axis, which produced constant magnitude and the
+    # detector correctly (but confusingly) reported stillness.
     dt = 1.0 / SAMPLE_HZ
+    rng = random.Random(11)
     post_motion = [
-        _make_reading(1.35 + i * dt, 1.5 * ((-1) ** i), 0.3, 1.0)
+        _make_reading(
+            1.35 + i * dt,
+            rng.uniform(-1.5, 1.5),
+            rng.uniform(-1.5, 1.5),
+            rng.uniform(-1.5, 1.5),
+        )
         for i in range(int(3.0 * SAMPLE_HZ))
     ]
     readings = (
