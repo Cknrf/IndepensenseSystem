@@ -23,7 +23,7 @@ from indepensense.voice.audio import play, record
 from indepensense.voice.piper import PiperTTS
 from indepensense.voice.whisper import FasterWhisperSTT
 
-RECORDING_DURATION_S = 10.0
+RECORDING_DURATION_S = 25.0
 
 
 def main():
