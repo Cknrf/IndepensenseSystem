@@ -10,24 +10,33 @@ you can copy it back to a Mac (or play with `aplay` on the Pi) and listen.
 import time
 from datetime import datetime
 
-from indepensense.config import PIPER_VOICE_PATH, VOICE_TEST_DIR
+from indepensense.config import PIPER_VOICES, SYSTEM_LANGUAGE, VOICE_TEST_DIR
 from indepensense.voice.piper import PiperTTS
 
-SAMPLE_TEXT = (
+SAMPLE_TEXT_EN = (
     "The quick brown fox jumps over the lazy dog. "
     "Obstacle detected three meters ahead. "
     "Turn left in twenty meters."
 )
 
+SAMPLE_TEXT_TL = (
+    "Magandang umaga. May balakid sa harap. "
+    "Lumiko ka sa kaliwa sa loob ng dalawampung metro."
+)
+
 
 def main():
-    output_path = VOICE_TEST_DIR / (datetime.now().strftime("%B-%d-%Y_%H-%M-%S") + "_tts.wav")
-    print(f"Loading Piper voice from {PIPER_VOICE_PATH}")
-    tts = PiperTTS(voice_path=PIPER_VOICE_PATH)
+    print(f"Loading Piper voices: {sorted(PIPER_VOICES)}")
+    tts = PiperTTS(voices=PIPER_VOICES)
 
-    print(f"Synthesizing {len(SAMPLE_TEXT)} chars...")
+    text = SAMPLE_TEXT_EN if SYSTEM_LANGUAGE == "en" else SAMPLE_TEXT_TL
+    output_path = VOICE_TEST_DIR / (
+        datetime.now().strftime("%B-%d-%Y_%H-%M-%S") + f"_tts_{SYSTEM_LANGUAGE}.wav"
+    )
+
+    print(f"Synthesizing {len(text)} chars in '{SYSTEM_LANGUAGE}'...")
     t0 = time.time()
-    tts.synthesize(SAMPLE_TEXT, output_path)
+    tts.synthesize(text, output_path, language=SYSTEM_LANGUAGE)
     elapsed = time.time() - t0
 
     print(f"Done in {elapsed:.2f}s. WAV saved to {output_path}")

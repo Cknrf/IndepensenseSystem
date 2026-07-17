@@ -30,5 +30,14 @@ class STTEngine(Protocol):
 
 
 class TTSEngine(Protocol):
-    def synthesize(self, text: str, output_path: Path) -> None:
-        """Render text to a WAV file at the given path."""
+    def synthesize(
+        self,
+        text: str,
+        output_path: Path,
+        language: str | None = None,
+    ) -> None:
+        """Render text to a WAV file at the given path.
+
+        `language` picks which loaded voice to use. If None, the engine's
+        default voice is used.
+        """

@@ -46,11 +46,24 @@ YOLO_CONFIDENCE_THRESHOLD = 0.5
 GRAPHHOPPER_URL = "http://127.0.0.1:8989"
 PHOTON_URL = "http://127.0.0.1:2322"
 
-# Voice — see docs/voice.md for model downloads
-PIPER_VOICE_PATH = PROJECT_ROOT / "models" / "voices" / "en_US-lessac-medium.onnx"
+# Voice — see docs/voice.md for model downloads.
+#
+# Piper does not yet ship a native Filipino/Tagalog voice. As a workaround the
+# Indonesian voice `id_ID-news_tts-medium` is used to synthesise Tagalog text
+# (both are Austronesian languages with matching vowel systems). Language
+# switching between English and Tagalog is not wired up yet — the multi-voice
+# structure is in place so it can be enabled later without refactoring.
+PIPER_VOICES = {
+    "en": PROJECT_ROOT / "models" / "voices" / "en_US-lessac-medium.onnx",
+    "tl": PROJECT_ROOT / "models" / "voices" / "id_ID-news_tts-medium.onnx",
+}
 WHISPER_MODEL_DIR = PROJECT_ROOT / "models" / "whisper"
 WHISPER_MODEL_SIZE = "tiny"
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
+
+# Active system language. Currently fixed at build time; will become a
+# runtime setting once guardian-dashboard control is implemented.
+SYSTEM_LANGUAGE = "en"
 
 # Fall detection thresholds (starting from the literature; tune empirically)
 FALL_FREEFALL_THRESHOLD_G = 0.5

@@ -11,7 +11,12 @@ from indepensense.voice.base import Transcript, TranscriptSegment
 
 
 class MockTTS:
-    def synthesize(self, text: str, output_path: Path) -> None:
+    def synthesize(
+        self,
+        text: str,
+        output_path: Path,
+        language: str | None = None,
+    ) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         # 0.1 s of silence at 16 kHz mono — enough for downstream code to
         # treat the file as a valid WAV without taking up real space.
