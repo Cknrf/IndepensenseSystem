@@ -7,6 +7,10 @@ smbus2>=0.4
 # Install via apt:  sudo apt install -y python3-picamera2
 # Then create the venv with --system-site-packages so it can be imported.
 
+# sounddevice + soundfile (in requirements.txt) wrap system C libraries.
+# The Python packages install fine via pip, but the underlying C libraries
+# must be present:  sudo apt install -y libportaudio2 libsndfile1
+
 # YOLOv8 object detection.
 #
 # Torch is pinned because recent torch wheels (~2.10+) ship with hard

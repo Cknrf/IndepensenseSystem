@@ -55,7 +55,21 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 pip install -r requirements.txt
 ```
 
-This installs `piper-tts` and `faster-whisper` plus their dependencies.
+This installs `piper-tts`, `faster-whisper`, `sounddevice`, and `soundfile`
+plus their transitive dependencies.
+
+### System libraries required on the Pi
+
+`sounddevice` and `soundfile` are thin wrappers around C libraries that pip
+does not install. Add them via apt (one-time per Pi):
+
+```bash
+sudo apt install -y libportaudio2 libsndfile1
+```
+
+Without `libportaudio2` you will see `OSError: PortAudio library not found`
+when importing `sounddevice`. Without `libsndfile1` most WAV reads/writes
+will fail.
 
 ## Download the Piper voices
 
