@@ -4,3 +4,7 @@ requests>=2.32
 # Voice
 piper-tts>=1.2
 faster-whisper>=1.0
+
+# Live audio I/O — PortAudio + libsndfile Python bindings
+sounddevice>=0.4
+soundfile>=0.12

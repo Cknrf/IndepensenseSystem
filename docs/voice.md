@@ -101,31 +101,64 @@ First run of `stt_test.py` will pause for ~30-60 s while it downloads the
 
 ## Test it
 
-**TTS:**
+**TTS (file-based):**
 
 ```bash
 python -m indepensense.voice.tests.manual.tts_test
 ```
 
-Synthesizes a sample sentence and writes
-`data/test/voice/<timestamp>_tts.wav`. Copy to your Mac (`scp ...`) or play
-locally (`aplay data/test/voice/*_tts.wav` on the Pi if audio output is
+Synthesises a sample sentence in the current `SYSTEM_LANGUAGE` and writes
+`data/test/voice/<timestamp>_tts_<lang>.wav`. Copy to your Mac (`scp ...`) or
+play locally (`aplay data/test/voice/*_tts.wav` on the Pi if audio output is
 configured).
 
-**STT (TTS → STT roundtrip):**
+**STT (file-based, TTS → STT roundtrip):**
 
 ```bash
 python -m indepensense.voice.tests.manual.stt_test
 ```
 
 Without arguments, transcribes the most recent file in `data/test/voice/` —
-giving you a synth-then-transcribe roundtrip check.
+giving you a synth-then-transcribe roundtrip check without needing a
+microphone.
 
-You can also pass an explicit WAV path:
+**End-to-end live audio (mic → STT → TTS → speaker):**
 
 ```bash
-python -m indepensense.voice.tests.manual.stt_test path/to/your/recording.wav
+python -m indepensense.voice.tests.manual.echo_test
 ```
+
+Prompts you to press Enter, records 10 seconds from the OS default input
+device, transcribes it, synthesises the transcript back through Piper, and
+plays the echo through the default output. Whatever audio device PipeWire
+currently routes to (built-in audio, USB headset, paired Bluetooth
+headphones) will be used automatically.
+
+### Bluetooth audio troubleshooting
+
+If echo playback goes to the wrong device, check the PipeWire default:
+
+```bash
+wpctl status
+```
+
+Look at the `Sinks` (output) and `Sources` (input) sections. The default is
+marked with `*`. To change the default output:
+
+```bash
+wpctl set-default <ID>     # ID column from `wpctl status`
+```
+
+**AirPods and other Bluetooth headsets** appear as one device with two
+possible profiles: A2DP (high-quality stereo output, no mic) and HSP/HFP
+(mono mic + tinny mono output). Linux picks HSP automatically when a mic is
+needed. If the mic returns silence in the echo test, force HSP explicitly:
+
+```bash
+wpctl set-profile <device-id> handsfree_head_unit
+```
+
+Device ID is from the `Devices` section of `wpctl status`.
 
 ## Language switching (not yet wired)
 
