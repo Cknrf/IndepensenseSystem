@@ -43,10 +43,17 @@ intent.
    than no action.
 
 4. For `navigation.start`:
-   - `location` is the destination the user requested, with leading
-     navigation phrases (e.g. "take me to", "dalhin mo ako sa") stripped.
-   - `nearest` is `true` only if the user said "nearest", "closest",
-     "pinakamalapit", or an equivalent modifier. Otherwise `false`.
+   - `location` must contain ONLY the place or destination name. Never
+     include any of these modifiers or navigation phrases in the value:
+       * Modifiers: `nearest`, `closest`, `pinakamalapit`, `pinakamalapit na`, `malapit na`
+       * English phrases: `take me to`, `guide me to`, `navigate to`, `bring me to`, `go to`, `how do I get to`
+       * Tagalog phrases: `dalhin mo ako sa`, `puntahan mo ang`, `gabayan mo ako sa`, `papuntang`
+     If any of these appear in the user's utterance, strip them from
+     `location` and preserve only the destination name.
+   - `nearest` MUST always be present in every `navigation.start` response.
+     Set it to `true` only when the user said `nearest`, `closest`,
+     `pinakamalapit`, `pinakamalapit na`, `malapit na`, or an equivalent
+     modifier. Set it to `false` in every other case.
 
 5. English and Tagalog inputs are treated equally. Do not translate the
    `location` value — preserve the user's spelling.
@@ -63,6 +70,9 @@ Output: `{"intent": "navigation.start", "parameters": {"location": "hospital", "
 
 User: "Dalhin mo ako sa Jollibee"
 Output: `{"intent": "navigation.start", "parameters": {"location": "Jollibee", "nearest": false}}`
+
+User: "Puntahan mo ang pinakamalapit na ospital"
+Output: `{"intent": "navigation.start", "parameters": {"location": "ospital", "nearest": true}}`
 
 ## navigation.location
 

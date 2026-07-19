@@ -119,31 +119,47 @@ def query(text: str) -> tuple[float, dict | None, str]:
     return elapsed, parsed, raw
 
 
-def matches_expected(
+def score(
     result: dict | None,
     expected_intent: str,
     expected_slots: dict,
-) -> bool:
-    """Check whether the model's output has the expected intent + required slots.
+) -> tuple[bool, bool | None]:
+    """Score a model output against expected values.
 
-    Extra slots the model adds are tolerated. String comparisons are case-
-    insensitive. Missing required slots or wrong intent fail.
+    Returns (intent_correct, slots_correct):
+      - intent_correct: True if the intent matches exactly.
+      - slots_correct:  True if every expected slot key is present with the
+                        expected value. None when there are no expected slots
+                        (i.e. slot correctness is not measured for that case).
+
+    Extra slots the model returns are tolerated on any intent — the executor
+    normalises them (e.g. drops all params for `unknown`). String comparisons
+    are case-insensitive.
     """
     if result is None:
-        return False
-    if result.get("intent") != expected_intent:
-        return False
+        return False, (False if expected_slots else None)
+
+    intent_correct = result.get("intent") == expected_intent
+
+    if not expected_slots:
+        return intent_correct, None
+
     got_slots = result.get("parameters") or {}
+    slots_correct = True
     for key, want in expected_slots.items():
         if key not in got_slots:
-            return False
+            slots_correct = False
+            break
         got = got_slots[key]
         if isinstance(want, str) and isinstance(got, str):
             if want.lower() != got.lower():
-                return False
+                slots_correct = False
+                break
         elif got != want:
-            return False
-    return True
+            slots_correct = False
+            break
+
+    return intent_correct, slots_correct
 
 
 def main():
@@ -159,25 +175,44 @@ def main():
 
     total_time = 0.0
     parse_failures = 0
-    correct = 0
-    misses: list[tuple[str, str, str]] = []   # (input, expected_intent, got_summary)
+    intent_correct_count = 0
+    slots_correct_count = 0
+    slots_measured_count = 0
+    combined_correct_count = 0
+    misses: list[tuple[str, str, dict, str]] = []   # (input, expected_intent, expected_slots, got)
 
     for i, (text, expected_intent, expected_slots) in enumerate(TEST_CASES, 1):
         elapsed, parsed, raw = query(text)
         total_time += elapsed
+
         if parsed is None:
             parse_failures += 1
-            marker = "❌ JSON parse failed"
+            intent_ok = False
+            slots_ok = False if expected_slots else None
             summary = raw[:80]
-            is_correct = False
+            marker = "❌ JSON parse failed"
         else:
             summary = json.dumps(parsed, ensure_ascii=False)
-            is_correct = matches_expected(parsed, expected_intent, expected_slots)
-            marker = "✓ correct" if is_correct else "✗ WRONG"
-        if is_correct:
-            correct += 1
+            intent_ok, slots_ok = score(parsed, expected_intent, expected_slots)
+            if intent_ok and (slots_ok is None or slots_ok):
+                marker = "✓ correct"
+            elif intent_ok:
+                marker = "△ intent ok, slots WRONG"
+            else:
+                marker = "✗ WRONG"
+
+        if intent_ok:
+            intent_correct_count += 1
+        if slots_ok is not None:
+            slots_measured_count += 1
+            if slots_ok:
+                slots_correct_count += 1
+        combined = intent_ok and (slots_ok is None or slots_ok)
+        if combined:
+            combined_correct_count += 1
         else:
-            misses.append((text, expected_intent, summary))
+            misses.append((text, expected_intent, expected_slots, summary))
+
         print(f"[{i:2d}/{len(TEST_CASES)}] ({elapsed:5.2f}s) {marker}")
         print(f"    in:       {text}")
         print(f"    expected: intent={expected_intent}, slots={expected_slots}")
@@ -188,7 +223,14 @@ def main():
     print(f"Summary for model: {MODEL}")
     print(f"  Total queries:       {total}")
     print(f"  JSON parse failures: {parse_failures}")
-    print(f"  Correct:             {correct}/{total} ({100 * correct / total:.1f}%)")
+    print(f"  Intent accuracy:     {intent_correct_count}/{total} "
+          f"({100 * intent_correct_count / total:.1f}%)")
+    if slots_measured_count:
+        print(f"  Slot accuracy:       {slots_correct_count}/{slots_measured_count} "
+              f"({100 * slots_correct_count / slots_measured_count:.1f}%) "
+              f"[measured on cases with expected slots]")
+    print(f"  Combined (both ok):  {combined_correct_count}/{total} "
+          f"({100 * combined_correct_count / total:.1f}%)")
     print(f"  Cold query time:     {cold_elapsed:.2f}s")
     print(f"  Total time (warm):   {total_time:.1f}s")
     print(f"  Avg per query:       {total_time / total:.2f}s")
@@ -196,11 +238,11 @@ def main():
 
     if misses:
         print()
-        print(f"Misclassifications ({len(misses)}):")
-        for text, expected, got in misses:
+        print(f"Failures ({len(misses)}):")
+        for text, expected_intent, expected_slots, got in misses:
             print(f"  '{text}'")
-            print(f"    expected intent: {expected}")
-            print(f"    got:             {got}")
+            print(f"    expected: intent={expected_intent}, slots={expected_slots}")
+            print(f"    got:      {got}")
 
 
 if __name__ == "__main__":
