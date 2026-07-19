@@ -81,3 +81,12 @@ FALL_IMPACT_THRESHOLD_G = 2.0
 FALL_IMPACT_WINDOW_S = 0.5
 FALL_STILLNESS_MAX_STDDEV_G = 0.15
 FALL_STILLNESS_DURATION_S = 2.0
+
+# Local LLM used for natural-language intent parsing. See prompts/nlu_system.md
+# for the system prompt and docs/voice.md → intent parser section for setup.
+# Qwen 2.5 1.5B Instruct was chosen empirically over 3B: 100% intent accuracy
+# on our 30-case benchmark, ~2.8 s per query on Pi 5, ~1.4 GB RAM footprint.
+OLLAMA_URL = "http://127.0.0.1:11434"
+NLU_MODEL = "qwen2.5:1.5b-instruct"
+NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
+NLU_TIMEOUT_S = 20.0
