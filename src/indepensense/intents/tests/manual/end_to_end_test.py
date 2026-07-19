@@ -25,6 +25,7 @@ from indepensense.config import (
     NLU_MODEL,
     NLU_PROMPT_PATH,
     NLU_TIMEOUT_S,
+    NLU_WARMUP_TIMEOUT_S,
     OLLAMA_URL,
     PHOTON_URL,
     PIPER_VOICES,
@@ -67,6 +68,8 @@ def main():
         ollama_url=OLLAMA_URL,
         prompt_path=NLU_PROMPT_PATH,
         timeout_s=NLU_TIMEOUT_S,
+        warmup=True,
+        warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
     )
     print("  Connecting to GraphHopper + Photon...")
     router = GraphHopperRouter(base_url=GRAPHHOPPER_URL)

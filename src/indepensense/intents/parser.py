@@ -4,6 +4,10 @@ Thin wrapper around a local Ollama HTTP server. Sends each transcript with
 the system prompt from `prompts/nlu_system.md`, requests JSON-formatted
 output, and normalises the response into an `IntentResult`.
 
+Cold model loads (~25 s for Qwen 2.5 1.5B on Pi 5) are absorbed at parser
+construction by sending a throwaway warmup query. The per-user-query
+timeout can then stay tight enough to surface real problems.
+
 Normalisation handles two known LLM quirks observed during benchmarking:
 
 - `navigation.start` responses sometimes omit `nearest`. We inject
@@ -13,11 +17,11 @@ Normalisation handles two known LLM quirks observed during benchmarking:
 
 Unrecognised intent names in the LLM's output (e.g. the model invents
 `music.play`) map to `Intent.UNKNOWN` rather than raising. Same for
-non-JSON responses. The parser never raises for malformed model output —
-it degrades gracefully to `UNKNOWN` so the executor can respond with a
-"sorry, I didn't understand" message rather than crashing.
+non-JSON responses. HTTP/timeout errors are logged to stderr and also fall
+back to `UNKNOWN` — a wrong `unknown` is safer than a hard crash mid-command.
 """
 import json
+import sys
 from pathlib import Path
 
 from indepensense.intents.base import Intent, IntentResult
@@ -29,12 +33,41 @@ class OllamaIntentParser:
         model: str,
         ollama_url: str,
         prompt_path: Path,
-        timeout_s: float = 20.0,
+        timeout_s: float = 30.0,
+        warmup: bool = True,
+        warmup_timeout_s: float = 90.0,
     ):
         self._model = model
         self._url = f"{ollama_url.rstrip('/')}/api/generate"
         self._system_prompt = prompt_path.read_text()
         self._timeout_s = timeout_s
+
+        if warmup:
+            self._warmup(warmup_timeout_s)
+
+    def _warmup(self, timeout_s: float) -> None:
+        """Send a throwaway query so the model is memory-resident before real use.
+
+        Uses a longer timeout than normal queries because the first-ever call
+        pays the cold-start cost of loading the model weights from disk.
+        Failures are non-fatal (they'll surface again on the next real query).
+        """
+        import requests
+
+        print(f"  Warming up {self._model} (up to {timeout_s:.0f}s if cold)...", flush=True)
+        try:
+            requests.post(
+                self._url,
+                json={
+                    "model": self._model,
+                    "prompt": "ok",
+                    "stream": False,
+                    "options": {"num_predict": 4},
+                },
+                timeout=timeout_s,
+            )
+        except requests.RequestException as exc:
+            print(f"  Warmup failed: {exc}. Continuing anyway.", file=sys.stderr)
 
     def parse(self, transcript: str) -> IntentResult:
         import requests  # lazy: keeps the module importable off-device
@@ -51,7 +84,8 @@ class OllamaIntentParser:
             response = requests.post(self._url, json=payload, timeout=self._timeout_s)
             response.raise_for_status()
             raw = response.json().get("response", "")
-        except (requests.RequestException, ValueError):
+        except (requests.RequestException, ValueError) as exc:
+            print(f"[parser] Ollama request failed: {exc}", file=sys.stderr)
             return IntentResult(
                 intent=Intent.UNKNOWN,
                 parameters={},
