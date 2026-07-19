@@ -132,6 +132,23 @@ java -Xmx2g -jar graphhopper-web-11.0.jar server config.yml
 Smaller heap is sufficient — the graph-cache is memory-mapped by the kernel,
 not loaded into the JVM heap.
 
+## Auto-start on boot (systemd)
+
+Once you have a working setup, you don't want to SSH in and launch the JAR
+by hand every reboot. A systemd unit file lives in
+`deploy/systemd/graphhopper.service`. Install with:
+
+```bash
+cd ~/Desktop/thesis/IndepensenseSystem/deploy/systemd
+sudo cp graphhopper.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now graphhopper.service
+sudo systemctl status graphhopper.service
+```
+
+See `deploy/systemd/README.md` for the full install steps (both this service
+and Photon at once), verification commands, and uninstall.
+
 ## Refreshing the map data
 
 OSM updates continuously. To pull a newer Philippines extract:

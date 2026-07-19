@@ -121,6 +121,21 @@ curl 'http://127.0.0.1:8989/route?point=13.9317,121.1670&point=13.9410,121.1620&
 
 If both return valid JSON, the geocode → route pipeline is operational.
 
+## Auto-start on boot (systemd)
+
+A systemd unit file lives in `deploy/systemd/photon.service`. Install with:
+
+```bash
+cd ~/Desktop/thesis/IndepensenseSystem/deploy/systemd
+sudo cp photon.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now photon.service
+sudo systemctl status photon.service
+```
+
+See `deploy/systemd/README.md` for the full install steps (both this service
+and GraphHopper at once), verification commands, and uninstall.
+
 ## Updating the index
 
 ```bash

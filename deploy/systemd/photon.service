@@ -1,0 +1,21 @@
+[Unit]
+Description=Photon geocoding engine (IndepenSense)
+Documentation=https://github.com/cknrf/IndepensenseSystem docs/photon.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cknrf
+Group=cknrf
+WorkingDirectory=/home/cknrf/photon
+ExecStart=/usr/bin/java -Xmx2g -jar photon-1.2.0.jar serve -listen-ip 0.0.0.0
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+# Photon opens its OpenSearch index on start — first boot takes ~30-60 s.
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

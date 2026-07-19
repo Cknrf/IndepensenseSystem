@@ -1,0 +1,23 @@
+[Unit]
+Description=GraphHopper routing engine (IndepenSense)
+Documentation=https://github.com/cknrf/IndepensenseSystem docs/graphhopper.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cknrf
+Group=cknrf
+WorkingDirectory=/home/cknrf/graphhopper
+ExecStart=/usr/bin/java -Xmx2g -jar graphhopper-web-11.0.jar server config.yml
+Restart=on-failure
+RestartSec=15
+# GraphHopper writes routing logs to stdout — let journald collect them.
+StandardOutput=journal
+StandardError=journal
+# The graph cache lives on the SD card and is loaded on start (~few seconds).
+# Give the process time to come up before systemd considers it failed.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
