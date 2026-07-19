@@ -4,10 +4,6 @@ Thin wrapper around a local Ollama HTTP server. Sends each transcript with
 the system prompt from `prompts/nlu_system.md`, requests JSON-formatted
 output, and normalises the response into an `IntentResult`.
 
-Cold model loads (~25 s for Qwen 2.5 1.5B on Pi 5) are absorbed at parser
-construction by sending a throwaway warmup query. The per-user-query
-timeout can then stay tight enough to surface real problems.
-
 Normalisation handles two known LLM quirks observed during benchmarking:
 
 - `navigation.start` responses sometimes omit `nearest`. We inject
@@ -19,6 +15,33 @@ Unrecognised intent names in the LLM's output (e.g. the model invents
 `music.play`) map to `Intent.UNKNOWN` rather than raising. Same for
 non-JSON responses. HTTP/timeout errors are logged to stderr and also fall
 back to `UNKNOWN` — a wrong `unknown` is safer than a hard crash mid-command.
+
+Resilience choices
+------------------
+
+Every defensive knob below was added deliberately after real failures
+observed during hardware integration. Kept together here so the reasoning
+survives beyond commit history:
+
+- **Startup warmup with full system prompt.** Cold-loading Qwen 2.5 1.5B on
+  the Pi 5 takes ~25-40 s. Doing this once at construction — with the
+  actual system prompt the parser will send later, not just a throwaway
+  "ok" — means the model *and* its prompt-prefix KV cache are hot before
+  the first real user query. Without this the first command of every
+  session would appear to time out.
+- **Tiered timeouts.** Warmup uses `warmup_timeout_s` (~90 s default) to
+  accommodate cold loads. Per-query uses `timeout_s` (~30 s default) which
+  is tight enough to surface real failures quickly while giving warm
+  queries room to complete under CPU contention with GraphHopper + Photon.
+- **`keep_alive: "10m"`.** Ollama's default idle-unload is 5 minutes. On
+  a wearable that pauses between commands this causes silent cold-reloads
+  mid-conversation. Extending to 10 minutes keeps the model resident
+  through realistic use patterns.
+- **stderr logging on failure.** When the HTTP call fails we log the exact
+  exception before returning UNKNOWN. Early builds swallowed these errors
+  silently, which cost hours during debugging when the model weights had
+  actually become corrupted on disk and the failure looked identical to a
+  classification miss. Never swallow again.
 """
 import json
 import sys
