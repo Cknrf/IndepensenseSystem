@@ -17,7 +17,7 @@ from indepensense.config import (
     SYSTEM_LANGUAGE,
     VOICE_TEST_DIR,
     WHISPER_MODEL_DIR,
-    WHISPER_MODEL_SIZE,
+    WHISPER_MODELS,
 )
 from indepensense.voice.audio import play, record
 from indepensense.voice.piper import PiperTTS
@@ -31,8 +31,8 @@ def main():
     input_path = VOICE_TEST_DIR / f"{timestamp}_input.wav"
     echo_path = VOICE_TEST_DIR / f"{timestamp}_echo.wav"
 
-    print(f"Loading Whisper '{WHISPER_MODEL_SIZE}' and Piper voices {sorted(PIPER_VOICES)}...")
-    stt = FasterWhisperSTT(model_size=WHISPER_MODEL_SIZE, model_dir=WHISPER_MODEL_DIR)
+    print(f"Loading Whisper models {WHISPER_MODELS} and Piper voices {sorted(PIPER_VOICES)}...")
+    stt = FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
     tts = PiperTTS(voices=PIPER_VOICES)
 
     input(f"Ready. Press Enter to start recording {RECORDING_DURATION_S:.0f} seconds. ")

@@ -6,16 +6,18 @@ Run from repo root with:
 Without an argument, transcribes the most recent file in VOICE_TEST_DIR —
 useful as a TTS->STT roundtrip check after running tts_test.py.
 
-First run downloads the Whisper model into WHISPER_MODEL_DIR (~75 MB for tiny).
+First run downloads all configured Whisper models into WHISPER_MODEL_DIR
+(~75 MB for tiny, ~140 MB for base).
 """
 import sys
 import time
 from pathlib import Path
 
 from indepensense.config import (
+    SYSTEM_LANGUAGE,
     VOICE_TEST_DIR,
     WHISPER_MODEL_DIR,
-    WHISPER_MODEL_SIZE,
+    WHISPER_MODELS,
 )
 from indepensense.voice.whisper import FasterWhisperSTT
 
@@ -35,15 +37,16 @@ def main():
             return
         print(f"(No path given, using latest: {audio_path.name})")
 
-    print(f"Loading Whisper '{WHISPER_MODEL_SIZE}' from {WHISPER_MODEL_DIR}")
-    stt = FasterWhisperSTT(model_size=WHISPER_MODEL_SIZE, model_dir=WHISPER_MODEL_DIR)
+    print(f"Loading Whisper models {WHISPER_MODELS} from {WHISPER_MODEL_DIR}")
+    stt = FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
 
-    print(f"Transcribing {audio_path}...")
+    size = stt.model_size_for(SYSTEM_LANGUAGE)
+    print(f"Transcribing {audio_path} with '{size}' model (language={SYSTEM_LANGUAGE})...")
     t0 = time.time()
-    transcript = stt.transcribe(audio_path)
+    transcript = stt.transcribe(audio_path, language=SYSTEM_LANGUAGE)
     elapsed = time.time() - t0
 
-    print(f"Done in {elapsed:.2f}s (language={transcript.language}).")
+    print(f"Done in {elapsed:.2f}s (detected language={transcript.language}).")
     print(f"Full text: {transcript.text}")
     print("Segments:")
     for s in transcript.segments:

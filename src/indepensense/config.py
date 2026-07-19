@@ -58,7 +58,15 @@ PIPER_VOICES = {
     "tl": PROJECT_ROOT / "models" / "voices" / "id_ID-news_tts-medium.onnx",
 }
 WHISPER_MODEL_DIR = PROJECT_ROOT / "models" / "whisper"
-WHISPER_MODEL_SIZE = "tiny"
+
+# Whisper model size per language. English uses `tiny` because it's accurate
+# enough and keeps STT latency ~1.4 s per 25 s clip. Tagalog uses `base`
+# because Tagalog was underrepresented in Whisper's training data and `tiny`
+# produces heavily mangled transcripts (validated 2026-07-19).
+WHISPER_MODELS = {
+    "en": "tiny",
+    "tl": "base",
+}
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 
 # Active system language. Currently fixed at build time; will become a

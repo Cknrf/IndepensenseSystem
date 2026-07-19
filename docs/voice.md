@@ -17,8 +17,9 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 | TTS voice (English) | `en_US-lessac-medium` (~70 MB) |
 | TTS voice (Tagalog) | `id_ID-news_tts-medium` (~60 MB), used as phonetic substitute |
 | STT engine | faster-whisper (CTranslate2 backend) |
-| STT model | `tiny` (~75 MB), `int8` quantized for CPU |
-| Active language | English (see `SYSTEM_LANGUAGE` in config; Tagalog voice loaded but not yet wired to a switch) |
+| STT model (English) | `tiny` (~75 MB), `int8` quantized |
+| STT model (Tagalog) | `base` (~140 MB), `int8` quantized |
+| Active language | English (see `SYSTEM_LANGUAGE` in config; Tagalog voice + model loaded but not yet wired to a switch) |
 | Models stored at | `models/voices/`, `models/whisper/` (gitignored, downloaded on demand) |
 | Test artifacts at | `data/test/voice/` |
 
@@ -41,13 +42,17 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
   cost of ~140 MB extra RAM.
 - **faster-whisper over the original Whisper.** ~4× faster on CPU and ~50% less
   memory for the same accuracy. Same model weights via HuggingFace.
-- **`tiny` over `base`.** `tiny` transcribes a short utterance in 1-2 s on Pi 5
-  CPU; `base` is ~3× slower. Bump to `base` only if `tiny` accuracy proves
-  inadequate — in particular, Whisper `tiny` on Tagalog is markedly weaker
-  than on English, so an upgrade may be warranted when Tagalog STT is
-  activated.
-- **`int8` quantization.** Pi 5 has no GPU; `int8` is the right CPU profile.
-
+- **Per-language Whisper model size.** Whisper's non-English performance
+  drops sharply at the `tiny` scale — validated empirically on 2026-07-19,
+  where a spoken Tagalog paragraph produced heavily mangled transcripts
+  ("Kumusta ka na" → "kama stawana"). English on `tiny` transcribes the
+  same paragraph near-perfectly. We therefore load `tiny` for English
+  (~1.4 s STT latency) and `base` for Tagalog (~3-4 s but usable
+  accuracy). Both instances live under `FasterWhisperSTT` and are picked
+  per call — same design as the multi-voice `PiperTTS`.
+- **`int8` quantization.** Pi 5 has no GPU; `int8` roughly halves memory
+  and doubles CPU throughput vs `float16` with negligible accuracy cost
+  at these model sizes.
 ## Install Python dependencies
 
 ```bash
@@ -104,14 +109,15 @@ To browse other available voices:
 python3 -m piper.download_voices --list
 ```
 
-## Whisper model — automatic on first use
+## Whisper models — automatic on first use
 
-`faster-whisper` downloads its model on first instantiation. Our driver passes
-`download_root=models/whisper/` so the weights land in the project's models
-directory (gitignored) rather than `~/.cache/`.
+`faster-whisper` downloads its models on first instantiation. Our driver
+passes `download_root=models/whisper/` so the weights land in the project's
+models directory (gitignored) rather than `~/.cache/`.
 
-First run of `stt_test.py` will pause for ~30-60 s while it downloads the
-`tiny` model. Subsequent runs are instant.
+First run of any voice test will pause for ~1-2 minutes while it downloads
+both configured models (~75 MB `tiny` + ~140 MB `base`). Subsequent runs are
+instant — models are loaded from local disk.
 
 ## Test it
 
@@ -194,7 +200,10 @@ when it lands, only the application layer needs to change, not this driver.
 For a different Piper voice for an existing language, edit the path in
 `PIPER_VOICES` and download the matching `.onnx` + `.onnx.json` pair.
 
-To add a new language, add an entry to `PIPER_VOICES` and download the voice.
+To add a new language, add an entry to both `PIPER_VOICES` and
+`WHISPER_MODELS` in `indepensense.config`, and download the Piper voice.
+The new Whisper model auto-downloads on next run.
 
-For a larger Whisper model (`base`, `small`, ...), change `WHISPER_MODEL_SIZE`
-in `indepensense.config`. The new model is downloaded on next run.
+To upgrade a Whisper model (`tiny` → `base` → `small` → `medium` → `large-v3`),
+edit the value in `WHISPER_MODELS` for the target language. The new model
+auto-downloads on next run.
