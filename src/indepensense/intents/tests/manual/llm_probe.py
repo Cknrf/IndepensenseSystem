@@ -1,9 +1,11 @@
 """Empirical probe: benchmark a local LLM as an NLU engine on the Pi 5.
 
-Measures per-query latency, RAM usage, and now **semantic accuracy** against
-a fixed set of expected intent + slot values. This is the tool we use to
-decide whether Qwen 2.5 1.5B, 3B, or something else earns a place in the
-final wearable.
+Measures per-query latency, RAM usage, and semantic accuracy against a fixed
+set of expected intent + slot values. Used to decide whether Qwen 2.5 1.5B,
+3B, or something else earns a place in the final wearable.
+
+The system prompt is loaded from `prompts/nlu_system.md` at the project
+root — kept out of code so it can be iterated without editing this file.
 
 Prerequisites:
     curl -fsSL https://ollama.com/install.sh | sh
@@ -22,215 +24,67 @@ import time
 
 import requests
 
+from indepensense.config import PROJECT_ROOT
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_MODEL = "qwen2.5:3b-instruct"
 MODEL = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
 
-SYSTEM_PROMPT = """You are the intent parser for a wearable voice assistant used by visually-impaired users in the Philippines. Given a user's spoken command in English or Tagalog, return ONLY a JSON object matching this exact schema:
-
-{
-  "intent": "navigate_to" | "location_query" | "navigation_stop" | "navigation_repeat" | "emergency" | "device_status" | "time_query" | "unknown",
-  "parameters": {
-    "location": string (only for navigate_to),
-    "nearest": boolean (only for navigate_to),
-    "status_field": "battery" | "gps" | "signal" (only for device_status)
-  }
-}
-
-RULES:
-1. Return the intent that best matches what the user actually asked for.
-2. If the command does not clearly match one of the listed intents, return {"intent": "unknown", "parameters": {}}. Prefer "unknown" over guessing — a wrong action is worse than doing nothing on this device.
-3. Only include parameters that apply to the chosen intent; omit unrelated keys.
-4. The user may speak in English or Tagalog. Treat both languages equally.
-5. For navigate_to, "location" is the destination string with leading navigation phrases (e.g. "take me to", "dalhin mo ako sa") stripped.
-6. For navigate_to, set "nearest": true only if the user said "nearest", "closest", "pinakamalapit", or an equivalent modifier. Otherwise "nearest": false.
-
-EXAMPLES:
-
---- navigate_to ---
-User: "Navigate to SM Lipa"
-Output: {"intent": "navigate_to", "parameters": {"location": "SM Lipa", "nearest": false}}
-
-User: "Take me to Jollibee"
-Output: {"intent": "navigate_to", "parameters": {"location": "Jollibee", "nearest": false}}
-
-User: "Guide me to the nearest hospital"
-Output: {"intent": "navigate_to", "parameters": {"location": "hospital", "nearest": true}}
-
-User: "How do I get to the pharmacy"
-Output: {"intent": "navigate_to", "parameters": {"location": "pharmacy", "nearest": false}}
-
-User: "Bring me to school"
-Output: {"intent": "navigate_to", "parameters": {"location": "school", "nearest": false}}
-
-User: "Dalhin mo ako sa Jollibee"
-Output: {"intent": "navigate_to", "parameters": {"location": "Jollibee", "nearest": false}}
-
-User: "Puntahan mo ang ospital"
-Output: {"intent": "navigate_to", "parameters": {"location": "ospital", "nearest": false}}
-
-User: "Gabayan mo ako papuntang pinakamalapit na botika"
-Output: {"intent": "navigate_to", "parameters": {"location": "botika", "nearest": true}}
-
---- location_query ---
-User: "Where am I?"
-Output: {"intent": "location_query", "parameters": {}}
-
-User: "What's my current address?"
-Output: {"intent": "location_query", "parameters": {}}
-
-User: "Tell me my location"
-Output: {"intent": "location_query", "parameters": {}}
-
-User: "Nasaan ako?"
-Output: {"intent": "location_query", "parameters": {}}
-
-User: "Nasaan ako ngayon?"
-Output: {"intent": "location_query", "parameters": {}}
-
-User: "Ano ang address ko?"
-Output: {"intent": "location_query", "parameters": {}}
-
---- navigation_stop ---
-User: "Cancel navigation"
-Output: {"intent": "navigation_stop", "parameters": {}}
-
-User: "Stop the trip"
-Output: {"intent": "navigation_stop", "parameters": {}}
-
-User: "End navigation"
-Output: {"intent": "navigation_stop", "parameters": {}}
-
-User: "Ihinto ang navigation"
-Output: {"intent": "navigation_stop", "parameters": {}}
-
-User: "Kanselahin ang direksyon"
-Output: {"intent": "navigation_stop", "parameters": {}}
-
---- navigation_repeat ---
-User: "Repeat the last instruction"
-Output: {"intent": "navigation_repeat", "parameters": {}}
-
-User: "Say that again"
-Output: {"intent": "navigation_repeat", "parameters": {}}
-
-User: "Can you repeat?"
-Output: {"intent": "navigation_repeat", "parameters": {}}
-
-User: "Ulitin mo yung sinabi"
-Output: {"intent": "navigation_repeat", "parameters": {}}
-
-User: "Pakiulit"
-Output: {"intent": "navigation_repeat", "parameters": {}}
-
---- emergency ---
-User: "Help me, this is an emergency"
-Output: {"intent": "emergency", "parameters": {}}
-
-User: "I need help now"
-Output: {"intent": "emergency", "parameters": {}}
-
-User: "SOS"
-Output: {"intent": "emergency", "parameters": {}}
-
-User: "Tulong!"
-Output: {"intent": "emergency", "parameters": {}}
-
-User: "Kailangan ko ng tulong"
-Output: {"intent": "emergency", "parameters": {}}
-
---- device_status ---
-User: "How much battery do I have left"
-Output: {"intent": "device_status", "parameters": {"status_field": "battery"}}
-
-User: "Is the GPS connected"
-Output: {"intent": "device_status", "parameters": {"status_field": "gps"}}
-
-User: "How's the signal"
-Output: {"intent": "device_status", "parameters": {"status_field": "signal"}}
-
-User: "Ilan pa ang natitirang battery?"
-Output: {"intent": "device_status", "parameters": {"status_field": "battery"}}
-
---- time_query ---
-User: "What time is it"
-Output: {"intent": "time_query", "parameters": {}}
-
-User: "What's the time"
-Output: {"intent": "time_query", "parameters": {}}
-
-User: "Anong oras na?"
-Output: {"intent": "time_query", "parameters": {}}
-
---- unknown (commands that do NOT fit any listed intent) ---
-User: "Play some music"
-Output: {"intent": "unknown", "parameters": {}}
-
-User: "Send a text to my mom"
-Output: {"intent": "unknown", "parameters": {}}
-
-User: "Tell me a joke"
-Output: {"intent": "unknown", "parameters": {}}
-
-User: "Magpatugtog ka ng musika"
-Output: {"intent": "unknown", "parameters": {}}
-
-User: "What's the weather?"
-Output: {"intent": "unknown", "parameters": {}}
-"""
+PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
+SYSTEM_PROMPT = PROMPT_PATH.read_text()
 
 
 # Test cases with expected intent + expected slot values.
 # The checker compares intent equality and REQUIRED-slot equality (case-
 # insensitive for strings). Extra slots the model adds are tolerated.
 TEST_CASES = [
-    # navigate_to (English)
-    ("Navigate to SM Lipa", "navigate_to", {"location": "SM Lipa", "nearest": False}),
-    ("Take me to Jollibee", "navigate_to", {"location": "Jollibee", "nearest": False}),
-    ("Guide me to the nearest hospital", "navigate_to", {"location": "hospital", "nearest": True}),
-    ("How do I get to the pharmacy", "navigate_to", {"location": "pharmacy"}),
-    ("Bring me to school", "navigate_to", {"location": "school"}),
+    # navigation.start (English)
+    ("Navigate to SM Lipa",              "navigation.start", {"location": "SM Lipa", "nearest": False}),
+    ("Take me to Jollibee",              "navigation.start", {"location": "Jollibee", "nearest": False}),
+    ("Guide me to the nearest hospital", "navigation.start", {"location": "hospital", "nearest": True}),
+    ("How do I get to the pharmacy",     "navigation.start", {"location": "pharmacy"}),
+    ("Bring me to school",               "navigation.start", {"location": "school"}),
 
-    # location_query (English)
-    ("Where am I?", "location_query", {}),
-    ("What's my current address", "location_query", {}),
-    ("Tell me my location", "location_query", {}),
+    # navigation.location (English)
+    ("Where am I?",                      "navigation.location", {}),
+    ("What's my current address",        "navigation.location", {}),
+    ("Tell me my location",              "navigation.location", {}),
 
-    # navigation_stop (English)
-    ("Cancel navigation", "navigation_stop", {}),
-    ("Stop the trip", "navigation_stop", {}),
+    # navigation.stop (English)
+    ("Cancel navigation",                "navigation.stop", {}),
+    ("Stop the trip",                    "navigation.stop", {}),
 
-    # navigation_repeat (English)
-    ("Repeat the last instruction", "navigation_repeat", {}),
-    ("Say that again", "navigation_repeat", {}),
+    # navigation.repeat (English)
+    ("Repeat the last instruction",      "navigation.repeat", {}),
+    ("Say that again",                   "navigation.repeat", {}),
 
-    # emergency (English)
-    ("Help me, this is an emergency", "emergency", {}),
-    ("I need help now", "emergency", {}),
-    ("SOS", "emergency", {}),
+    # emergency.trigger (English)
+    ("Help me, this is an emergency",    "emergency.trigger", {}),
+    ("I need help now",                  "emergency.trigger", {}),
+    ("SOS",                              "emergency.trigger", {}),
 
-    # device_status (English)
-    ("How much battery do I have left", "device_status", {"status_field": "battery"}),
-    ("Is the GPS connected", "device_status", {"status_field": "gps"}),
+    # device.status (English)
+    ("How much battery do I have left",  "device.status", {"status_field": "battery"}),
+    ("Is the GPS connected",             "device.status", {"status_field": "gps"}),
 
-    # time_query (English)
-    ("What time is it", "time_query", {}),
+    # system.time (English)
+    ("What time is it",                  "system.time", {}),
 
     # unknown (English)
-    ("Play some music", "unknown", {}),
-    ("Send a text to my mom", "unknown", {}),
+    ("Play some music",                  "unknown", {}),
+    ("Send a text to my mom",            "unknown", {}),
 
     # Tagalog
-    ("Dalhin mo ako sa Jollibee", "navigate_to", {"location": "Jollibee"}),
-    ("Puntahan mo ang pinakamalapit na ospital", "navigate_to", {"location": "ospital", "nearest": True}),
-    ("Nasaan ako", "location_query", {}),
-    ("Nasaan ako ngayon", "location_query", {}),
-    ("Ihinto ang navigation", "navigation_stop", {}),
-    ("Ulitin mo yung sinabi", "navigation_repeat", {}),
-    ("Tulong! Emergency!", "emergency", {}),
-    ("Ilan pa ang natitirang battery", "device_status", {"status_field": "battery"}),
-    ("Anong oras na", "time_query", {}),
-    ("Magpatugtog ka ng musika", "unknown", {}),
+    ("Dalhin mo ako sa Jollibee",                    "navigation.start",    {"location": "Jollibee"}),
+    ("Puntahan mo ang pinakamalapit na ospital",     "navigation.start",    {"location": "ospital", "nearest": True}),
+    ("Nasaan ako",                                    "navigation.location", {}),
+    ("Nasaan ako ngayon",                             "navigation.location", {}),
+    ("Ihinto ang navigation",                         "navigation.stop",     {}),
+    ("Ulitin mo yung sinabi",                         "navigation.repeat",   {}),
+    ("Tulong! Emergency!",                            "emergency.trigger",   {}),
+    ("Ilan pa ang natitirang battery",                "device.status",       {"status_field": "battery"}),
+    ("Anong oras na",                                 "system.time",         {}),
+    ("Magpatugtog ka ng musika",                      "unknown",             {}),
 ]
 
 
@@ -293,9 +147,10 @@ def matches_expected(
 
 
 def main():
-    print(f"Model: {MODEL}")
+    print(f"Model:  {MODEL}")
+    print(f"Prompt: {PROMPT_PATH} ({len(SYSTEM_PROMPT)} chars)")
     print(f"Free RAM before loading model: {free_ram_mb()} MB")
-    print(f"Warming up with a throwaway query...")
+    print("Warming up with a throwaway query...")
 
     cold_elapsed, _, _ = query("Hello")
     print(f"Cold query took {cold_elapsed:.2f}s")
