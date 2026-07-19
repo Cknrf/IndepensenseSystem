@@ -1,6 +1,6 @@
 [Unit]
 Description=Pre-load NLU model into Ollama on boot (IndepenSense)
-Documentation=https://github.com/cknrf/IndepensenseSystem docs/voice.md
+Documentation=https://github.com/cknrf/IndepensenseSystem
 After=ollama.service
 Requires=ollama.service
 

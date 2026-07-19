@@ -1,6 +1,6 @@
 [Unit]
 Description=Photon geocoding engine (IndepenSense)
-Documentation=https://github.com/cknrf/IndepensenseSystem docs/photon.md
+Documentation=https://github.com/cknrf/IndepensenseSystem
 Wants=network-online.target
 After=network-online.target
 

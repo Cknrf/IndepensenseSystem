@@ -1,6 +1,6 @@
 [Unit]
 Description=GraphHopper routing engine (IndepenSense)
-Documentation=https://github.com/cknrf/IndepensenseSystem docs/graphhopper.md
+Documentation=https://github.com/cknrf/IndepensenseSystem
 Wants=network-online.target
 After=network-online.target
 
