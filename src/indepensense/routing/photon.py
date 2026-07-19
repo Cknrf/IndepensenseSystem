@@ -20,6 +20,9 @@ def _parse_feature(feature: dict[str, Any]) -> GeocodingResult:
         country=properties.get("country"),
         city=properties.get("city"),
         feature_type=properties.get("osm_value") or properties.get("type"),
+        street=properties.get("street"),
+        district=properties.get("district"),
+        state=properties.get("state"),
     )
 
 

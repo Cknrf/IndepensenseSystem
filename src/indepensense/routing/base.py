@@ -36,6 +36,9 @@ class GeocodingResult:
     country: str | None
     city: str | None
     feature_type: str | None
+    street: str | None = None
+    district: str | None = None
+    state: str | None = None
 
 
 class Router(Protocol):

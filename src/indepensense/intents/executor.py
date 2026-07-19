@@ -14,8 +14,41 @@ from datetime import datetime
 from typing import Any
 
 from indepensense.intents.base import Intent, IntentResult
-from indepensense.routing.base import Coordinate, Geocoder, Route, Router
+from indepensense.routing.base import Coordinate, Geocoder, GeocodingResult, Route, Router
 from indepensense.sensors.base import GPSSensor
+
+
+def _format_location_response(hit: GeocodingResult) -> str:
+    """Build a spoken location description from a reverse-geocode hit.
+
+    Combines up to four fields (name, street, district, city) into a natural
+    "You are near A, B, C" sentence. De-duplicates so we never repeat the
+    same string twice — Photon sometimes returns the same value as `name`
+    and `district`, or `name` and `city`.
+    """
+    parts: list[str] = []
+    seen: set[str] = set()
+
+    def _add(value: str | None) -> None:
+        if not value:
+            return
+        key = value.strip().lower()
+        if not key or key in seen:
+            return
+        seen.add(key)
+        parts.append(value.strip())
+
+    _add(hit.name)
+    _add(hit.street)
+    _add(hit.district)
+    _add(hit.city)
+
+    if not parts:
+        return (
+            f"You are near latitude {hit.coordinate.lat:.4f}, "
+            f"longitude {hit.coordinate.lon:.4f}."
+        )
+    return "You are near " + ", ".join(parts) + "."
 
 
 class IntentExecutor:
@@ -100,7 +133,7 @@ class IntentExecutor:
         hit = self._geocoder.reverse(position)
         if hit is None:
             return f"You are near latitude {position.lat:.4f}, longitude {position.lon:.4f}."
-        return f"You are near {hit.name}."
+        return _format_location_response(hit)
 
     def _handle_emergency_trigger(self, result: IntentResult) -> str:
         # TODO: when telemetry / guardian dashboard lands, POST an alert here

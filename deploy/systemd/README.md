@@ -5,7 +5,9 @@ routing + geocoding backend comes up automatically on boot — no more
 "three SSH sessions to launch the system."
 
 Ollama already ships with its own systemd service (installed by the
-official Ollama installer). No unit file for it is needed here.
+official Ollama installer). We add one companion unit that pre-loads the
+NLU model on boot so the first user command doesn't pay the 25-40 s
+cold-load cost: `ollama-warmup.service`.
 
 ## Install
 
@@ -15,12 +17,13 @@ and start them now:
 ```bash
 cd ~/Desktop/thesis/IndepensenseSystem/deploy/systemd
 
-sudo cp graphhopper.service /etc/systemd/system/
-sudo cp photon.service      /etc/systemd/system/
+sudo cp graphhopper.service    /etc/systemd/system/
+sudo cp photon.service         /etc/systemd/system/
+sudo cp ollama-warmup.service  /etc/systemd/system/
 
 sudo systemctl daemon-reload
-sudo systemctl enable graphhopper.service photon.service
-sudo systemctl start  graphhopper.service photon.service
+sudo systemctl enable graphhopper.service photon.service ollama-warmup.service
+sudo systemctl start  graphhopper.service photon.service ollama-warmup.service
 ```
 
 ## Verify
@@ -28,12 +31,12 @@ sudo systemctl start  graphhopper.service photon.service
 Check status:
 
 ```bash
-sudo systemctl status graphhopper photon
+sudo systemctl status graphhopper photon ollama-warmup
 ```
 
-Both should read `Active: active (running)`. GraphHopper takes ~5 seconds to
-report ready; Photon takes ~30-60 seconds on first boot as it opens its
-OpenSearch index.
+- **graphhopper** — should read `Active: active (running)` within ~5 s.
+- **photon** — same, but takes ~30-60 s to open its OpenSearch index.
+- **ollama-warmup** — `oneshot` service, expected state is `Active: active (exited)` — this is normal for oneshot units. Its job is to fire once at boot, load the model, and exit. Check the model is actually loaded with `ollama ps`.
 
 Follow logs in real time:
 

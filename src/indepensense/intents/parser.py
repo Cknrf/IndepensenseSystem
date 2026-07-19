@@ -33,10 +33,12 @@ survives beyond commit history:
   accommodate cold loads. Per-query uses `timeout_s` (~30 s default) which
   is tight enough to surface real failures quickly while giving warm
   queries room to complete under CPU contention with GraphHopper + Photon.
-- **`keep_alive: "10m"`.** Ollama's default idle-unload is 5 minutes. On
-  a wearable that pauses between commands this causes silent cold-reloads
-  mid-conversation. Extending to 10 minutes keeps the model resident
-  through realistic use patterns.
+- **`keep_alive: -1`.** Ollama's default idle-unload is 5 minutes. On a
+  wearable that must respond snappily whenever the user speaks, cold
+  reloads are unacceptable — the 25-40 s first-query pause would ruin the
+  UX. Setting `keep_alive` to `-1` pins the model in memory until Ollama
+  itself restarts. Costs ~1.4 GB of RAM permanently but that budget was
+  planned for.
 - **stderr logging on failure.** When the HTTP call fails we log the exact
   exception before returning UNKNOWN. Early builds swallowed these errors
   silently, which cost hours during debugging when the model weights had
@@ -94,7 +96,7 @@ class OllamaIntentParser:
                     "stream": False,
                     "format": "json",
                     "options": {"temperature": 0.0, "num_predict": 32},
-                    "keep_alive": "10m",
+                    "keep_alive": -1,
                 },
                 timeout=timeout_s,
             )
@@ -116,7 +118,7 @@ class OllamaIntentParser:
             "stream": False,
             "format": "json",
             "options": {"temperature": 0.0},
-            "keep_alive": "10m",           # keep model resident between queries
+            "keep_alive": -1,           # keep model resident between queries
         }
         try:
             response = requests.post(self._url, json=payload, timeout=self._timeout_s)

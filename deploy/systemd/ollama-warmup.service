@@ -1,0 +1,20 @@
+[Unit]
+Description=Pre-load NLU model into Ollama on boot (IndepenSense)
+Documentation=https://github.com/cknrf/IndepensenseSystem docs/voice.md
+After=ollama.service
+Requires=ollama.service
+
+[Service]
+Type=oneshot
+# Wait until Ollama's HTTP endpoint is actually responding.
+ExecStartPre=/bin/bash -c 'until curl -sf http://127.0.0.1:11434/api/tags >/dev/null; do sleep 1; done'
+# Hit the model once with keep_alive=-1 so it's pinned in RAM.
+# The response body is discarded — we only care that the model loads.
+ExecStart=/usr/bin/curl -s -X POST http://127.0.0.1:11434/api/generate \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"qwen2.5:1.5b-instruct","prompt":"ok","keep_alive":-1,"stream":false,"options":{"num_predict":4}}' \
+    -o /dev/null
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
