@@ -46,28 +46,42 @@ class OllamaIntentParser:
             self._warmup(warmup_timeout_s)
 
     def _warmup(self, timeout_s: float) -> None:
-        """Send a throwaway query so the model is memory-resident before real use.
+        """Prime the model AND the system-prompt KV cache before real use.
 
-        Uses a longer timeout than normal queries because the first-ever call
-        pays the cold-start cost of loading the model weights from disk.
-        Failures are non-fatal (they'll surface again on the next real query).
+        Uses the *same* system prompt real queries will use, so Ollama's
+        prefix-cache is already computed on the first user query. Also
+        pins the model with `keep_alive` so it doesn't get unloaded between
+        queries.
+
+        Failures are non-fatal — they will surface again on the next real
+        query and the parser handles them there.
         """
+        import time as _time
         import requests
 
         print(f"  Warming up {self._model} (up to {timeout_s:.0f}s if cold)...", flush=True)
+        t0 = _time.time()
         try:
             requests.post(
                 self._url,
                 json={
                     "model": self._model,
+                    "system": self._system_prompt,     # same prompt → warms prefix cache
                     "prompt": "ok",
                     "stream": False,
-                    "options": {"num_predict": 4},
+                    "format": "json",
+                    "options": {"temperature": 0.0, "num_predict": 32},
+                    "keep_alive": "10m",
                 },
                 timeout=timeout_s,
             )
+            print(f"  Warmup done in {_time.time() - t0:.1f}s.", flush=True)
         except requests.RequestException as exc:
-            print(f"  Warmup failed: {exc}. Continuing anyway.", file=sys.stderr)
+            print(
+                f"  Warmup failed after {_time.time() - t0:.1f}s: {exc}. "
+                f"Continuing anyway.",
+                file=sys.stderr,
+            )
 
     def parse(self, transcript: str) -> IntentResult:
         import requests  # lazy: keeps the module importable off-device
@@ -79,6 +93,7 @@ class OllamaIntentParser:
             "stream": False,
             "format": "json",
             "options": {"temperature": 0.0},
+            "keep_alive": "10m",           # keep model resident between queries
         }
         try:
             response = requests.post(self._url, json=payload, timeout=self._timeout_s)

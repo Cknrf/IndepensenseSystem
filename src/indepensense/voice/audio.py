@@ -42,6 +42,61 @@ def record(
     sf.write(str(output_path), audio, samplerate, subtype="PCM_16")
 
 
+def record_until_enter(
+    output_path: Path,
+    samplerate: int = DEFAULT_SAMPLERATE_HZ,
+    channels: int = 1,
+    max_duration_s: float = 60.0,
+) -> float:
+    """Record until the user presses Enter (or `max_duration_s` elapses).
+
+    Push-to-talk style: the user calls this after pressing Enter to start,
+    then presses Enter again to stop. Returns the duration recorded in
+    seconds. Uses a `sounddevice.InputStream` with a callback so we can
+    accumulate frames while `input()` blocks waiting for the next Enter.
+
+    Fails safe on empty capture (writes a short silent WAV) so downstream
+    code doesn't have to special-case zero-frame files.
+    """
+    import numpy as np
+    import sounddevice as sd
+    import soundfile as sf
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    frames: list[np.ndarray] = []
+
+    def _callback(indata, _frame_count, _time_info, _status):
+        frames.append(indata.copy())
+
+    stream = sd.InputStream(
+        samplerate=samplerate,
+        channels=channels,
+        dtype="int16",
+        callback=_callback,
+    )
+    with stream:
+        # input() blocks until Enter; the callback keeps filling `frames`.
+        input("  (recording — press Enter to stop) ")
+
+    if not frames:
+        # Write ~0.1 s of silence so downstream code has a valid WAV to open.
+        sf.write(
+            str(output_path),
+            np.zeros(int(0.1 * samplerate), dtype="int16"),
+            samplerate,
+            subtype="PCM_16",
+        )
+        return 0.0
+
+    audio = np.concatenate(frames, axis=0)
+    duration_s = len(audio) / samplerate
+    if duration_s > max_duration_s:
+        audio = audio[: int(max_duration_s * samplerate)]
+        duration_s = max_duration_s
+    sf.write(str(output_path), audio, samplerate, subtype="PCM_16")
+    return duration_s
+
+
 def play(audio_path: Path) -> None:
     """Play a WAV file through the default output device.
 

@@ -4,8 +4,12 @@ Wires every voice-layer module together with the real routing/geocoding
 services and (if available) real GPS. This is the closest thing yet to
 "actually being a voice assistant."
 
+Recording is push-to-talk style: press Enter to start recording, press
+Enter again to stop. A safety cap of 60 s keeps runaway recordings out of
+the pipeline.
+
 Prerequisites (all must be running on the Pi):
-    - Ollama with the NLU_MODEL pulled  (systemctl status ollama)
+    - Ollama with NLU_MODEL pulled  (systemctl status ollama)
     - GraphHopper on port 8989
     - Photon on port 2322
     - USB mic plugged in as the PipeWire default source
@@ -15,7 +19,7 @@ Prerequisites (all must be running on the Pi):
 Run from repo root with:
     python -m indepensense.intents.tests.manual.end_to_end_test
 
-Ctrl-C stops the loop cleanly.
+Ctrl-C exits the loop cleanly.
 """
 import time
 from datetime import datetime
@@ -39,11 +43,9 @@ from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
 from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.photon import PhotonGeocoder
-from indepensense.voice.audio import play, record
+from indepensense.voice.audio import play, record_until_enter
 from indepensense.voice.piper import PiperTTS
 from indepensense.voice.whisper import FasterWhisperSTT
-
-RECORDING_DURATION_S = 10.0
 
 
 def _try_open_gps():
@@ -82,17 +84,20 @@ def main():
 
     try:
         while True:
-            input(f"Press Enter to record {RECORDING_DURATION_S:.0f}s (Ctrl-C to stop): ")
+            input("Press Enter to START recording (Ctrl-C to quit): ")
 
             timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
             input_path = VOICE_TEST_DIR / f"{timestamp}_command.wav"
             response_path = VOICE_TEST_DIR / f"{timestamp}_response.wav"
 
-            # 1. Record
-            print("Recording... speak now.")
+            # 1. Record — push-to-talk style
             t0 = time.time()
-            record(RECORDING_DURATION_S, input_path)
-            print(f"  ({time.time() - t0:.1f}s) saved to {input_path.name}")
+            duration = record_until_enter(input_path)
+            print(f"  ({time.time() - t0:.1f}s wall, {duration:.1f}s audio) saved to {input_path.name}")
+
+            if duration <= 0.2:
+                print("  Too short — try again.\n")
+                continue
 
             # 2. Transcribe
             t0 = time.time()
@@ -106,10 +111,10 @@ def main():
             # 3. Parse intent
             t0 = time.time()
             intent_result = parser.parse(transcript.text)
-            print(
-                f"  ({time.time() - t0:.1f}s) intent: {intent_result.intent.value}"
-                f" params: {intent_result.parameters}"
-            )
+            print(f"  ({time.time() - t0:.1f}s) intent: {intent_result.intent.value} "
+                  f"params: {intent_result.parameters}")
+            if intent_result.raw_llm_response:
+                print(f"    raw LLM: {intent_result.raw_llm_response}")
 
             # 4. Execute
             t0 = time.time()
