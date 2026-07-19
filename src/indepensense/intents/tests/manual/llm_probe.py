@@ -1,28 +1,33 @@
-"""Empirical probe: measure Qwen 2.5 3B Instruct as an NLU engine on the Pi 5.
+"""Empirical probe: benchmark a local LLM as an NLU engine on the Pi 5.
 
-This is a *test*, not a driver. We want real numbers before committing to LLM
-NLU:
+This is a *test*, not a driver. We want real numbers before committing to
+LLM NLU:
 
-- How much RAM does the Ollama process use with Qwen 2.5 3B loaded?
+- How much RAM does the Ollama process use with the model loaded?
 - What is per-query latency? Cold (first) vs warm (subsequent)?
 - Does the JSON output actually parse and match what we want?
 - Does latency degrade when GraphHopper + Photon are also running?
 
 Prerequisites:
     curl -fsSL https://ollama.com/install.sh | sh
-    ollama pull qwen2.5:3b-instruct
+    ollama pull <model-name>
 
-Run from repo root with:
+Run from repo root:
+    # default model
     python -m indepensense.intents.tests.manual.llm_probe
+
+    # or specify a different model
+    python -m indepensense.intents.tests.manual.llm_probe qwen2.5:1.5b-instruct
 """
 import json
-import subprocess
+import sys
 import time
 
 import requests
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen2.5:3b-instruct"
+DEFAULT_MODEL = "qwen2.5:3b-instruct"
+MODEL = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
 
 SYSTEM_PROMPT = """You are the intent parser for a wearable voice assistant. Given a user's spoken command, return ONLY a JSON object matching this exact schema:
 
@@ -48,6 +53,9 @@ User: "Guide me to the nearest hospital"
 Output: {"intent": "navigate_to", "parameters": {"location": "hospital", "nearest": true}}
 
 User: "Where am I?"
+Output: {"intent": "location_query", "parameters": {}}
+
+User: "What's my current address?"
 Output: {"intent": "location_query", "parameters": {}}
 
 User: "Cancel navigation"
@@ -143,8 +151,9 @@ def query(text: str) -> tuple[float, dict | None, str]:
 
 
 def main():
+    print(f"Model: {MODEL}")
     print(f"Free RAM before loading model: {free_ram_mb()} MB")
-    print(f"Warming up '{MODEL}' with a throwaway query...")
+    print(f"Warming up with a throwaway query...")
 
     warm_elapsed, _, _ = query("Hello")
     print(f"Cold query took {warm_elapsed:.2f}s")
@@ -168,10 +177,11 @@ def main():
         print(f"    out: {summary}")
 
     print()
-    print(f"Summary")
+    print(f"Summary for model: {MODEL}")
     print(f"  Total queries:       {len(TEST_TRANSCRIPTS)}")
     print(f"  JSON parse failures: {parse_failures}")
-    print(f"  Total time:          {total_time:.1f}s")
+    print(f"  Cold query time:     {warm_elapsed:.2f}s")
+    print(f"  Total time (warm):   {total_time:.1f}s")
     print(f"  Avg per query:       {total_time / len(TEST_TRANSCRIPTS):.2f}s")
     print(f"  Free RAM at end:     {free_ram_mb()} MB")
 
