@@ -60,12 +60,13 @@ PIPER_VOICES = {
 WHISPER_MODEL_DIR = PROJECT_ROOT / "models" / "whisper"
 
 # Whisper model size per language. English uses `tiny` because it's accurate
-# enough and keeps STT latency ~1.4 s per 25 s clip. Tagalog uses `base`
-# because Tagalog was underrepresented in Whisper's training data and `tiny`
-# produces heavily mangled transcripts (validated 2026-07-19).
+# enough and keeps STT latency ~1.4 s per 25 s clip. Tagalog uses `small`
+# because Tagalog is underrepresented in Whisper's training data and both
+# `tiny` and `base` produced too-mangled transcripts to be usable
+# (validated 2026-07-19).
 WHISPER_MODELS = {
     "en": "tiny",
-    "tl": "base",
+    "tl": "small",
 }
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 

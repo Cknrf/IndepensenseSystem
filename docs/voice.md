@@ -18,7 +18,7 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 | TTS voice (Tagalog) | `id_ID-news_tts-medium` (~60 MB), used as phonetic substitute |
 | STT engine | faster-whisper (CTranslate2 backend) |
 | STT model (English) | `tiny` (~75 MB), `int8` quantized |
-| STT model (Tagalog) | `base` (~140 MB), `int8` quantized |
+| STT model (Tagalog) | `small` (~460 MB), `int8` quantized |
 | Active language | English (see `SYSTEM_LANGUAGE` in config; Tagalog voice + model loaded but not yet wired to a switch) |
 | Models stored at | `models/voices/`, `models/whisper/` (gitignored, downloaded on demand) |
 | Test artifacts at | `data/test/voice/` |
@@ -43,13 +43,15 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 - **faster-whisper over the original Whisper.** ~4× faster on CPU and ~50% less
   memory for the same accuracy. Same model weights via HuggingFace.
 - **Per-language Whisper model size.** Whisper's non-English performance
-  drops sharply at the `tiny` scale — validated empirically on 2026-07-19,
-  where a spoken Tagalog paragraph produced heavily mangled transcripts
-  ("Kumusta ka na" → "kama stawana"). English on `tiny` transcribes the
-  same paragraph near-perfectly. We therefore load `tiny` for English
-  (~1.4 s STT latency) and `base` for Tagalog (~3-4 s but usable
-  accuracy). Both instances live under `FasterWhisperSTT` and are picked
-  per call — same design as the multi-voice `PiperTTS`.
+  drops sharply at smaller model sizes — validated empirically on
+  2026-07-19, where a spoken Tagalog paragraph produced heavily mangled
+  transcripts on both `tiny` ("Kumusta ka na" → "kama stawana") and
+  `base`. English on `tiny` transcribes the same paragraph
+  near-perfectly. We therefore load `tiny` for English (~1.4 s STT
+  latency) and `small` for Tagalog (~8-10 s for a 25 s clip; ~2-3 s for a
+  short 5 s command — real-time boundary). Both instances live under
+  `FasterWhisperSTT` and are picked per call — same design as the
+  multi-voice `PiperTTS`.
 - **`int8` quantization.** Pi 5 has no GPU; `int8` roughly halves memory
   and doubles CPU throughput vs `float16` with negligible accuracy cost
   at these model sizes.
@@ -115,9 +117,9 @@ python3 -m piper.download_voices --list
 passes `download_root=models/whisper/` so the weights land in the project's
 models directory (gitignored) rather than `~/.cache/`.
 
-First run of any voice test will pause for ~1-2 minutes while it downloads
-both configured models (~75 MB `tiny` + ~140 MB `base`). Subsequent runs are
-instant — models are loaded from local disk.
+First run of any voice test will pause for ~2-4 minutes while it downloads
+both configured models (~75 MB `tiny` + ~460 MB `small`). Subsequent runs
+are instant — models are loaded from local disk.
 
 ## Test it
 
