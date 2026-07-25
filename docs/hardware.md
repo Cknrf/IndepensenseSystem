@@ -70,12 +70,30 @@ Pin 9 (GND)     GND
 Pin 3 (GPIO 2)  SDA
 Pin 5 (GPIO 3)  SCL
 
-### Active Buzzer — STATUS: planned
+### Active Buzzer — STATUS: driver ready, awaiting wiring
+
+Standard hobby active buzzer, driven directly from a GPIO pin. GPIO HIGH
+sounds the tone; LOW is silent. Active buzzers contain their own
+oscillator so no PWM is needed.
 
 | Buzzer pin | Pi physical pin | Pi GPIO  | Notes |
 |------------|-----------------|----------|-------|
-| +          | TBD             | TBD      | any free GPIO |
-| -          | any GND         | GND      |       |
+| +          | 12              | GPIO 18  | GPIO 18 is PWM-capable — useful later if swapped for a passive buzzer |
+| -          | any GND         | GND      | shared GND rail is fine |
+
+Pin configurable via `BUZZER_GPIO` in `indepensense.config`.
+
+Current draw caveat: most hobby active buzzers pull 15-25 mA at 3.3 V,
+which is at the edge of the Pi's per-pin GPIO source limit (~16 mA). If
+`vcgencmd get_throttled` shows non-zero after adding the buzzer, add an
+NPN transistor between the GPIO and the buzzer's + pin (same pattern as
+the vibration motor will use).
+
+Manual test:
+```bash
+python -m indepensense.feedback.tests.manual.buzzer_test              # default GPIO 18
+python -m indepensense.feedback.tests.manual.buzzer_test 21           # any pin
+```
 
 ### Push Buttons (KY-004 style) — STATUS: driver ready, awaiting wiring
 

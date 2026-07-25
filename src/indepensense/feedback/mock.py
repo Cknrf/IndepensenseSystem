@@ -1,7 +1,9 @@
-"""Mock button for off-device development.
+"""Mocks for off-device development.
 
-Callbacks are stored but never fired automatically — a test harness can
-call `.press()` and `.release()` explicitly to simulate button events.
+- `MockButton` stores callbacks; a test harness fires them via `.press()`
+  and `.release()`.
+- `MockBuzzer` records every on/off/beep call to a public `events` list
+  so tests can assert on what happened without producing sound.
 """
 from typing import Callable
 
@@ -29,3 +31,46 @@ class MockButton:
 
     def close(self) -> None:
         self._handlers.clear()
+
+
+class MockBuzzer:
+    """Buzzer that records every call to a list instead of making sound.
+
+    `events` is a public list of tuples describing what happened, in order:
+      - ("on",)
+      - ("off",)
+      - ("beep", times, duration_s, gap_s)
+      - ("close",)
+
+    Tests can assert on this list to verify feedback behaviour without
+    running any hardware.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[tuple] = []
+        self._is_on = False
+
+    def on(self) -> None:
+        self.events.append(("on",))
+        self._is_on = True
+
+    def off(self) -> None:
+        self.events.append(("off",))
+        self._is_on = False
+
+    def beep(
+        self,
+        times: int = 1,
+        duration_s: float = 0.1,
+        gap_s: float = 0.1,
+    ) -> None:
+        self.events.append(("beep", times, duration_s, gap_s))
+
+    def close(self) -> None:
+        self.events.append(("close",))
+        self._is_on = False
+
+    @property
+    def is_on(self) -> bool:
+        """Latest on/off state after the most recent call."""
+        return self._is_on

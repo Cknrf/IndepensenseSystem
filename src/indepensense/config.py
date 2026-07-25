@@ -79,6 +79,10 @@ PTT_BUTTON_GPIO = 23         # physical pin 16 — push-to-talk (click to start,
 EMERGENCY_BUTTON_GPIO = 24   # physical pin 18 — single click fires emergency.trigger
 REPEAT_BUTTON_GPIO = 25      # physical pin 22 — single click repeats last instruction
 
+# Active buzzer — direct GPIO drive (see feedback/gpio_buzzer.py for the
+# current-draw caveat if the Pi shows undervoltage warnings).
+BUZZER_GPIO = 18             # physical pin 12
+
 # Fall detection thresholds (starting from the literature; tune empirically)
 FALL_FREEFALL_THRESHOLD_G = 0.5
 FALL_FREEFALL_MIN_DURATION_S = 0.1
