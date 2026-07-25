@@ -77,6 +77,32 @@ Pin 5 (GPIO 3)  SCL
 | +          | TBD             | TBD      | any free GPIO |
 | -          | any GND         | GND      |       |
 
+### Push Buttons (KY-004 style) — STATUS: driver ready, awaiting wiring
+
+Three identical breakout-mounted buttons. Each module has an on-board
+10 kΩ pull-down resistor and drives OUT HIGH when pressed (active-high
+logic), which is the opposite of a bare tactile switch. The driver
+(`src/indepensense/feedback/gpio_button.py`) configures gpiozero for
+active-high pull-down accordingly.
+
+Each button needs three wires: VCC to Pi 3.3V, GND to Pi GND, OUT to the
+GPIO pin listed below.
+
+| Function                     | Pi physical pin | Pi GPIO  |
+|------------------------------|-----------------|----------|
+| Push-to-talk (PTT)           | 16              | GPIO 23  |
+| Emergency                    | 18              | GPIO 24  |
+| Repeat last instruction      | 22              | GPIO 25  |
+
+All three pins are configurable via `PTT_BUTTON_GPIO`, `EMERGENCY_BUTTON_GPIO`,
+and `REPEAT_BUTTON_GPIO` in `indepensense.config`.
+
+Manual test:
+```bash
+python -m indepensense.feedback.tests.manual.button_test           # PTT pin
+python -m indepensense.feedback.tests.manual.button_test 24        # any pin
+```
+
 ### Vibration Motor — STATUS: planned
 
 Likely needs a transistor driver (e.g. 2N2222) — motor draws more current than

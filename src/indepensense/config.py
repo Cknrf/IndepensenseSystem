@@ -74,6 +74,11 @@ VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 # runtime setting once guardian-dashboard control is implemented.
 SYSTEM_LANGUAGE = "en"
 
+# Physical buttons (KY-004 style breakouts with on-board 10kΩ pull-down)
+PTT_BUTTON_GPIO = 23         # physical pin 16 — push-to-talk (click to start, click to stop)
+EMERGENCY_BUTTON_GPIO = 24   # physical pin 18 — single click fires emergency.trigger
+REPEAT_BUTTON_GPIO = 25      # physical pin 22 — single click repeats last instruction
+
 # Fall detection thresholds (starting from the literature; tune empirically)
 FALL_FREEFALL_THRESHOLD_G = 0.5
 FALL_FREEFALL_MIN_DURATION_S = 0.1

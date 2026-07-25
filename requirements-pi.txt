@@ -3,6 +3,12 @@
 pyserial>=3.5
 smbus2>=0.4
 
+# Physical buttons (and later buzzer + vibration motor) via GPIO.
+# `lgpio` is the underlying kernel-based backend; gpiozero picks it up
+# automatically on Pi 5 running the modern gpiochip interface.
+gpiozero>=2.0
+lgpio>=0.2
+
 # picamera2 is NOT installable via pip — it depends on system libcamera bindings.
 # Install via apt:  sudo apt install -y python3-picamera2
 # Then create the venv with --system-site-packages so it can be imported.
