@@ -4,9 +4,11 @@ from indepensense.telemetry.base import (
     IntervalInformation,
     TelemetryClient,
 )
+from indepensense.telemetry.buffered import BufferedTelemetryClient
 
 __all__ = [
     "AlertEvent",
+    "BufferedTelemetryClient",
     "EventType",
     "IntervalInformation",
     "TelemetryClient",
