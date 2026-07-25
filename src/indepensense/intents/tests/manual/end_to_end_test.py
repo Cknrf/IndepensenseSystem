@@ -30,6 +30,8 @@ import time
 from datetime import datetime
 
 from indepensense.config import (
+    BACKEND_URL,
+    DEVICE_ID,
     GRAPHHOPPER_URL,
     NLU_MODEL,
     NLU_PROMPT_PATH,
@@ -41,6 +43,7 @@ from indepensense.config import (
     PTT_BUTTON_GPIO,
     SIM7600_GPS_PORT,
     SYSTEM_LANGUAGE,
+    TELEMETRY_TIMEOUT_S,
     VOICE_TEST_DIR,
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
@@ -49,6 +52,7 @@ from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
 from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.photon import PhotonGeocoder
+from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
 from indepensense.voice.audio import (
     play,
     record_until_button,
@@ -105,8 +109,18 @@ def main():
     gps = _try_open_gps()
     print("  Opening PTT button...")
     button = _try_open_button()
+    print(f"  Connecting telemetry to {BACKEND_URL}...")
+    telemetry = NestJSTelemetryClient(
+        base_url=BACKEND_URL, timeout_s=TELEMETRY_TIMEOUT_S
+    )
 
-    executor = IntentExecutor(router=router, geocoder=geocoder, gps=gps)
+    executor = IntentExecutor(
+        router=router,
+        geocoder=geocoder,
+        gps=gps,
+        telemetry=telemetry,
+        device_id=DEVICE_ID,
+    )
     trigger = "button" if button is not None else "keyboard"
     print(f"Ready. Active language: {SYSTEM_LANGUAGE}. Trigger: {trigger}.\n")
 
