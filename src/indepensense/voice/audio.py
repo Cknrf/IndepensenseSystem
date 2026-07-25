@@ -97,6 +97,88 @@ def record_until_enter(
     return duration_s
 
 
+def record_until_button(
+    button,
+    output_path: Path,
+    samplerate: int = DEFAULT_SAMPLERATE_HZ,
+    channels: int = 1,
+    max_duration_s: float = 60.0,
+) -> float:
+    """Record until the user presses the given `button` (or `max_duration_s`
+    elapses). Same behaviour as `record_until_enter` but the stop signal
+    comes from a physical button press instead of Enter on stdin.
+
+    The `button` argument is any object satisfying the `feedback.Button`
+    protocol — real `GPIOButton` on the Pi or `MockButton` for tests. This
+    keeps the audio module completely unaware of hardware specifics.
+
+    The button's existing `pressed` handler (if any) is replaced for the
+    duration of the recording and restored on exit. Callers that need the
+    button available for other purposes should snapshot and reinstall the
+    handler themselves.
+    """
+    import threading
+
+    import numpy as np
+    import sounddevice as sd
+    import soundfile as sf
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    frames: list[np.ndarray] = []
+    stop_event = threading.Event()
+
+    def _audio_callback(indata, _frame_count, _time_info, _status):
+        frames.append(indata.copy())
+
+    def _on_press():
+        stop_event.set()
+
+    button.on("pressed", _on_press)
+
+    stream = sd.InputStream(
+        samplerate=samplerate,
+        channels=channels,
+        dtype="int16",
+        callback=_audio_callback,
+    )
+    with stream:
+        # Block until either the button fires or max_duration expires.
+        stop_event.wait(timeout=max_duration_s)
+
+    if not frames:
+        sf.write(
+            str(output_path),
+            np.zeros(int(0.1 * samplerate), dtype="int16"),
+            samplerate,
+            subtype="PCM_16",
+        )
+        return 0.0
+
+    audio = np.concatenate(frames, axis=0)
+    duration_s = len(audio) / samplerate
+    if duration_s > max_duration_s:
+        audio = audio[: int(max_duration_s * samplerate)]
+        duration_s = max_duration_s
+    sf.write(str(output_path), audio, samplerate, subtype="PCM_16")
+    return duration_s
+
+
+def wait_for_button_press(button, prompt: str | None = None) -> None:
+    """Block until the given `button` fires a `pressed` event.
+
+    Uses the same protocol-shaped `Button` as `record_until_button`. Prints
+    `prompt` before waiting if provided.
+    """
+    import threading
+
+    if prompt:
+        print(prompt, flush=True)
+
+    got_press = threading.Event()
+    button.on("pressed", got_press.set)
+    got_press.wait()
+
+
 def play(audio_path: Path) -> None:
     """Play a WAV file through the default output device.
 
