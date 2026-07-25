@@ -1,21 +1,22 @@
 """Intent executor — runs the action described by an IntentResult.
 
-Takes the running system's services (router, geocoder, GPS, ...) via
-constructor injection so it can be unit-tested with mocks. Returns the
-response text to be spoken to the user; the caller (polling loop) is
+Takes the running system's services (router, geocoder, GPS, telemetry)
+via constructor injection so it can be unit-tested with mocks. Returns
+the response text to be spoken to the user; the caller (polling loop) is
 responsible for handing that text to a TTS engine.
 
-For features that touch systems we haven't wired end-to-end yet (guardian
-alerts, real battery reading, cellular signal), the handler currently
-returns a placeholder message. TODO comments mark the ones that need real
+For features that touch systems we haven't wired end-to-end yet (real
+battery reading, cellular signal), the handler currently returns a
+placeholder message. TODO comments mark the ones that need real
 integration when those subsystems land.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.routing.base import Coordinate, Geocoder, GeocodingResult, Route, Router
 from indepensense.sensors.base import GPSSensor
+from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
 
 
 def _format_location_response(hit: GeocodingResult) -> str:
@@ -57,10 +58,14 @@ class IntentExecutor:
         router: Router,
         geocoder: Geocoder,
         gps: GPSSensor | None = None,
+        telemetry: TelemetryClient | None = None,
+        device_id: str = "",
     ):
         self._router = router
         self._geocoder = geocoder
         self._gps = gps
+        self._telemetry = telemetry
+        self._device_id = device_id
 
         self._current_route: Route | None = None
         self._last_instruction: str | None = None
@@ -136,9 +141,36 @@ class IntentExecutor:
         return _format_location_response(hit)
 
     def _handle_emergency_trigger(self, result: IntentResult) -> str:
-        # TODO: when telemetry / guardian dashboard lands, POST an alert here
-        # including current GPS + timestamp + user context.
-        return "Emergency alert triggered. Notifying your guardian now."
+        # If no telemetry client is wired up (dev / early integration),
+        # acknowledge the intent locally without pretending we sent
+        # anything to a guardian.
+        if self._telemetry is None or not self._device_id:
+            return "Emergency alert triggered locally. Guardian dashboard not connected."
+
+        position = self._current_position()
+        # If we have no GPS fix we still fire the alert — knowing WHERE the
+        # user is helps the guardian, but knowing an emergency happened at
+        # all is more important than knowing where. Backend accepts 0.0/0.0
+        # as a valid coordinate; guardian dashboard shows a "location
+        # unknown" marker.
+        # TODO: replace with last-known GPS fix rather than 0.0/0.0 once
+        # we cache the previous fix in the sensor layer.
+        lat = position.lat if position is not None else 0.0
+        lon = position.lon if position is not None else 0.0
+
+        event = AlertEvent(
+            device_id=self._device_id,
+            event_type=EventType.EMERGENCY_ALERT,
+            latitude=lat,
+            longitude=lon,
+            occurred_at=datetime.now(timezone.utc),
+        )
+        if self._telemetry.send_alert(event):
+            return "Emergency alert sent to your guardian."
+        return (
+            "Emergency alert could not be sent right now. "
+            "The system will keep trying in the background."
+        )
 
     def _handle_device_status(self, result: IntentResult) -> str:
         field = result.parameters.get("status_field", "")

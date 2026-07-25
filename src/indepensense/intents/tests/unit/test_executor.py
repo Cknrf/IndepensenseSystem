@@ -9,6 +9,8 @@ from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.routing.mock import MockGeocoder, MockRouter
 from indepensense.sensors.base import GPSFix
+from indepensense.telemetry.base import EventType
+from indepensense.telemetry.mock import MockTelemetryClient
 
 
 class _StaticGPS:
@@ -110,10 +112,63 @@ def test_navigation_location_uses_reverse_geocode():
     assert "You are near" in response or "latitude" in response.lower()
 
 
-def test_emergency_returns_confirmation():
+def test_emergency_without_telemetry_acknowledges_locally():
+    """When the executor has no telemetry client wired up, the emergency
+    handler still returns a sensible message rather than crashing."""
     executor = _make_executor()
     response = executor.execute(IntentResult(Intent.EMERGENCY_TRIGGER))
     assert "emergency" in response.lower() or "guardian" in response.lower()
+
+
+def test_emergency_with_telemetry_sends_alert():
+    telemetry = MockTelemetryClient()
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(fix_quality=1),
+        telemetry=telemetry,
+        device_id="test-device-id",
+    )
+    executor.execute(IntentResult(Intent.EMERGENCY_TRIGGER))
+    assert len(telemetry.alerts) == 1
+    alert = telemetry.alerts[0]
+    assert alert.event_type is EventType.EMERGENCY_ALERT
+    assert alert.device_id == "test-device-id"
+    assert alert.latitude == 14.5824       # from _StaticGPS default
+    assert alert.longitude == 120.9760
+
+
+def test_emergency_without_gps_fix_still_sends_alert():
+    """Losing GPS is not a reason to swallow an emergency. The alert
+    goes out with 0.0/0.0 coordinates; the backend accepts them and the
+    guardian sees 'location unknown'."""
+    telemetry = MockTelemetryClient()
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(fix_quality=0),
+        telemetry=telemetry,
+        device_id="test-device-id",
+    )
+    executor.execute(IntentResult(Intent.EMERGENCY_TRIGGER))
+    assert len(telemetry.alerts) == 1
+    assert telemetry.alerts[0].latitude == 0.0
+    assert telemetry.alerts[0].longitude == 0.0
+
+
+def test_emergency_when_telemetry_send_fails_says_will_retry():
+    """When the send returns False (network down, backend rejected), the
+    response tells the user we'll keep trying — not that it succeeded."""
+    telemetry = MockTelemetryClient(succeed=False)
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(fix_quality=1),
+        telemetry=telemetry,
+        device_id="test-device-id",
+    )
+    response = executor.execute(IntentResult(Intent.EMERGENCY_TRIGGER))
+    assert "could not" in response.lower() or "keep trying" in response.lower()
 
 
 def test_device_status_gps_with_fix():

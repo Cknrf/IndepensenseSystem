@@ -104,3 +104,11 @@ NLU_MODEL = "qwen2.5:1.5b-instruct"
 NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 NLU_TIMEOUT_S = 30.0
 NLU_WARMUP_TIMEOUT_S = 90.0
+
+# Guardian-dashboard backend (NestJS + MySQL, see ../IndepenSense).
+# The dev seed provisions DEVICE_ID with an assisted user + linked guardian.
+# Every deployed wearable gets its own unique UUID here.
+BACKEND_URL = "http://localhost:3000"
+DEVICE_ID = "00000000-0000-0000-0000-000000000001"
+HEARTBEAT_INTERVAL_S = 30
+TELEMETRY_TIMEOUT_S = 5.0
