@@ -108,7 +108,10 @@ NLU_WARMUP_TIMEOUT_S = 90.0
 # Guardian-dashboard backend (NestJS + MySQL, see ../IndepenSense).
 # The dev seed provisions DEVICE_ID with an assisted user + linked guardian.
 # Every deployed wearable gets its own unique UUID here.
-BACKEND_URL = "http://localhost:3000"
+#
+# Currently pointed at the dev laptop's Tailscale IP because the backend
+# runs there during development, not on the Pi itself.
+BACKEND_URL = "http://100.104.82.110:3000"
 DEVICE_ID = "00000000-0000-0000-0000-000000000001"
 HEARTBEAT_INTERVAL_S = 30
 TELEMETRY_TIMEOUT_S = 5.0
