@@ -6,11 +6,21 @@ Requires=ollama.service
 
 [Service]
 Type=oneshot
-# Wait until Ollama's HTTP endpoint is actually responding.
-ExecStartPre=/bin/bash -c 'until curl -sf http://127.0.0.1:11434/api/tags >/dev/null; do sleep 1; done'
+# Wait until Ollama's HTTP endpoint is actually responding AND has our
+# specific model catalogued. `--fail` returns non-zero on any HTTP error
+# so the `until` loop keeps trying if Ollama returns 500 while still
+# initialising.
+ExecStartPre=/bin/bash -c 'until curl -sf http://127.0.0.1:11434/api/tags | grep -q "qwen2.5:1.5b-instruct"; do sleep 1; done'
 # Hit the model once with keep_alive=-1 so it's pinned in RAM.
-# The response body is discarded — we only care that the model loads.
-ExecStart=/usr/bin/curl -s -X POST http://127.0.0.1:11434/api/generate \
+#
+# Flags:
+#   --fail-with-body : exit non-zero on HTTP 4xx/5xx and print body
+#   -S               : show errors even in silent mode
+#   --max-time 300   : allow up to 5 minutes for the model load
+#
+# The response body is captured on failure so `journalctl -u ollama-warmup`
+# shows the real error (was previously silenced by `-s` + no `--fail`).
+ExecStart=/usr/bin/curl -sS --fail-with-body --max-time 300 -X POST http://127.0.0.1:11434/api/generate \
     -H 'Content-Type: application/json' \
     -d '{"model":"qwen2.5:1.5b-instruct","prompt":"ok","keep_alive":-1,"stream":false,"options":{"num_predict":4}}' \
     -o /dev/null
