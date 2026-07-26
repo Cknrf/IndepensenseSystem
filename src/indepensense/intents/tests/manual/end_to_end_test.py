@@ -36,6 +36,7 @@ Run from repo root with:
 
 Ctrl-C exits the loop cleanly.
 """
+import threading
 import time
 from datetime import datetime
 
@@ -151,11 +152,19 @@ def main():
         device_id=DEVICE_ID,
     )
 
+    # Shared cancel flag: emergency callback sets it to signal any
+    # in-progress PTT recording/processing that it should abort. The
+    # main loop clears it at the top of every fresh PTT cycle.
+    cancel_recording = threading.Event()
+
     # Wire the emergency button. Its handler runs on gpiozero's background
     # thread and fires the emergency.trigger intent immediately —
-    # bypassing recording and STT entirely.
+    # bypassing recording and STT entirely. Setting `cancel_recording`
+    # aborts any in-progress PTT recording so the mic and speaker don't
+    # contend with the emergency's TTS output.
     if emergency_button is not None:
         def _on_emergency_press() -> None:
+            cancel_recording.set()
             print("\n[EMERGENCY BUTTON] Pressed. Firing alert...", flush=True)
             timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
             resp_path = VOICE_TEST_DIR / f"{timestamp}_emergency.wav"
@@ -175,6 +184,9 @@ def main():
 
     try:
         while True:
+            # Fresh cycle — clear any lingering emergency-cancel signal.
+            cancel_recording.clear()
+
             if button is not None:
                 wait_for_button_press(button, "Press PTT button to START recording (Ctrl-C to quit)...")
             else:
@@ -184,15 +196,19 @@ def main():
             input_path = VOICE_TEST_DIR / f"{timestamp}_command.wav"
             response_path = VOICE_TEST_DIR / f"{timestamp}_response.wav"
 
-            # 1. Record — push-to-talk style
+            # 1. Record — push-to-talk style, cancellable by the emergency button.
             print("  Recording... press again to stop." if button is not None
                   else "  Recording... press Enter to stop.")
             t0 = time.time()
             if button is not None:
-                duration = record_until_button(button, input_path)
+                duration = record_until_button(button, input_path, cancel_event=cancel_recording)
             else:
                 duration = record_until_enter(input_path)
             print(f"  ({time.time() - t0:.1f}s wall, {duration:.1f}s audio) saved to {input_path.name}")
+
+            if cancel_recording.is_set():
+                print("  Recording preempted by emergency — skipping this cycle.\n")
+                continue
 
             if duration <= 0.2:
                 print("  Too short — try again.\n")
@@ -220,10 +236,15 @@ def main():
             response = executor.execute(intent_result)
             print(f"  ({time.time() - t0:.1f}s) response: {response}")
 
-            # 5. Synthesise + play
+            # 5. Synthesise + play — check cancel one more time so we don't
+            # step on the emergency's TTS output at the speaker.
             t0 = time.time()
             tts.synthesize(response, response_path, language=SYSTEM_LANGUAGE)
             print(f"  ({time.time() - t0:.1f}s) synthesised {response_path.name}")
+
+            if cancel_recording.is_set():
+                print("  Playback preempted by emergency — skipping this cycle.\n")
+                continue
 
             print("  Playing back...")
             play(response_path)

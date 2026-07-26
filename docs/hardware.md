@@ -7001,7 +7001,7 @@ Update this file every time a component's wiring changes.
       235              gps.close()
       236          if button is not None:
       237              button.close()
-      238 +        if emergency_button is not None:                                                                                                        
+      238 +        if emergency_button is  not None:                                                                                                        
       239 +            emergency_button.close()                                                                                                            
       240                                                                                 
       241  

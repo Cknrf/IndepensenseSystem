@@ -103,21 +103,25 @@ def record_until_button(
     samplerate: int = DEFAULT_SAMPLERATE_HZ,
     channels: int = 1,
     max_duration_s: float = 60.0,
+    cancel_event=None,
 ) -> float:
     """Record until the user presses the given `button` (or `max_duration_s`
-    elapses). Same behaviour as `record_until_enter` but the stop signal
-    comes from a physical button press instead of Enter on stdin.
+    elapses, or `cancel_event` is set by another thread).
+
+    Same behaviour as `record_until_enter` but the stop signal comes from
+    a physical button press instead of Enter on stdin.
+
+    `cancel_event` — optional `threading.Event`. When set from any thread,
+    the recording aborts immediately. Used by the wearable's emergency
+    button to preempt a PTT recording: the emergency callback sets the
+    event, this function returns, and the caller checks `cancel_event`
+    afterwards to decide whether to skip the rest of the pipeline.
 
     The `button` argument is any object satisfying the `feedback.Button`
-    protocol — real `GPIOButton` on the Pi or `MockButton` for tests. This
-    keeps the audio module completely unaware of hardware specifics.
-
-    The button's existing `pressed` handler (if any) is replaced for the
-    duration of the recording and restored on exit. Callers that need the
-    button available for other purposes should snapshot and reinstall the
-    handler themselves.
+    protocol — real `GPIOButton` on the Pi or `MockButton` for tests.
     """
     import threading
+    import time
 
     import numpy as np
     import sounddevice as sd
@@ -142,8 +146,16 @@ def record_until_button(
         callback=_audio_callback,
     )
     with stream:
-        # Block until either the button fires or max_duration expires.
-        stop_event.wait(timeout=max_duration_s)
+        # Poll both stop_event (button press) and cancel_event (external
+        # abort like the emergency button) on a short interval. 50 ms is
+        # imperceptible latency for the user but fine-grained enough that
+        # an emergency preemption feels instant.
+        deadline = time.monotonic() + max_duration_s
+        while time.monotonic() < deadline:
+            if stop_event.wait(timeout=0.05):
+                break
+            if cancel_event is not None and cancel_event.is_set():
+                break
 
     if not frames:
         sf.write(
