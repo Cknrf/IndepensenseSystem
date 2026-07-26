@@ -4,13 +4,22 @@ Wires every voice-layer module together with the real routing/geocoding
 services and (if available) real GPS. This is the closest thing yet to
 "actually being a voice assistant."
 
-Push-to-talk is driven by a physical KY-004 button on the GPIO pin
-configured by `PTT_BUTTON_GPIO`. Press once to start recording, press
-again to stop. A safety cap of 60 s bounds runaway recordings.
+Two physical buttons drive interaction:
 
-If the button hardware is unavailable (running on Mac, GPIO chip busy,
-etc.) the script falls back to keyboard Enter so it stays runnable during
-development.
+- **PTT (push-to-talk)** on `PTT_BUTTON_GPIO`. Press once to start
+  recording, press again to stop. Falls back to keyboard Enter when
+  the button isn't wired.
+- **Emergency** on `EMERGENCY_BUTTON_GPIO`. Any press immediately fires
+  `emergency.trigger` — bypasses STT/LLM entirely and POSTs an alert to
+  the guardian backend. Press-fires-instantly is intentional: making an
+  emergency wait for a currently-recording PTT session would defeat the
+  point.
+
+Concurrency caveat: the emergency handler runs on gpiozero's background
+thread. If the user presses emergency mid-recording or mid-playback,
+audio-device contention with sounddevice may briefly conflict. This is
+acceptable for a manual test — proper cross-thread coordination lands
+in `app.py`.
 
 Prerequisites (all must be running on the Pi):
     - Ollama with NLU_MODEL pulled  (systemctl status ollama)
@@ -19,7 +28,8 @@ Prerequisites (all must be running on the Pi):
     - USB mic plugged in as the PipeWire default source
     - Bluetooth headset paired for playback (or USB output)
     - GPS enabled if you want location-aware intents (AT+CGPS=1)
-    - KY-004 button wired to `PTT_BUTTON_GPIO` (fallback: keyboard Enter)
+    - KY-004 PTT button on `PTT_BUTTON_GPIO` (fallback: keyboard Enter)
+    - KY-004 Emergency button on `EMERGENCY_BUTTON_GPIO` (optional)
 
 Run from repo root with:
     python -m indepensense.intents.tests.manual.end_to_end_test
@@ -32,6 +42,7 @@ from datetime import datetime
 from indepensense.config import (
     BACKEND_URL,
     DEVICE_ID,
+    EMERGENCY_BUTTON_GPIO,
     GRAPHHOPPER_URL,
     NLU_MODEL,
     NLU_PROMPT_PATH,
@@ -48,6 +59,7 @@ from indepensense.config import (
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
 )
+from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
 from indepensense.routing.graphhopper import GraphHopperRouter
@@ -87,6 +99,21 @@ def _try_open_button():
         return None
 
 
+def _try_open_emergency_button():
+    """Try to open the Emergency button on GPIO; return None if unavailable.
+
+    Unlike PTT there is no fallback — the emergency button is optional
+    for the manual test. Voice-triggered emergency ("Help, emergency!")
+    still works regardless.
+    """
+    try:
+        from indepensense.feedback.gpio_button import GPIOButton
+        return GPIOButton(gpio_pin=EMERGENCY_BUTTON_GPIO)
+    except Exception as exc:
+        print(f"  Emergency button unavailable ({exc}). Voice emergency still works.")
+        return None
+
+
 def main():
     print("Initialising voice + intent stack...")
     print("  Loading Whisper models...")
@@ -109,6 +136,8 @@ def main():
     gps = _try_open_gps()
     print("  Opening PTT button...")
     button = _try_open_button()
+    print("  Opening Emergency button...")
+    emergency_button = _try_open_emergency_button()
     print(f"  Connecting telemetry to {BACKEND_URL}...")
     telemetry = NestJSTelemetryClient(
         base_url=BACKEND_URL, timeout_s=TELEMETRY_TIMEOUT_S
@@ -121,8 +150,28 @@ def main():
         telemetry=telemetry,
         device_id=DEVICE_ID,
     )
+
+    # Wire the emergency button. Its handler runs on gpiozero's background
+    # thread and fires the emergency.trigger intent immediately —
+    # bypassing recording and STT entirely.
+    if emergency_button is not None:
+        def _on_emergency_press() -> None:
+            print("\n[EMERGENCY BUTTON] Pressed. Firing alert...", flush=True)
+            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
+            resp_path = VOICE_TEST_DIR / f"{timestamp}_emergency.wav"
+            try:
+                response = executor.execute(IntentResult(intent=Intent.EMERGENCY_TRIGGER))
+                print(f"[EMERGENCY BUTTON] response: {response}", flush=True)
+                tts.synthesize(response, resp_path, language=SYSTEM_LANGUAGE)
+                play(resp_path)
+            except Exception as exc:
+                print(f"[EMERGENCY BUTTON] handler error: {exc}", flush=True)
+
+        emergency_button.on("pressed", _on_emergency_press)
+
     trigger = "button" if button is not None else "keyboard"
-    print(f"Ready. Active language: {SYSTEM_LANGUAGE}. Trigger: {trigger}.\n")
+    emerg = "wired" if emergency_button is not None else "not wired"
+    print(f"Ready. Active language: {SYSTEM_LANGUAGE}. PTT: {trigger}. Emergency button: {emerg}.\n")
 
     try:
         while True:
@@ -186,6 +235,8 @@ def main():
             gps.close()
         if button is not None:
             button.close()
+        if emergency_button is not None:
+            emergency_button.close()
 
 
 if __name__ == "__main__":
