@@ -212,8 +212,13 @@ def test_survives_raising_telemetry_client():
     sender = PeriodicHeartbeatSender(tel, _FakeGPS(), "dev", interval_s=0.02)
     sender.start()
     try:
-        assert _wait_until(lambda: tel.call_count >= 3, timeout_s=2.0)
-        assert sender.failed_count >= 3
+        # Wait on failed_count (not tel.call_count) — the raise happens
+        # inside the mock's send_heartbeat, so tel.call_count increments
+        # BEFORE the sender's except block bumps failed_count. Waiting
+        # on failed_count avoids a race where we assert too early and
+        # see call_count=3 but failed_count still lagging at 2.
+        assert _wait_until(lambda: sender.failed_count >= 3, timeout_s=2.0)
+        assert tel.call_count >= 3
     finally:
         sender.stop(timeout_s=1.0)
 
