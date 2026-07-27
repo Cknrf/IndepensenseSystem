@@ -99,7 +99,11 @@ class IntentExecutor:
         if start is None:
             return "I can't start navigation without a GPS fix yet."
 
-        hits = self._geocoder.geocode(location, limit=1)
+        # Always pass the user's position as a proximity bias. For chain
+        # names ("Jollibee", "7-Eleven"), this returns the local branch
+        # instead of a random one across the country. For specific named
+        # places ("SM Manila"), Photon's text-match relevance still wins.
+        hits = self._geocoder.geocode(location, limit=1, near=start)
         if not hits:
             return f"I couldn't find any place matching '{location}'."
         destination = hits[0]
