@@ -35,12 +35,30 @@ class PhotonGeocoder:
         self._base_url = base_url.rstrip("/")
         self._timeout_s = timeout_s
 
-    def geocode(self, query: str, limit: int = 5) -> list[GeocodingResult]:
+    def geocode(
+        self,
+        query: str,
+        limit: int = 5,
+        near: Coordinate | None = None,
+    ) -> list[GeocodingResult]:
         import requests  # lazy
+
+        params: dict[str, Any] = {"q": query, "limit": limit}
+        if near is not None:
+            # Photon's `location_bias_scale` runs 0.0-1.0. Default (~0.2)
+            # is a very soft nudge — a 965 km Jollibee can still outrank
+            # a local one if it happens to have marginally better text
+            # match. On a wearable, "take me to Jollibee" almost always
+            # means the nearest one, so we use 1.0 to make proximity
+            # dominant. Named/unambiguous places (e.g. "SM Manila")
+            # still win via text-match relevance.
+            params["lat"] = near.lat
+            params["lon"] = near.lon
+            params["location_bias_scale"] = 1.0
 
         response = requests.get(
             f"{self._base_url}/api",
-            params={"q": query, "limit": limit},
+            params=params,
             timeout=self._timeout_s,
         )
         response.raise_for_status()

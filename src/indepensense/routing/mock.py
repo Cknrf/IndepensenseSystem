@@ -31,7 +31,15 @@ class MockRouter:
 
 
 class MockGeocoder:
-    def geocode(self, query: str, limit: int = 5) -> list[GeocodingResult]:
+    def geocode(
+        self,
+        query: str,
+        limit: int = 5,
+        near: Coordinate | None = None,
+    ) -> list[GeocodingResult]:
+        # `near` is accepted to match the Geocoder protocol but the mock
+        # returns a fixed result regardless. Callers that want to verify
+        # proximity behaviour should use a scripted fake in the test file.
         return [
             GeocodingResult(
                 name=query,

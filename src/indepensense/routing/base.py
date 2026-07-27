@@ -52,8 +52,20 @@ class Router(Protocol):
 
 
 class Geocoder(Protocol):
-    def geocode(self, query: str, limit: int = 5) -> list[GeocodingResult]:
-        """Forward-geocode a place name into coordinates."""
+    def geocode(
+        self,
+        query: str,
+        limit: int = 5,
+        near: Coordinate | None = None,
+    ) -> list[GeocodingResult]:
+        """Forward-geocode a place name into coordinates.
+
+        When `near` is provided, the geocoder biases results toward that
+        location. Exact name matches for specific places (e.g. "SM
+        Manila") still win over proximity — the bias only breaks ties
+        between multiple matches with equivalent text relevance (e.g. the
+        five hundred Jollibees scattered across the country).
+        """
 
     def reverse(self, coordinate: Coordinate) -> GeocodingResult | None:
         """Reverse-geocode coordinates into the nearest known place."""
