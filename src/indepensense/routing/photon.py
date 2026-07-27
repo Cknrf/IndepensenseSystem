@@ -45,16 +45,17 @@ class PhotonGeocoder:
 
         params: dict[str, Any] = {"q": query, "limit": limit}
         if near is not None:
-            # Photon's `location_bias_scale` runs 0.0-1.0. Default (~0.2)
-            # is a very soft nudge — a 965 km Jollibee can still outrank
-            # a local one if it happens to have marginally better text
-            # match. On a wearable, "take me to Jollibee" almost always
-            # means the nearest one, so we use 1.0 to make proximity
-            # dominant. Named/unambiguous places (e.g. "SM Manila")
-            # still win via text-match relevance.
+            # Just `lat` and `lon` — Photon's default location bias is
+            # already strong enough to prefer the nearby branch of a
+            # chain over one across the country. Explicitly setting
+            # `location_bias_scale=1.0` was empirically found to disable
+            # the bias on our Photon build (verified 2026-07-27:
+            # `curl ...&lat=X&lon=Y` correctly returned the Lipa Jollibee,
+            # but adding `location_bias_scale=1.0` returned the Tacloban
+            # one 700 km away). Text-match relevance still wins for
+            # specific place names like "SM Manila".
             params["lat"] = near.lat
             params["lon"] = near.lon
-            params["location_bias_scale"] = 1.0
 
         response = requests.get(
             f"{self._base_url}/api",
