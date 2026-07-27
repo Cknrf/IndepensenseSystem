@@ -68,6 +68,23 @@ WHISPER_MODELS = {
     "en": "tiny",
     "tl": "small",
 }
+
+# Vocabulary hints for Whisper. Whisper reads `initial_prompt` as "recent
+# context" and biases its decoder toward the words that appear in it.
+# We use this to correct tiny-model mishearing of Filipino brand names
+# (e.g. "Jollibee" got heard as "Jalebi" until we added it here).
+# Hard limit ~224 tokens — keep each language's hint focused.
+WHISPER_INITIAL_PROMPTS: dict[str, str] = {
+    "en": (
+        "This is a voice assistant for a person in the Philippines. "
+        "The user may say Jollibee, McDonald's, KFC, Chowking, Mang Inasal, "
+        "Greenwich, Max's, SM Lipa, Robinsons, Ayala, Puregold, Landers, "
+        "Metrobank, BDO, BPI, Landbank, 7-Eleven, Mini Stop, "
+        "Mercury Drug, Watsons, National Bookstore."
+    ),
+    "tl": "",   # Tagalog small model transcribes local brands well already
+}
+
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 
 # Active system language. Currently fixed at build time; will become a

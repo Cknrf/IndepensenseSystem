@@ -57,6 +57,7 @@ from indepensense.config import (
     SYSTEM_LANGUAGE,
     TELEMETRY_TIMEOUT_S,
     VOICE_TEST_DIR,
+    WHISPER_INITIAL_PROMPTS,
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
 )
@@ -214,9 +215,14 @@ def main():
                 print("  Too short — try again.\n")
                 continue
 
-            # 2. Transcribe
+            # 2. Transcribe — hint Whisper with local proper nouns so the
+            # tiny English model stops mishearing "Jollibee" as "Jalebi" etc.
             t0 = time.time()
-            transcript = stt.transcribe(input_path, language=SYSTEM_LANGUAGE)
+            transcript = stt.transcribe(
+                input_path,
+                language=SYSTEM_LANGUAGE,
+                initial_prompt=WHISPER_INITIAL_PROMPTS.get(SYSTEM_LANGUAGE) or None,
+            )
             print(f"  ({time.time() - t0:.1f}s) transcript: {transcript.text or '(silence)'}")
 
             if not transcript.text.strip():

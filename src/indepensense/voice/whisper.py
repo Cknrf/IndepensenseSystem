@@ -57,7 +57,22 @@ class FasterWhisperSTT:
         self,
         audio_path: Path,
         language: str | None = None,
+        initial_prompt: str | None = None,
     ) -> Transcript:
+        """Transcribe an audio file.
+
+        `initial_prompt` is passed through to Whisper's decoder as recent
+        context. Whisper treats it as if the speaker had just said this
+        text, which biases the decoder toward similar vocabulary. Useful
+        for steering the model toward domain-specific proper nouns that
+        smaller models mishear (e.g. Filipino brands like "Jollibee" that
+        `tiny` English otherwise mangles to sound-alikes like "Jalebi").
+
+        Whisper's hard limit for initial_prompt is ~224 tokens — roughly
+        500-800 characters of natural English. Longer prompts are silently
+        truncated and can also degrade transcription of the actual audio,
+        so keep the hint focused on the specific vocab you need.
+        """
         lang = language or self._default_language
         if lang not in self._models:
             raise ValueError(
@@ -71,6 +86,7 @@ class FasterWhisperSTT:
             language=lang,
             beam_size=1,          # greedy decoding — fastest on CPU
             vad_filter=True,      # skip non-speech regions
+            initial_prompt=initial_prompt,
         )
         segments = [
             TranscriptSegment(text=s.text.strip(), start_s=s.start, end_s=s.end)
