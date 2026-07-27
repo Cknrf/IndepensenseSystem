@@ -1,17 +1,21 @@
 # systemd services
 
-Auto-start GraphHopper and Photon on the Raspberry Pi so the wearable's
-routing + geocoding backend comes up automatically on boot — no more
+Auto-start GraphHopper, Photon, and the Ollama warmup on the Raspberry
+Pi so the wearable's backend comes up automatically on boot — no more
 "three SSH sessions to launch the system."
 
-Ollama already ships with its own systemd service (installed by the
-official Ollama installer). We add one companion unit that pre-loads the
-NLU model on boot so the first user command doesn't pay the 25-40 s
-cold-load cost: `ollama-warmup.service`.
+The `indepensense.service` unit is the wearable's own long-running
+runtime (main loop, fall detection, voice pipeline, telemetry, etc.).
+It depends on the other three so systemd starts them in the right order.
+
+Ollama itself ships with its own systemd service (installed by the
+official Ollama installer). The `ollama-warmup.service` here pre-loads
+the NLU model on boot so the first user command doesn't pay the 25-40 s
+cold-load cost.
 
 ## Install
 
-Copy the two unit files into systemd's directory, enable them at boot,
+Copy all four unit files into systemd's directory, enable them at boot,
 and start them now:
 
 ```bash
@@ -20,11 +24,16 @@ cd ~/Desktop/thesis/IndepensenseSystem/deploy/systemd
 sudo cp graphhopper.service    /etc/systemd/system/
 sudo cp photon.service         /etc/systemd/system/
 sudo cp ollama-warmup.service  /etc/systemd/system/
+sudo cp indepensense.service   /etc/systemd/system/
 
 sudo systemctl daemon-reload
-sudo systemctl enable graphhopper.service photon.service ollama-warmup.service
-sudo systemctl start  graphhopper.service photon.service ollama-warmup.service
+sudo systemctl enable graphhopper.service photon.service ollama-warmup.service indepensense.service
+sudo systemctl start  graphhopper.service photon.service ollama-warmup.service indepensense.service
 ```
+
+For dev work you may prefer to leave `indepensense.service` disabled and
+run the app by hand (`python -m indepensense.app`) so you can iterate.
+Enable it once you're ready to demo boot-to-wearable.
 
 ## Verify
 
@@ -37,12 +46,14 @@ sudo systemctl status graphhopper photon ollama-warmup
 - **graphhopper** — should read `Active: active (running)` within ~5 s.
 - **photon** — same, but takes ~30-60 s to open its OpenSearch index.
 - **ollama-warmup** — `oneshot` service, expected state is `Active: active (exited)` — this is normal for oneshot units. Its job is to fire once at boot, load the model, and exit. Check the model is actually loaded with `ollama ps`.
+- **indepensense** — `Active: active (running)`. Full startup takes ~30-60 s (Whisper + Piper model loading + Ollama warmup); watch the log for `Ready. Running fall-detection loop.`
 
 Follow logs in real time:
 
 ```bash
 sudo journalctl -u graphhopper -f
 sudo journalctl -u photon -f
+sudo journalctl -u indepensense -f
 ```
 
 Smoke-test the endpoints:

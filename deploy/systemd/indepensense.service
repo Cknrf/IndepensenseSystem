@@ -1,0 +1,29 @@
+[Unit]
+Description=IndepenSense wearable runtime
+Documentation=https://github.com/cknrf/IndepensenseSystem
+Wants=network-online.target
+After=network-online.target ollama.service ollama-warmup.service graphhopper.service photon.service
+Requires=ollama.service graphhopper.service photon.service
+
+[Service]
+Type=simple
+User=cknrf
+Group=cknrf
+# Serial ports (GPS on ttyUSB1), I²C (MPU6050), and GPIO (buttons + buzzer + motors).
+SupplementaryGroups=dialout i2c gpio
+WorkingDirectory=/home/cknrf/Desktop/thesis/IndepensenseSystem
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/cknrf/Desktop/thesis/IndepensenseSystem/.venv/bin/python -m indepensense.app
+Restart=on-failure
+RestartSec=5
+# Graceful shutdown: SIGTERM triggers app.stop() which drains the telemetry
+# queue (up to 5 s), stops the heartbeat sender, and closes sensors. The
+# 15 s ceiling is comfortably above the worst-case drain.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
