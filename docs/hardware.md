@@ -122,15 +122,41 @@ python -m indepensense.feedback.tests.manual.button_test           # PTT pin
 python -m indepensense.feedback.tests.manual.button_test 24        # any pin
 ```
 
-### Vibration Motor — STATUS: planned
+### Vibration Motors (3x) — STATUS: driver ready, awaiting wiring
 
-Likely needs a transistor driver (e.g. 2N2222) — motor draws more current than
-a GPIO can source directly.
+Three coin/erm-style hobby vibration motors provide directional cueing:
+front (turn ahead), right (turn right), left (turn left). Each motor
+needs its own NPN transistor circuit because the motors draw 60-100 mA
+each — well above the Pi's per-pin GPIO source limit (~16 mA).
 
-| Component  | Pi physical pin | Pi GPIO  | Notes |
-|------------|-----------------|----------|-------|
-| Gate / base| TBD             | TBD      | through resistor |
-| GND        | any GND         | GND      |       |
+| Function | Pi physical pin | Pi GPIO |
+|----------|-----------------|---------|
+| Front    | 11              | GPIO 17 |
+| Right    | 13              | GPIO 27 |
+| Left     | 15              | GPIO 22 |
+
+Pins configurable via `VIBRATION_FRONT_GPIO`, `VIBRATION_RIGHT_GPIO`,
+and `VIBRATION_LEFT_GPIO` in `indepensense.config`.
+
+**Per-motor circuit (repeat 3 times):**
+
+```
+Motor +     → 5V rail (Pi physical pin 2 or 4)
+Motor −     → NPN transistor collector (2N2222 or 2N3904)
+NPN emitter → GND rail
+NPN base    → 1 kΩ resistor → Pi GPIO
+Flyback diode (1N4001):
+    cathode (striped end) → Motor +
+    anode                 → Motor −
+```
+
+The flyback diode is not optional — the reverse voltage spike when a
+motor stops can otherwise destroy the transistor or the Pi's GPIO.
+
+Manual test:
+```bash
+python -m indepensense.feedback.tests.manual.vibration_test
+```
 
 ## raspi-config one-time setup
 

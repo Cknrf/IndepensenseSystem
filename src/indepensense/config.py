@@ -83,6 +83,13 @@ REPEAT_BUTTON_GPIO = 25      # physical pin 22 — single click repeats last ins
 # current-draw caveat if the Pi shows undervoltage warnings).
 BUZZER_GPIO = 18             # physical pin 12
 
+# Vibration motors — driven through NPN transistors (motors draw more
+# current than a GPIO can safely source). See docs/hardware.md for the
+# transistor + flyback-diode circuit each motor needs.
+VIBRATION_FRONT_GPIO = 17    # physical pin 11
+VIBRATION_RIGHT_GPIO = 27    # physical pin 13
+VIBRATION_LEFT_GPIO = 22     # physical pin 15
+
 # Fall detection thresholds (starting from the literature; tune empirically)
 FALL_FREEFALL_THRESHOLD_G = 0.5
 FALL_FREEFALL_MIN_DURATION_S = 0.1
