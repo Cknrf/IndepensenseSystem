@@ -39,6 +39,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 
+from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import IntervalInformation, TelemetryClient
 
@@ -50,11 +51,13 @@ class PeriodicHeartbeatSender:
         gps: GPSSensor | None,
         device_id: str,
         interval_s: float = 30.0,
+        battery: BatteryReader | None = None,
     ):
         if interval_s <= 0:
             raise ValueError("interval_s must be > 0")
         self._telemetry = telemetry
         self._gps = gps
+        self._battery = battery
         self._device_id = device_id
         self._interval_s = interval_s
 
@@ -108,12 +111,32 @@ class PeriodicHeartbeatSender:
         lat, lon = self._read_gps_or_zero()
         return IntervalInformation(
             device_id=self._device_id,
-            battery_health=100,       # TODO: real reading from Waveshare UPS HAT (E)
+            battery_health=self._read_battery_percent_or_default(),
             internet_status=True,     # TODO: HEAD probe or last-POST outcome
             latitude=lat,
             longitude=lon,
             created_at=datetime.now(timezone.utc),
         )
+
+    def _read_battery_percent_or_default(self) -> int:
+        """Read the current battery percentage.
+
+        Returns 100 when no BatteryReader is wired (dev on Mac, HAT not
+        installed) so heartbeats still send and the guardian dashboard
+        doesn't misread "no reader" as "critical low battery".
+
+        A raising reader is also treated as unknown → 100. The next
+        heartbeat will try again.
+        """
+        if self._battery is None:
+            return 100
+        try:
+            reading = self._battery.read()
+        except Exception:
+            return 100
+        if reading is None:
+            return 100
+        return max(0, min(100, reading.percentage))
 
     def _read_gps_or_zero(self) -> tuple[float, float]:
         """Get current lat/lon, or (0.0, 0.0) if GPS is missing or unlocked."""

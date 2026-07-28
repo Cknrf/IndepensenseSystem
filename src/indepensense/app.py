@@ -73,6 +73,7 @@ from pathlib import Path
 
 from indepensense.config import (
     BACKEND_URL,
+    BATTERY_CHECK_INTERVAL_S,
     BUZZER_GPIO,
     DEVICE_ID,
     DYP_A22_BAUDRATE,
@@ -81,6 +82,8 @@ from indepensense.config import (
     EMERGENCY_BUTTON_GPIO,
     GRAPHHOPPER_URL,
     HEARTBEAT_INTERVAL_S,
+    LOW_BATTERY_PERCENT,
+    LOW_BATTERY_RECOVERY_PERCENT,
     MPU6050_ADDRESS,
     MPU6050_I2C_BUS,
     NLU_MODEL,
@@ -98,6 +101,7 @@ from indepensense.config import (
     SIM7600_GPS_PORT,
     SYSTEM_LANGUAGE,
     TELEMETRY_TIMEOUT_S,
+    UPS_HAT_I2C_BUS,
     VIBRATION_FRONT_GPIO,
     VIBRATION_LEFT_GPIO,
     VIBRATION_RIGHT_GPIO,
@@ -112,6 +116,7 @@ from indepensense.feedback.gpio_vibration import GPIOVibrationMotor
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
+from indepensense.power.waveshare_ups_e import WaveshareUPSHatE
 from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.photon import PhotonGeocoder
 from indepensense.safety.fall_detector import ThresholdFallDetector
@@ -221,6 +226,13 @@ class App:
         self.ptt_button: GPIOButton | None = None
         self.emergency_button: GPIOButton | None = None
         self.repeat_button: GPIOButton | None = None
+        self.battery: WaveshareUPSHatE | None = None
+
+        # Low-battery alert state: latch true after firing so we don't
+        # spam the alert on every check. Cleared when battery recovers
+        # past the recovery threshold (hysteresis).
+        self._low_battery_alerted = False
+        self._last_battery_check = 0.0
 
         # Obstacle detection: two DYP-A22 sensors + haptic + audio feedback.
         self.top_sensor: DYPA22 | None = None
@@ -313,12 +325,16 @@ class App:
         self.top_sensor = self._try_open_ultrasonic(DYP_A22_TOP_PORT, "TOP")
         self.bottom_sensor = self._try_open_ultrasonic(DYP_A22_BOTTOM_PORT, "BOTTOM")
 
+        print("  Opening UPS HAT (battery)...", flush=True)
+        self.battery = self._try_open_battery()
+
         print("  Starting heartbeat sender...", flush=True)
         self.heartbeat_sender = PeriodicHeartbeatSender(
             telemetry=self.buffered,
             gps=cached_gps,
             device_id=DEVICE_ID,
             interval_s=HEARTBEAT_INTERVAL_S,
+            battery=self.battery,
         )
         self.heartbeat_sender.start()
 
@@ -352,6 +368,11 @@ class App:
                 # return None. That's fine.
                 self._check_obstacle_sensor("top", self.top_sensor)
                 self._check_obstacle_sensor("bottom", self.bottom_sensor)
+
+                # Battery check — throttled to `BATTERY_CHECK_INTERVAL_S`
+                # since battery changes slowly. Rate limiting is inside
+                # the method (skips if last check was recent).
+                self._check_battery_and_alert()
 
                 self._shutdown.wait(timeout=FALL_LOOP_INTERVAL_S)
         finally:
@@ -398,6 +419,7 @@ class App:
             ("MPU6050", self.imu),
             ("TOP ultrasonic", self.top_sensor),
             ("BOTTOM ultrasonic", self.bottom_sensor),
+            ("UPS HAT", self.battery),
             ("PTT button", self.ptt_button),
             ("Emergency button", self.emergency_button),
             ("Repeat button", self.repeat_button),
@@ -435,6 +457,71 @@ class App:
         alert = AlertEvent(
             device_id=DEVICE_ID,
             event_type=EventType.FALL_DETECTION,
+            latitude=lat,
+            longitude=lon,
+            occurred_at=datetime.now(timezone.utc),
+        )
+        if self.buffered is not None:
+            self.buffered.send_alert(alert)
+
+    # ---------------------------------------------------------------- battery
+
+    def _check_battery_and_alert(self) -> None:
+        """Poll battery and fire a LOW_BATTERY alert on threshold crossing.
+
+        Called from the 100 Hz main loop but internally rate-limited to
+        `BATTERY_CHECK_INTERVAL_S` — battery changes slowly, no reason
+        to hammer the I²C bus. Hysteresis (separate fire + recovery
+        thresholds) prevents alert flapping when hovering at 15%.
+        """
+        if self.battery is None:
+            return
+
+        now = time.monotonic()
+        if now - self._last_battery_check < BATTERY_CHECK_INTERVAL_S:
+            return
+        self._last_battery_check = now
+
+        try:
+            reading = self.battery.read()
+        except Exception as exc:
+            print(f"[battery] read error: {exc}", file=sys.stderr, flush=True)
+            return
+        if reading is None:
+            return
+
+        pct = reading.percentage
+
+        # Hysteresis: only fire if we haven't already alerted, and we're
+        # below the fire threshold. Clear the latch once we recover
+        # above the recovery threshold (typically higher — e.g. 20% —
+        # so quick sags near 15% don't retrigger).
+        if self._low_battery_alerted:
+            if pct >= LOW_BATTERY_RECOVERY_PERCENT:
+                print(
+                    f"[battery] recovered to {pct}% — LOW_BATTERY latch cleared",
+                    flush=True,
+                )
+                self._low_battery_alerted = False
+        else:
+            if pct < LOW_BATTERY_PERCENT and reading.is_discharging:
+                print(
+                    f"[battery] {pct}% — firing LOW_BATTERY alert",
+                    flush=True,
+                )
+                self._fire_low_battery_alert(pct)
+                self._low_battery_alerted = True
+
+    def _fire_low_battery_alert(self, percentage: int) -> None:
+        """POST a Low Battery alert to the guardian backend."""
+        lat, lon = 0.0, 0.0
+        if self.gps_cache is not None:
+            fix = self.gps_cache.latest_fix()
+            if fix is not None:
+                lat, lon = fix.lat, fix.lon
+        alert = AlertEvent(
+            device_id=DEVICE_ID,
+            event_type=EventType.LOW_BATTERY,
             latitude=lat,
             longitude=lon,
             occurred_at=datetime.now(timezone.utc),
@@ -699,6 +786,16 @@ class App:
             return DYPA22(port, baudrate=DYP_A22_BAUDRATE)
         except Exception as exc:
             print(f"  {label} ultrasonic unavailable ({exc}).", flush=True)
+            return None
+
+    def _try_open_battery(self) -> WaveshareUPSHatE | None:
+        try:
+            return WaveshareUPSHatE(bus_number=UPS_HAT_I2C_BUS)
+        except Exception as exc:
+            print(
+                f"  UPS HAT unavailable ({exc}). Heartbeats will report 100%.",
+                flush=True,
+            )
             return None
 
 

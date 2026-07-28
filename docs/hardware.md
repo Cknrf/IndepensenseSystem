@@ -76,13 +76,48 @@ CAM/DISP 0
 
 ### MPU6050 IMU — STATUS: working
 
-I²C device on the Pi's primary I²C bus (I2C1). Used by the fall detector
-at 100 Hz sample rate. ±8 g accelerometer range configured in the driver.
+I²C device on the Pi's primary I²C bus (I2C1) at address `0x68`. Used
+by the fall detector at 100 Hz sample rate. ±8 g accelerometer range
+configured in the driver. Shares the I²C bus with the Waveshare UPS
+HAT (E) — they have different addresses so no conflict.
 
 Pin 2 (VCC)     VCC
 Pin 9 (GND)     GND
 Pin 3 (GPIO 2)  SDA
 Pin 5 (GPIO 3)  SCL
+
+### Waveshare UPS HAT (E) — STATUS: working
+
+Battery power + fuel gauge for the wearable. Four 18650 Li-ion cells
+in a 4S1P configuration (nominal ~14.4 V, full charge ~16.8 V) via a
+proprietary I²C fuel gauge at address `0x2D`.
+
+**Mounts UNDER the Pi via pogo pins** — spring-loaded contacts on the
+HAT touch test points on the Pi's underside. No GPIO header pins are
+used, so it doesn't conflict with any sensor/actuator wiring. The HAT
+also delivers 5 V power to the Pi (replaces the USB-C power supply).
+
+Exposes via I²C (see `src/indepensense/power/waveshare_ups_e.py`):
+
+- **Battery voltage, current** (signed: + discharge, − charge)
+- **Percentage** (fuel-gauge-computed, not linearly interpolated)
+- **Per-cell voltages** (all four cells individually — useful for
+  detecting cell imbalance)
+- **Charging state** (idle / charging / fast-charging / discharging)
+- **Time to empty / time to full** (fuel-gauge estimates)
+
+Under-voltage protection: the HAT enforces its own shutdown when any
+cell drops below ~3.15 V for ~60 s. Our software fires a `Low Battery`
+alert to the guardian dashboard when the reported percentage drops
+below `LOW_BATTERY_PERCENT` (default 15%) and the wearable is
+discharging (not currently plugged in).
+
+Manual test:
+```bash
+python -m indepensense.power.tests.manual.single_ups_test
+```
+Prints a live readout of voltage / current / percentage / cell
+voltages every 2 seconds.
 
 ### Active Buzzer — STATUS: driver ready, awaiting wiring
 

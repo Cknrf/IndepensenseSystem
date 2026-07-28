@@ -35,6 +35,20 @@ OBSTACLE_COOLDOWN_S = 2.0        # per sensor: don't fire the same tier again
 MPU6050_I2C_BUS = 1
 MPU6050_ADDRESS = 0x68
 
+# Waveshare UPS HAT (E) — battery + power management, also on I2C1 bus.
+# The HAT mounts under the Pi via pogo pins (no GPIO header conflict).
+# I²C address `0x2D` — do NOT confuse with a generic INA219 at 0x43.
+UPS_HAT_I2C_BUS = 1
+UPS_HAT_I2C_ADDRESS = 0x2D
+
+# Low-battery alert thresholds. Fires LOW_BATTERY when percentage drops
+# BELOW `_PERCENT` (once, then latched until it recovers above
+# `_RECOVERY_PERCENT`). This hysteresis prevents flapping alerts at
+# the boundary.
+LOW_BATTERY_PERCENT = 15
+LOW_BATTERY_RECOVERY_PERCENT = 20
+BATTERY_CHECK_INTERVAL_S = 10.0
+
 # SIM7600G-H — GPS serial port. ModemManager labels this as (gps) in
 # `mmcli -m <id>`. Enable GPS with `AT+CGPS=1` on /dev/ttyUSB2 first.
 SIM7600_GPS_PORT = "/dev/ttyUSB1"
