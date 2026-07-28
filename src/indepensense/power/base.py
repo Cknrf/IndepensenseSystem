@@ -21,7 +21,11 @@ from typing import Protocol
 @dataclass(frozen=True)
 class BatteryReading:
     voltage_mv: int
-    current_ma: int                          # +ve = discharging, -ve = charging
+    # Waveshare convention: POSITIVE = charging (current flowing INTO the
+    # battery), NEGATIVE = discharging (current flowing OUT to the load).
+    # This matches the raw signed 16-bit value from register 0x20 after
+    # two's-complement conversion.
+    current_ma: int
     percentage: int                          # 0-100
     charging_state: str                      # "idle" | "charging" | "fast_charging" | "discharging"
     cell_voltages_mv: tuple[int, int, int, int]
@@ -47,10 +51,14 @@ class BatteryReading:
         low-voltage protection. Once this is True for ~60 s the HAT
         will cut power on its own, so app-level graceful shutdown
         (drain telemetry, notify guardian) must happen quickly.
+
+        We use the fuel-gauge-reported `charging_state` (authoritative)
+        rather than the current sign — a briefly-idle moment during
+        charging shouldn't trip the critical alarm.
         """
         cutoff_mv = 3150
         low_cell = any(v < cutoff_mv for v in self.cell_voltages_mv)
-        return low_cell and self.current_ma > -50
+        return low_cell and not self.is_charging
 
 
 class BatteryReader(Protocol):

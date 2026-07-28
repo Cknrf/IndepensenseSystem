@@ -69,16 +69,21 @@ class WaveshareUPSHatE:
         voltage_mv = bat[0] | (bat[1] << 8)
         current_ma = bat[2] | (bat[3] << 8)
         # Battery current field is signed 16-bit — the HAT reports
-        # negative as two's complement above 0x7FFF.
+        # negative as two's complement above 0x7FFF. Positive = charging,
+        # negative = discharging.
         if current_ma > 0x7FFF:
             current_ma -= 0x10000
         percentage = bat[4] | (bat[5] << 8)
 
-        # Time-to-empty/full share bytes 8-11 depending on state;
-        # only one is meaningful at a time. We expose both and let the
-        # caller pick based on charging_state.
+        # Time-to-empty/full share bytes 8-11 depending on state; only
+        # one is meaningful at a time. Use the fuel-gauge-reported
+        # `charging_state` (authoritative) to decide which is valid,
+        # rather than deriving from the current sign (which can flicker
+        # near zero during idle transitions).
         time_to_empty_min = bat[8] | (bat[9] << 8)
         time_to_full_min = bat[10] | (bat[11] << 8)
+        is_discharging = charging_state == "discharging"
+        is_charging = charging_state in ("charging", "fast_charging")
 
         cell_voltages_mv = (
             cells[0] | (cells[1] << 8),
@@ -93,8 +98,8 @@ class WaveshareUPSHatE:
             percentage=percentage,
             charging_state=charging_state,
             cell_voltages_mv=cell_voltages_mv,
-            time_to_empty_min=time_to_empty_min if current_ma > 0 else 0,
-            time_to_full_min=time_to_full_min if current_ma < 0 else 0,
+            time_to_empty_min=time_to_empty_min if is_discharging else 0,
+            time_to_full_min=time_to_full_min if is_charging else 0,
             timestamp=time.time(),
         )
 
