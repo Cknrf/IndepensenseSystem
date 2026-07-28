@@ -10,9 +10,10 @@ Concurrency model
 We have a synchronous main loop for sensor polling PLUS several
 well-scoped background threads for I/O concerns:
 
-  - Main thread: 100 Hz MPU6050 read → fall detector → alert on event.
-    Cheap sensor reads only — anything blocking (network, LLM, TTS)
-    runs elsewhere.
+  - Main thread: 100 Hz MPU6050 read → fall detector → alert on event,
+    plus polling both DYP-A22 ultrasonic sensors and firing obstacle
+    warnings. Cheap sensor reads only — anything blocking (network,
+    LLM, TTS, warning-pattern playback) runs elsewhere.
   - PTT button callback (gpiozero thread pool): spawns a voice thread
     per press. Second press while voice is busy is ignored.
   - Voice thread (one at a time, per PTT session): record → STT →
@@ -21,11 +22,29 @@ well-scoped background threads for I/O concerns:
     handler directly. This preempts voice AND fires the alert without
     waiting for the voice thread to finish.
   - Repeat button callback: replays the last navigation instruction.
+  - Warning-pattern threads (per obstacle event): play a vibration +
+    buzzer pattern under a mutex so overlapping patterns don't race.
   - Heartbeat sender (already built): every N seconds, non-blocking.
   - Telemetry worker (already built): drains queue, retries failures.
   - GPS cache thread: polls SIM7600 GPS at 1 Hz, exposes latest fix to
     all consumers (executor, heartbeat, fall alerts) without serial
     port contention.
+
+Obstacle detection
+------------------
+
+Two DYP-A22 sensors mounted on the cane, both forward-facing:
+
+  - TOP sensor: head-level obstacles (branches, low signage). This is
+    the wearable's unique value — the user's cane can't sweep the air
+    above them. Warning + danger tiers both include a buzzer beep so
+    the alert is audible + haptic.
+  - BOTTOM sensor: foot-level obstacles (curbs, low walls). Silent
+    vibration only — the user's cane already detects most of these by
+    touch, so we notify without nagging.
+
+Two thresholds: 100 cm (warning) and 50 cm (danger). 2 s cooldown per
+(sensor, tier) so a lingering obstacle doesn't spam.
 
 Shutdown
 --------
@@ -48,12 +67,17 @@ systemd's `Restart=on-failure` brings us back up after 5 seconds.
 import signal
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from indepensense.config import (
     BACKEND_URL,
+    BUZZER_GPIO,
     DEVICE_ID,
+    DYP_A22_BAUDRATE,
+    DYP_A22_BOTTOM_PORT,
+    DYP_A22_TOP_PORT,
     EMERGENCY_BUTTON_GPIO,
     GRAPHHOPPER_URL,
     HEARTBEAT_INTERVAL_S,
@@ -63,6 +87,9 @@ from indepensense.config import (
     NLU_PROMPT_PATH,
     NLU_TIMEOUT_S,
     NLU_WARMUP_TIMEOUT_S,
+    OBSTACLE_COOLDOWN_S,
+    OBSTACLE_DANGER_CM,
+    OBSTACLE_WARNING_CM,
     OLLAMA_URL,
     PHOTON_URL,
     PIPER_VOICES,
@@ -71,18 +98,24 @@ from indepensense.config import (
     SIM7600_GPS_PORT,
     SYSTEM_LANGUAGE,
     TELEMETRY_TIMEOUT_S,
+    VIBRATION_FRONT_GPIO,
+    VIBRATION_LEFT_GPIO,
+    VIBRATION_RIGHT_GPIO,
     VOICE_TEST_DIR,
     WHISPER_INITIAL_PROMPTS,
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
 )
 from indepensense.feedback.gpio_button import GPIOButton
+from indepensense.feedback.gpio_buzzer import GPIOBuzzer
+from indepensense.feedback.gpio_vibration import GPIOVibrationMotor
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
 from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.photon import PhotonGeocoder
 from indepensense.safety.fall_detector import ThresholdFallDetector
+from indepensense.sensors.dyp_a22 import DYPA22
 from indepensense.sensors.gps import SIM7600GPS
 from indepensense.sensors.mpu6050 import MPU6050
 from indepensense.telemetry.base import AlertEvent, EventType
@@ -189,6 +222,23 @@ class App:
         self.emergency_button: GPIOButton | None = None
         self.repeat_button: GPIOButton | None = None
 
+        # Obstacle detection: two DYP-A22 sensors + haptic + audio feedback.
+        self.top_sensor: DYPA22 | None = None
+        self.bottom_sensor: DYPA22 | None = None
+        self.buzzer: GPIOBuzzer | None = None
+        self.front_motor: GPIOVibrationMotor | None = None
+        self.right_motor: GPIOVibrationMotor | None = None
+        self.left_motor: GPIOVibrationMotor | None = None
+
+        # Cooldowns: last time each (sensor, tier) fired. Prevents spam
+        # when an obstacle lingers in a zone. Keys look like
+        # "top:warning", "bottom:danger", etc.
+        self._obstacle_last_fired: dict[str, float] = {}
+
+        # Mutex around warning playback so two overlapping warnings
+        # don't race on the buzzer or motor state.
+        self._warning_lock = threading.Lock()
+
     # ---------------------------------------------------------------- lifecycle
 
     def start(self) -> None:
@@ -253,6 +303,16 @@ class App:
         if self.repeat_button is not None:
             self.repeat_button.on("pressed", self._on_repeat_press)
 
+        print("  Opening buzzer + vibration motors...", flush=True)
+        self.buzzer = self._try_open_buzzer()
+        self.front_motor = self._try_open_motor(VIBRATION_FRONT_GPIO, "front")
+        self.right_motor = self._try_open_motor(VIBRATION_RIGHT_GPIO, "right")
+        self.left_motor = self._try_open_motor(VIBRATION_LEFT_GPIO, "left")
+
+        print("  Opening ultrasonic sensors...", flush=True)
+        self.top_sensor = self._try_open_ultrasonic(DYP_A22_TOP_PORT, "TOP")
+        self.bottom_sensor = self._try_open_ultrasonic(DYP_A22_BOTTOM_PORT, "BOTTOM")
+
         print("  Starting heartbeat sender...", flush=True)
         self.heartbeat_sender = PeriodicHeartbeatSender(
             telemetry=self.buffered,
@@ -265,9 +325,16 @@ class App:
         print("Ready. Running fall-detection loop. SIGINT/SIGTERM to stop.", flush=True)
 
     def run(self) -> None:
-        """Main 100 Hz sensor loop. Blocks until shutdown."""
+        """Main 100 Hz sensor loop. Blocks until shutdown.
+
+        Each tick reads the MPU6050 (for fall detection) and both
+        ultrasonic sensors (for obstacle detection). All three drivers
+        return quickly — MPU6050 does one I²C burst; DYP-A22 returns
+        None if no new UART frame has arrived. No blocking I/O here.
+        """
         try:
             while not self._shutdown.is_set():
+                # Fall detection
                 try:
                     if self.imu is not None:
                         reading = self.imu.read()
@@ -279,6 +346,12 @@ class App:
                     # Log and continue — a single bad I²C read is not
                     # a reason to take down fall detection permanently.
                     print(f"[fall-loop] read error: {exc}", file=sys.stderr, flush=True)
+
+                # Obstacle detection — poll both sensors. DYP-A22 emits
+                # ~10 Hz, so at 100 Hz main-loop rate 9 out of 10 reads
+                # return None. That's fine.
+                self._check_obstacle_sensor("top", self.top_sensor)
+                self._check_obstacle_sensor("bottom", self.bottom_sensor)
 
                 self._shutdown.wait(timeout=FALL_LOOP_INTERVAL_S)
         finally:
@@ -305,13 +378,33 @@ class App:
         if self.gps_cache is not None:
             self.gps_cache.stop(timeout_s=2.0)
 
+        # Turn off any actuator that might still be on (a warning
+        # pattern could have been mid-play when shutdown fired).
+        for motor in (self.front_motor, self.right_motor, self.left_motor):
+            if motor is not None:
+                try:
+                    motor.off()
+                except Exception:
+                    pass
+        if self.buzzer is not None:
+            try:
+                self.buzzer.off()
+            except Exception:
+                pass
+
         # Best-effort close on everything else — never fail shutdown.
         for name, resource in (
             ("GPS", self.gps),
             ("MPU6050", self.imu),
+            ("TOP ultrasonic", self.top_sensor),
+            ("BOTTOM ultrasonic", self.bottom_sensor),
             ("PTT button", self.ptt_button),
             ("Emergency button", self.emergency_button),
             ("Repeat button", self.repeat_button),
+            ("Buzzer", self.buzzer),
+            ("Front motor", self.front_motor),
+            ("Right motor", self.right_motor),
+            ("Left motor", self.left_motor),
         ):
             if resource is None:
                 continue
@@ -348,6 +441,105 @@ class App:
         )
         if self.buffered is not None:
             self.buffered.send_alert(alert)
+
+    # ---------------------------------------------------------------- obstacles
+
+    def _check_obstacle_sensor(self, sensor_name: str, sensor: DYPA22 | None) -> None:
+        """Poll one ultrasonic sensor and fire a warning if in range.
+
+        Called from the main 100 Hz loop. Returns fast when the sensor
+        has no fresh frame (which is 9 out of 10 ticks — DYP-A22 emits
+        at ~10 Hz). Cooldowns prevent spamming when an obstacle stays
+        in a zone.
+        """
+        if sensor is None:
+            return
+        try:
+            reading = sensor.read()
+        except Exception as exc:
+            print(f"[obstacle:{sensor_name}] read error: {exc}", file=sys.stderr, flush=True)
+            return
+        if reading is None:
+            return
+
+        distance = reading.distance_cm
+        if distance < OBSTACLE_DANGER_CM:
+            tier = "danger"
+        elif distance < OBSTACLE_WARNING_CM:
+            tier = "warning"
+        else:
+            return   # safe zone; nothing to fire
+
+        # Cooldown per (sensor, tier). A moving obstacle that crosses
+        # from warning into danger will fire "danger" immediately even
+        # if "warning" fired a moment ago — different key.
+        key = f"{sensor_name}:{tier}"
+        now = time.monotonic()
+        last_fired = self._obstacle_last_fired.get(key, 0.0)
+        if now - last_fired < OBSTACLE_COOLDOWN_S:
+            return
+        self._obstacle_last_fired[key] = now
+
+        print(
+            f"[obstacle:{sensor_name}] {tier} at {distance:.0f} cm",
+            flush=True,
+        )
+
+        # Play the warning pattern in a background thread so the main
+        # loop keeps ticking. A single mutex serialises overlapping
+        # warnings — if TOP and BOTTOM fire simultaneously, one waits.
+        threading.Thread(
+            target=self._play_warning_pattern,
+            args=(sensor_name, tier),
+            name=f"warn-{sensor_name}-{tier}",
+            daemon=True,
+        ).start()
+
+    def _play_warning_pattern(self, sensor_name: str, tier: str) -> None:
+        """Play the feedback pattern for a given sensor+tier.
+
+        Held under `_warning_lock` so overlapping calls play in sequence
+        instead of racing on the buzzer or motor state.
+
+        Feedback matrix (see docstring at top of module):
+
+          TOP + warning  → front motor pulse + one short beep
+          TOP + danger   → all 3 motors + two rapid beeps
+          BOTTOM + warn  → front motor pulse (silent — cane covers this)
+          BOTTOM + danger→ all 3 motors (silent)
+        """
+        with self._warning_lock:
+            try:
+                if sensor_name == "top" and tier == "warning":
+                    if self.front_motor is not None:
+                        self.front_motor.pulse(times=1, duration_s=0.25)
+                    if self.buzzer is not None:
+                        self.buzzer.beep(times=1, duration_s=0.1)
+                elif sensor_name == "top" and tier == "danger":
+                    self._pulse_all_motors(duration_s=0.4)
+                    if self.buzzer is not None:
+                        self.buzzer.beep(times=2, duration_s=0.08, gap_s=0.05)
+                elif sensor_name == "bottom" and tier == "warning":
+                    if self.front_motor is not None:
+                        self.front_motor.pulse(times=1, duration_s=0.25)
+                elif sensor_name == "bottom" and tier == "danger":
+                    self._pulse_all_motors(duration_s=0.4)
+            except Exception as exc:
+                print(f"[warning-pattern] error: {exc}", file=sys.stderr, flush=True)
+
+    def _pulse_all_motors(self, duration_s: float) -> None:
+        """Turn all three motors on for `duration_s`, then off.
+
+        Simpler than three concurrent `.pulse()` calls (which would each
+        spawn their own timing). One coordinated on/sleep/off keeps the
+        three motors in phase.
+        """
+        motors = [m for m in (self.front_motor, self.right_motor, self.left_motor) if m is not None]
+        for m in motors:
+            m.on()
+        time.sleep(duration_s)
+        for m in motors:
+            m.off()
 
     # ---------------------------------------------------------------- buttons
 
@@ -486,6 +678,27 @@ class App:
                 f"  {label} button unavailable ({exc}). Continuing without it.",
                 flush=True,
             )
+            return None
+
+    def _try_open_buzzer(self) -> GPIOBuzzer | None:
+        try:
+            return GPIOBuzzer(gpio_pin=BUZZER_GPIO)
+        except Exception as exc:
+            print(f"  Buzzer unavailable ({exc}).", flush=True)
+            return None
+
+    def _try_open_motor(self, gpio_pin: int, label: str) -> GPIOVibrationMotor | None:
+        try:
+            return GPIOVibrationMotor(gpio_pin=gpio_pin)
+        except Exception as exc:
+            print(f"  {label} motor unavailable ({exc}).", flush=True)
+            return None
+
+    def _try_open_ultrasonic(self, port: str, label: str) -> DYPA22 | None:
+        try:
+            return DYPA22(port, baudrate=DYP_A22_BAUDRATE)
+        except Exception as exc:
+            print(f"  {label} ultrasonic unavailable ({exc}).", flush=True)
             return None
 
 

@@ -12,10 +12,24 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# DYP-A22 ultrasonic sensors — UART wiring on the Raspberry Pi 5
-DYP_A22_PRIMARY_PORT = "/dev/ttyAMA0"
-DYP_A22_SECONDARY_PORT = "/dev/ttyAMA4"
+# DYP-A22 ultrasonic sensors — UART wiring on the Raspberry Pi 5.
+# The wearable is cane-mounted with both sensors facing forward:
+# - TOP:    head-level obstacles (branches, signage, low awnings).
+#           This is the sensor that provides unique value — the user's
+#           cane can't sweep the air above them.
+# - BOTTOM: foot-level obstacles (curbs, walls, planters). Supplements
+#           what the cane already detects by touch.
+DYP_A22_TOP_PORT = "/dev/ttyAMA0"
+DYP_A22_BOTTOM_PORT = "/dev/ttyAMA4"
 DYP_A22_BAUDRATE = 115200
+
+# Obstacle warning thresholds and cooldown. The main app polls both
+# ultrasonic sensors in the fall-detection loop and fires vibration +
+# (for TOP only) buzzer alerts when the reading crosses into the
+# warning or danger zone. See app.py for the full pattern definitions.
+OBSTACLE_WARNING_CM = 100.0      # early notice — obstacle within reach
+OBSTACLE_DANGER_CM = 50.0        # imminent — user should stop
+OBSTACLE_COOLDOWN_S = 2.0        # per sensor: don't fire the same tier again
 
 # MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus)
 MPU6050_I2C_BUS = 1

@@ -37,7 +37,12 @@ Update this file every time a component's wiring changes.
 
 ## Components
 
-### DYP-A22 Ultrasonic Sensor #1 (primary) — STATUS: working
+### DYP-A22 Ultrasonic — TOP sensor — STATUS: working
+
+Cane-mounted, forward-facing, positioned high on the cane to detect
+head-level obstacles (branches, low signage, awnings). This sensor
+provides the wearable's unique value — the user's cane already sweeps
+low obstacles by touch, but nothing else catches head-level danger.
 
 UART port: `/dev/ttyAMA0` (UART0, default Pi UART).
 Baud: 115200.
@@ -47,7 +52,13 @@ Pin 6 (GND)
 Pin 8 (RX)
 Pin 10 (TX)
 
-### DYP-A22 Ultrasonic Sensor #2 (secondary) — STATUS: working
+Pin configurable via `DYP_A22_TOP_PORT` in `indepensense.config`.
+
+### DYP-A22 Ultrasonic — BOTTOM sensor — STATUS: working
+
+Cane-mounted, forward-facing, positioned low on the cane to detect
+foot-level obstacles (curbs, planters, walls). Supplements what the
+cane already senses by touch — advance warning at ~1 m.
 
 UART port: `/dev/ttyAMA4` (UART4).
 Baud: 115200.
@@ -56,6 +67,8 @@ Pin 17 (VCC)
 Pin 30 (GND)
 Pin 32 (RX)
 Pin 33 (TX)
+
+Pin configurable via `DYP_A22_BOTTOM_PORT` in `indepensense.config`.
 
 ### Raspberry Pi Camera Module 3 — STATUS: planned
 
