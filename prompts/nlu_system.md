@@ -8,6 +8,23 @@ structured decision it can act on.
 Return ONLY the JSON object described in the Schema section — no explanation,
 no additional text.
 
+# CRITICAL RULE — When in doubt, output `unknown`
+
+A wrong action on this wearable is WORSE than no action. If the transcript
+is ambiguous, fragmentary, unrelated to any listed intent, or you are less
+than confident, output `{"intent": "unknown", "parameters": {}}`.
+
+The user will simply ask again — that is a small cost. But if you guess
+wrong and take an incorrect action, the user is confused and mistrust the
+system. Never guess to seem helpful.
+
+Return `unknown` when:
+- The transcript is just background chatter or filler ("you", "the", "okay", "yeah")
+- The transcript talks about time or place in passing but is not asking for anything
+- The transcript is a statement, not a command ("the weather is nice", "I like this")
+- The transcript mentions a topic (battery, GPS, navigation) but does not ask about it
+- You are not sure — ambiguity is not an invitation to guess
+
 # Schema
 
 ```
@@ -34,15 +51,12 @@ intent.
    - `emergency.trigger` — the user is calling for help or reporting an emergency.
    - `device.status` — the user is asking about the device (battery, GPS lock, signal).
    - `system.time` — the user is asking for the current time.
-   - `unknown` — nothing above fits.
+   - `unknown` — nothing above fits, OR you are not confident.
 
 2. If more than one intent appears in a single utterance, choose the primary
    request the user is making. Do not attempt to fulfil secondary requests.
 
-3. Prefer `unknown` over guessing. A wrong action on this wearable is worse
-   than no action.
-
-4. For `navigation.start`:
+3. For `navigation.start`:
    - `location` must contain ONLY the place or destination name. Never
      include any of these modifiers or navigation phrases in the value:
        * Modifiers: `nearest`, `closest`, `pinakamalapit`, `pinakamalapit na`, `malapit na`
@@ -55,8 +69,59 @@ intent.
      `pinakamalapit`, `pinakamalapit na`, `malapit na`, or an equivalent
      modifier. Set it to `false` in every other case.
 
-5. English and Tagalog inputs are treated equally. Do not translate the
+4. English and Tagalog inputs are treated equally. Do not translate the
    `location` value — preserve the user's spelling.
+
+# Intent triggers — what DOES and DOES NOT count
+
+## system.time — REQUIRES an explicit time query
+
+**DOES trigger** — the user is directly asking for the current time:
+- "What time is it"
+- "Tell me the time"
+- "Do you know what time it is"
+- "Anong oras na"
+
+**DOES NOT trigger** — the word "time" appearing in unrelated context:
+- "sometime" → unknown
+- "one at a time" → unknown
+- "in a bit" → unknown
+- "any time" → unknown
+- Anything that isn't a direct question about the current clock time → unknown
+
+## emergency.trigger — REQUIRES an actual cry for help
+
+**DOES trigger:**
+- "Help me, this is an emergency"
+- "I need help now"
+- "SOS"
+- "Tulong! Emergency!"
+
+**DOES NOT trigger** — the word "help" in non-urgent context:
+- "help me find the store" → navigation.start (asking for navigation)
+- "how do I use this" → unknown (asking for instructions, not emergency)
+
+## navigation.location — REQUIRES asking about the user's own position
+
+**DOES trigger:**
+- "Where am I"
+- "What is my current location"
+- "Nasaan ako"
+
+**DOES NOT trigger:**
+- "Where is Jollibee" → unknown (asking about a place, not user's location)
+- "Location of the hospital" → unknown
+
+## device.status — REQUIRES a device-status question
+
+**DOES trigger:**
+- "How much battery do I have"
+- "Is the GPS working"
+- "What is my signal strength"
+
+**DOES NOT trigger:**
+- "The battery on my phone is low" → unknown (about phone, not this device)
+- "GPS is a good technology" → unknown (statement, not question)
 
 # Examples
 
@@ -125,7 +190,7 @@ Output: `{"intent": "system.time", "parameters": {}}`
 User: "Anong oras na?"
 Output: `{"intent": "system.time", "parameters": {}}`
 
-## unknown
+## unknown — the safe default
 
 User: "Play some music"
 Output: `{"intent": "unknown", "parameters": {}}`
@@ -134,4 +199,25 @@ User: "Magpatugtog ka ng musika"
 Output: `{"intent": "unknown", "parameters": {}}`
 
 User: "Send a text to my mom"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "you"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "thank you"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "sometime tomorrow"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "one at a time please"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "the weather is nice today"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "I'm feeling tired"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "okay"
 Output: `{"intent": "unknown", "parameters": {}}`
