@@ -19,6 +19,18 @@ class RouteInstruction:
     text: str
     distance_m: float
     street_name: str | None
+    # Where this instruction's turn happens. The turn point is the
+    # START of the instruction's polyline segment — i.e. from the user's
+    # perspective, this is where they need to act (turn left, turn right,
+    # or arrive). `None` when the router doesn't provide interval data.
+    location: Coordinate | None = None
+    # Turn semantics, derived from GraphHopper's `sign` code:
+    #   "left"     — any leftward turn (slight, normal, sharp, keep-left)
+    #   "right"    — any rightward turn
+    #   "straight" — continue on street, no significant turn
+    #   "arrive"   — final destination reached
+    #   "waypoint" — intermediate via-point (rare on single-destination routes)
+    direction: str = "straight"
 
 
 @dataclass(frozen=True)

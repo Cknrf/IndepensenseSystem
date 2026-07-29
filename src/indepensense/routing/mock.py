@@ -18,15 +18,41 @@ class MockRouter:
         end: Coordinate,
         profile: str = "foot",
     ) -> Route:
+        # Contrived three-instruction route so tests that exercise the
+        # NavigationMonitor can advance through multiple waypoints.
+        # Halfway point synthesised as the mid-lat/mid-lon of start+end.
+        midpoint = Coordinate(
+            lat=(start.lat + end.lat) / 2,
+            lon=(start.lon + end.lon) / 2,
+        )
         instructions = [
-            RouteInstruction(text="Head east on a fake street", distance_m=120.0, street_name="Fake St"),
-            RouteInstruction(text="Arrive at destination", distance_m=0.0, street_name=None),
+            RouteInstruction(
+                text="Head east on a fake street",
+                distance_m=60.0,
+                street_name="Fake St",
+                location=start,
+                direction="straight",
+            ),
+            RouteInstruction(
+                text="Turn left onto Mock Avenue",
+                distance_m=60.0,
+                street_name="Mock Avenue",
+                location=midpoint,
+                direction="left",
+            ),
+            RouteInstruction(
+                text="Arrive at destination",
+                distance_m=0.0,
+                street_name=None,
+                location=end,
+                direction="arrive",
+            ),
         ]
         return Route(
             distance_m=120.0,
             duration_s=90.0,
             instructions=instructions,
-            points=[start, end],
+            points=[start, midpoint, end],
         )
 
 

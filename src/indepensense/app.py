@@ -117,7 +117,9 @@ from indepensense.feedback.gpio_vibration import GPIOVibrationMotor
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
+from indepensense.navigation.monitor import NavigationCue, NavigationMonitor
 from indepensense.power.waveshare_ups_e import WaveshareUPSHatE
+from indepensense.routing.base import Coordinate
 from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.photon import PhotonGeocoder
 from indepensense.safety.fall_detector import ThresholdFallDetector
@@ -229,6 +231,14 @@ class App:
         self.repeat_button: GPIOButton | None = None
         self.battery: WaveshareUPSHatE | None = None
 
+        # Navigation monitor: tracks user progress against the active route
+        # and returns cues (announce / haptic / arrive) as they get near
+        # each turn. Owned here so it can be given to the executor
+        # (which calls set_route/clear on intent) AND polled from the
+        # main loop (which fires the cues).
+        self.nav_monitor = NavigationMonitor()
+        self._last_nav_check = 0.0
+
         # Low-battery alert state: latch true after firing so we don't
         # spam the alert on every check. Cleared when battery recovers
         # past the recovery threshold (hysteresis).
@@ -303,6 +313,7 @@ class App:
             gps=cached_gps,
             telemetry=self.buffered,
             device_id=DEVICE_ID,
+            monitor=self.nav_monitor,
         )
 
         print("  Opening buttons...", flush=True)
@@ -374,6 +385,11 @@ class App:
                 # since battery changes slowly. Rate limiting is inside
                 # the method (skips if last check was recent).
                 self._check_battery_and_alert()
+
+                # Navigation cues — check every ~1 s against the active
+                # route. Fires announce/haptic/arrive as user approaches
+                # turns. No-op when there's no active navigation.
+                self._check_navigation()
 
                 self._shutdown.wait(timeout=FALL_LOOP_INTERVAL_S)
         finally:
@@ -529,6 +545,86 @@ class App:
         )
         if self.buffered is not None:
             self.buffered.send_alert(alert)
+
+    # ---------------------------------------------------------------- navigation
+
+    def _check_navigation(self) -> None:
+        """Poll the navigation monitor and fire any resulting cues.
+
+        Throttled to ~1 Hz — GPS updates once per second at best, so
+        checking faster wastes cycles on identical data. Skips entirely
+        when there's no active navigation OR no GPS fix (nothing useful
+        to compare against).
+        """
+        if not self.nav_monitor.is_active():
+            return
+        if self.gps_cache is None:
+            return
+        now = time.monotonic()
+        if now - self._last_nav_check < 1.0:
+            return
+        self._last_nav_check = now
+
+        fix = self.gps_cache.latest_fix()
+        if fix is None:
+            return
+
+        position = Coordinate(lat=fix.lat, lon=fix.lon)
+        try:
+            cues = self.nav_monitor.check(position)
+        except Exception as exc:
+            print(f"[nav] monitor error: {exc}", file=sys.stderr, flush=True)
+            return
+
+        for cue in cues:
+            self._fire_navigation_cue(cue)
+
+    def _fire_navigation_cue(self, cue: NavigationCue) -> None:
+        """Route a NavigationCue to its actuator.
+
+        - "announce": speak the text via Piper (skipped if voice pipeline
+          is currently busy — we don't want to talk over a user's
+          command or a response mid-play).
+        - "haptic": pulse the direction-matching motor.
+        - "arrive": speak + pulse all motors (louder cue for the finish).
+        """
+        try:
+            if cue.kind == "announce":
+                if self._voice_active.is_set():
+                    print(
+                        f"[nav] deferred announce (voice busy): {cue.text}",
+                        flush=True,
+                    )
+                    return
+                print(f"[nav] announce: {cue.text}", flush=True)
+                self._speak_error(cue.text)   # reuse the speak helper
+            elif cue.kind == "haptic":
+                motor = self._motor_for_direction(cue.direction)
+                if motor is not None:
+                    print(f"[nav] haptic: {cue.direction}", flush=True)
+                    motor.pulse(times=2, duration_s=0.2, gap_s=0.1)
+            elif cue.kind == "arrive":
+                print(f"[nav] arrive: {cue.text}", flush=True)
+                with self._warning_lock:
+                    self._pulse_all_motors(duration_s=0.4)
+                if not self._voice_active.is_set() and cue.text is not None:
+                    self._speak_error(cue.text)
+        except Exception as exc:
+            print(f"[nav] fire error: {exc}", file=sys.stderr, flush=True)
+
+    def _motor_for_direction(self, direction: str | None):
+        """Map a direction string to the motor that should fire.
+
+        Returns None for unknown directions or when the motor is not
+        available (e.g. running without hardware).
+        """
+        if direction == "left":
+            return self.left_motor
+        if direction == "right":
+            return self.right_motor
+        if direction == "straight":
+            return self.front_motor
+        return None
 
     # ---------------------------------------------------------------- obstacles
 

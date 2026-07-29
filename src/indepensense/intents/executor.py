@@ -15,6 +15,7 @@ from typing import Any
 
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.routing.base import Coordinate, Geocoder, GeocodingResult, Route, Router
+from indepensense.navigation.monitor import NavigationMonitor
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
 
@@ -60,12 +61,14 @@ class IntentExecutor:
         gps: GPSSensor | None = None,
         telemetry: TelemetryClient | None = None,
         device_id: str = "",
+        monitor: NavigationMonitor | None = None,
     ):
         self._router = router
         self._geocoder = geocoder
         self._gps = gps
         self._telemetry = telemetry
         self._device_id = device_id
+        self._monitor = monitor
 
         self._current_route: Route | None = None
 
@@ -124,6 +127,11 @@ class IntentExecutor:
         route = self._router.route(start, destination.coordinate, profile="foot")
         self._current_route = route
 
+        # Hand the route to the navigation monitor so the app can start
+        # firing turn-by-turn audio + haptic cues as the user walks.
+        if self._monitor is not None:
+            self._monitor.set_route(route, destination.name)
+
         first_instruction = (
             route.instructions[0].text if route.instructions else "Start walking."
         )
@@ -138,6 +146,8 @@ class IntentExecutor:
         if self._current_route is None:
             return "You don't have an active navigation."
         self._current_route = None
+        if self._monitor is not None:
+            self._monitor.clear()
         return "Navigation cancelled."
 
     def _handle_navigation_repeat(self, result: IntentResult) -> str:
