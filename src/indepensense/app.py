@@ -97,6 +97,7 @@ from indepensense.config import (
     PHOTON_URL,
     PIPER_VOICES,
     PTT_BUTTON_GPIO,
+    PTT_MAX_RECORDING_S,
     REPEAT_BUTTON_GPIO,
     SIM7600_GPS_PORT,
     SYSTEM_LANGUAGE,
@@ -779,7 +780,10 @@ class App:
 
             print("[PTT] Recording (press PTT again to stop)...", flush=True)
             duration = record_until_button(
-                self.ptt_button, input_path, cancel_event=self._voice_cancel,
+                self.ptt_button,
+                input_path,
+                cancel_event=self._voice_cancel,
+                max_duration_s=PTT_MAX_RECORDING_S,
             )
             print(f"[PTT] Captured {duration:.1f} s of audio.", flush=True)
 
@@ -793,9 +797,19 @@ class App:
                 print("[PTT] Too short — skipping.", flush=True)
                 return
 
-            # Recording ended cleanly (second PTT press). Play the
-            # falling stop-chime + motor pulse to signal "I got your
-            # command, processing now."
+            # If the recording hit the max-duration cap, the user
+            # probably forgot to press PTT to stop. Log it so the
+            # behaviour is visible; downstream pipeline runs normally.
+            if duration >= PTT_MAX_RECORDING_S - 0.5:
+                print(
+                    f"[PTT] Recording auto-stopped at {PTT_MAX_RECORDING_S:.0f}s cap "
+                    f"(user did not press PTT to end).",
+                    flush=True,
+                )
+
+            # Recording ended cleanly (second PTT press or timeout).
+            # Play the falling stop-chime + motor pulse to signal "I
+            # got your command, processing now."
             self._play_press_feedback(rising_chime=False)
 
             transcript = self.stt.transcribe(
@@ -825,6 +839,10 @@ class App:
             play(response_path)
         except Exception as exc:
             print(f"[PTT] voice pipeline error: {exc}", file=sys.stderr, flush=True)
+            # Speak a short error so the user isn't left wondering why
+            # nothing happened. Wrapped in its own try/except so a
+            # broken TTS doesn't cascade into an infinite error loop.
+            self._speak_error("Something went wrong. Please try again.")
         finally:
             # Restore our PTT handler — record_until_button overwrote it.
             if self.ptt_button is not None:
@@ -833,6 +851,16 @@ class App:
                 except Exception:
                     pass
             self._voice_active.clear()
+
+    def _speak_error(self, message: str) -> None:
+        """Best-effort audible error message. Never raises."""
+        try:
+            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
+            error_path = VOICE_TEST_DIR / f"{timestamp}_error.wav"
+            self.tts.synthesize(message, error_path, language=SYSTEM_LANGUAGE)
+            play(error_path)
+        except Exception as exc:
+            print(f"[error-speech] failed to speak: {exc}", file=sys.stderr, flush=True)
 
     # ---------------------------------------------------------------- helpers
 

@@ -128,6 +128,14 @@ REPEAT_BUTTON_GPIO = 25      # physical pin 22 — single click repeats last ins
 # current-draw caveat if the Pi shows undervoltage warnings).
 BUZZER_GPIO = 18             # physical pin 12
 
+# Voice pipeline safety cap. If the user presses PTT and never presses
+# again (or does so out of habit and forgets), recording auto-stops
+# after this many seconds. Downstream STT/LLM still runs on whatever
+# was captured — so worst case the user hears "Sorry, I didn't catch
+# that" and can retry. 30 s is comfortable for any real command; longer
+# recordings are almost always accidental.
+PTT_MAX_RECORDING_S = 30.0
+
 # Vibration motors — driven through NPN transistors (motors draw more
 # current than a GPIO can safely source). See docs/hardware.md for the
 # transistor + flyback-diode circuit each motor needs.
