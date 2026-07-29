@@ -68,14 +68,27 @@ class IntentExecutor:
         self._device_id = device_id
 
         self._current_route: Route | None = None
-        self._last_instruction: str | None = None
+
+        # Last spoken response from any intent — repeated on demand
+        # by NAVIGATION_REPEAT. We update this on every execute() call
+        # EXCEPT when the intent itself is NAVIGATION_REPEAT (otherwise
+        # the "nothing to repeat yet" message would become the last
+        # response forever).
+        self._last_response: str | None = None
 
     def execute(self, result: IntentResult) -> str:
         handler = self._handlers().get(result.intent, self._handle_unknown)
         try:
-            return handler(result)
+            response = handler(result)
         except Exception as exc:
-            return f"Sorry, something went wrong: {exc}"
+            response = f"Sorry, something went wrong: {exc}"
+
+        # Track the last spoken response so Repeat can replay it.
+        # Skip when repeating so consecutive Repeats stay stable
+        # (return the original response, not a chain of themselves).
+        if result.intent != Intent.NAVIGATION_REPEAT:
+            self._last_response = response
+        return response
 
     def _handlers(self) -> dict[Intent, Any]:
         return {
@@ -114,7 +127,6 @@ class IntentExecutor:
         first_instruction = (
             route.instructions[0].text if route.instructions else "Start walking."
         )
-        self._last_instruction = first_instruction
 
         return (
             f"Navigating to {destination.name}. "
@@ -126,13 +138,20 @@ class IntentExecutor:
         if self._current_route is None:
             return "You don't have an active navigation."
         self._current_route = None
-        self._last_instruction = None
         return "Navigation cancelled."
 
     def _handle_navigation_repeat(self, result: IntentResult) -> str:
-        if self._last_instruction is None:
-            return "There is no instruction to repeat yet."
-        return self._last_instruction
+        """Replay the wearable's last spoken response, regardless of
+        which intent produced it.
+
+        This is broader than "repeat the last navigation instruction" —
+        any prior response (time query, location, error message,
+        emergency confirmation) can be repeated. Handy when the user
+        misses what the wearable said (traffic noise, distraction).
+        """
+        if self._last_response is None:
+            return "There is nothing to repeat yet."
+        return self._last_response
 
     def _handle_navigation_location(self, result: IntentResult) -> str:
         position = self._current_position()

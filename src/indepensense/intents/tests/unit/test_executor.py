@@ -89,21 +89,50 @@ def test_navigation_stop_after_start_cancels():
     assert "cancel" in response.lower()
 
 
-def test_navigation_repeat_before_navigation_says_nothing_to_repeat():
+def test_navigation_repeat_before_anything_said_returns_empty_message():
     executor = _make_executor()
     response = executor.execute(IntentResult(Intent.NAVIGATION_REPEAT))
-    assert "no instruction" in response.lower() or "repeat" in response.lower()
+    assert "nothing" in response.lower() or "repeat" in response.lower()
 
 
-def test_navigation_repeat_after_start_returns_last_instruction():
+def test_navigation_repeat_after_start_returns_that_response():
     executor = _make_executor()
     start_response = executor.execute(IntentResult(
         Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
     ))
     repeat_response = executor.execute(IntentResult(Intent.NAVIGATION_REPEAT))
-    assert repeat_response  # non-empty
-    # The repeated instruction is a substring of the start-navigation message
-    assert repeat_response in start_response
+    assert repeat_response == start_response
+
+
+def test_navigation_repeat_returns_last_response_of_any_intent():
+    """Repeat isn't limited to navigation instructions — it replays
+    whatever the wearable said last, whether that was a time query,
+    location lookup, or error message."""
+    executor = _make_executor()
+    time_response = executor.execute(IntentResult(Intent.SYSTEM_TIME))
+    repeat_response = executor.execute(IntentResult(Intent.NAVIGATION_REPEAT))
+    assert repeat_response == time_response
+
+
+def test_consecutive_repeats_stay_stable():
+    """Pressing Repeat twice should not chain — both presses should
+    return the same original response, not the wearable repeating
+    itself repeating itself..."""
+    executor = _make_executor()
+    executor.execute(IntentResult(Intent.SYSTEM_TIME))
+    first_repeat = executor.execute(IntentResult(Intent.NAVIGATION_REPEAT))
+    second_repeat = executor.execute(IntentResult(Intent.NAVIGATION_REPEAT))
+    assert first_repeat == second_repeat
+
+
+def test_repeat_reflects_latest_response_not_the_first():
+    """When multiple intents have fired, Repeat replays the most
+    recent — not the first ever spoken."""
+    executor = _make_executor()
+    executor.execute(IntentResult(Intent.SYSTEM_TIME))
+    location_response = executor.execute(IntentResult(Intent.NAVIGATION_LOCATION))
+    repeat_response = executor.execute(IntentResult(Intent.NAVIGATION_REPEAT))
+    assert repeat_response == location_response
 
 
 def test_navigation_location_uses_reverse_geocode():
