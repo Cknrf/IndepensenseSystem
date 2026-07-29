@@ -127,7 +127,7 @@ from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.heartbeat import PeriodicHeartbeatSender
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
-from indepensense.voice.audio import play, record_until_button
+from indepensense.voice.audio import play, play_chime, record_until_button
 from indepensense.voice.piper import PiperTTS
 from indepensense.voice.whisper import FasterWhisperSTT
 
@@ -632,13 +632,19 @@ class App:
 
     def _on_ptt_press(self) -> None:
         """PTT press handler. First press spawns a voice thread; presses
-        while a voice thread is running are ignored (per design)."""
+        while a voice thread is running are ignored (per design).
+
+        Feedback on press: brief all-motor pulse + rising audio chime so
+        the user knows the mic is now live. Feedback runs BEFORE
+        recording starts so the chime isn't captured in the audio.
+        """
         if self._voice_active.is_set():
             print("[PTT] Voice pipeline busy — press ignored.", flush=True)
             return
 
         self._voice_active.set()
         self._voice_cancel.clear()
+        self._play_press_feedback(rising_chime=True)
         self._voice_thread = threading.Thread(
             target=self._voice_pipeline, name="voice", daemon=True,
         )
@@ -646,9 +652,18 @@ class App:
 
     def _on_emergency_press(self) -> None:
         """Emergency press handler. Cancels any voice work and fires
-        the emergency alert immediately."""
+        the emergency alert immediately.
+
+        Feedback: buzzer three fast beeps (buzzer is loud on purpose here —
+        emergencies SHOULD be loud) + all-motor pulse. Then the existing
+        spoken confirmation plays.
+        """
         self._voice_cancel.set()
         print("\n[EMERGENCY BUTTON] Pressed. Firing alert...", flush=True)
+
+        # Immediate haptic + audible ack — user needs to know the alert
+        # is being sent before waiting for the spoken confirmation.
+        self._play_emergency_feedback()
 
         try:
             response = self.executor.execute(
@@ -670,10 +685,14 @@ class App:
         clear message the user hears. If the wearable ever grows a
         "repeat any last response" feature, it lives in the executor,
         not here.
+
+        Feedback: brief all-motor pulse (same shape as PTT/Emergency
+        acks) so the user knows the button was received.
         """
         if self._voice_active.is_set():
             print("[REPEAT] Voice pipeline busy — press ignored.", flush=True)
             return
+        self._play_button_ack()
         try:
             response = self.executor.execute(
                 IntentResult(intent=Intent.NAVIGATION_REPEAT)
@@ -686,6 +705,58 @@ class App:
             play(resp_path)
         except Exception as exc:
             print(f"[REPEAT] handler error: {exc}", file=sys.stderr, flush=True)
+
+    # ---------------------------------------------------------------- feedback
+
+    def _play_button_ack(self) -> None:
+        """All-motor pulse for a generic button-press acknowledgment.
+
+        Blocking (~150 ms). Guarded by the same warning-lock as obstacle
+        alerts so concurrent haptic events don't leave motors on.
+        """
+        with self._warning_lock:
+            try:
+                self._pulse_all_motors(duration_s=0.15)
+            except Exception as exc:
+                print(f"[feedback] motor-ack error: {exc}", file=sys.stderr, flush=True)
+
+    def _play_press_feedback(self, rising_chime: bool) -> None:
+        """PTT start/stop feedback: all-motor pulse + audio chime.
+
+        `rising_chime=True` for recording start, `False` for stop. Runs
+        the motor pulse and chime in sequence — motor first (brief and
+        felt), then chime (heard) — total ~270 ms. This precedes
+        recording so the chime isn't captured into the audio file.
+        """
+        with self._warning_lock:
+            try:
+                self._pulse_all_motors(duration_s=0.15)
+            except Exception as exc:
+                print(f"[feedback] motor-ack error: {exc}", file=sys.stderr, flush=True)
+            try:
+                play_chime(rising=rising_chime)
+            except Exception as exc:
+                print(f"[feedback] chime error: {exc}", file=sys.stderr, flush=True)
+
+    def _play_emergency_feedback(self) -> None:
+        """Emergency-press feedback: 3 fast buzzer beeps + all-motor pulse.
+
+        The buzzer is used here (unlike PTT) because emergencies SHOULD
+        be loud — a bystander who hears the buzzer will know something
+        is happening even if the guardian hasn't answered the alert yet.
+        """
+        with self._warning_lock:
+            # Fire motors + buzzer roughly simultaneously so the user
+            # feels the acknowledgment while it's audible.
+            try:
+                self._pulse_all_motors(duration_s=0.2)
+            except Exception as exc:
+                print(f"[feedback] motor-ack error: {exc}", file=sys.stderr, flush=True)
+            try:
+                if self.buzzer is not None:
+                    self.buzzer.beep(times=3, duration_s=0.1, gap_s=0.06)
+            except Exception as exc:
+                print(f"[feedback] buzzer error: {exc}", file=sys.stderr, flush=True)
 
     # ---------------------------------------------------------------- voice
 
@@ -713,11 +784,19 @@ class App:
             print(f"[PTT] Captured {duration:.1f} s of audio.", flush=True)
 
             if self._voice_cancel.is_set():
+                # Emergency preempted us — its own feedback pattern is
+                # already playing; skip the PTT stop feedback to avoid
+                # audio contention on the same output device.
                 print("[PTT] Recording preempted by emergency — skipping.", flush=True)
                 return
             if duration <= 0.2:
                 print("[PTT] Too short — skipping.", flush=True)
                 return
+
+            # Recording ended cleanly (second PTT press). Play the
+            # falling stop-chime + motor pulse to signal "I got your
+            # command, processing now."
+            self._play_press_feedback(rising_chime=False)
 
             transcript = self.stt.transcribe(
                 input_path,

@@ -203,3 +203,44 @@ def play(audio_path: Path) -> None:
 
     audio, samplerate = sf.read(str(audio_path))
     sd.play(audio, samplerate=samplerate, blocking=True)
+
+
+def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
+    """Play a short synthesized chime as an audio button-press acknowledgment.
+
+    Generated on-the-fly with numpy — no WAV files needed. A rising tone
+    (500 → 900 Hz sweep) marks recording start; a falling tone (900 → 500 Hz)
+    marks recording end. Modeled after voice-assistant conventions (Siri,
+    Google, Alexa all use rising-then-falling to bracket their listening
+    windows).
+
+    Short fade-in / fade-out avoids clicks at the boundaries. Amplitude
+    is deliberately kept at 30% peak so the chime is noticeable but not
+    startling.
+
+    Blocking, ~120 ms by default. Cheap to generate (<10 ms of CPU).
+    """
+    import numpy as np
+    import sounddevice as sd
+
+    samplerate = 22050
+    n_samples = int(samplerate * duration_s)
+    t = np.linspace(0, duration_s, n_samples, endpoint=False)
+
+    if rising:
+        freqs = np.linspace(500.0, 900.0, n_samples)
+    else:
+        freqs = np.linspace(900.0, 500.0, n_samples)
+
+    # Instantaneous phase = cumulative integral of angular frequency.
+    phase = 2.0 * np.pi * np.cumsum(freqs) / samplerate
+    wave = 0.3 * np.sin(phase)
+
+    # 10 ms fade in/out to eliminate the click artifact at the edges.
+    fade_samples = int(0.01 * samplerate)
+    if fade_samples > 0 and n_samples > 2 * fade_samples:
+        wave[:fade_samples] *= np.linspace(0.0, 1.0, fade_samples)
+        wave[-fade_samples:] *= np.linspace(1.0, 0.0, fade_samples)
+
+    audio = (wave * 32767).astype(np.int16)
+    sd.play(audio, samplerate=samplerate, blocking=True)

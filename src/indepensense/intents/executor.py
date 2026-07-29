@@ -207,7 +207,7 @@ class IntentExecutor:
         return f"It's currently {now.strftime('%I:%M %p').lstrip('0')}."
 
     def _handle_unknown(self, result: IntentResult) -> str:
-        return "Sorry, I didn't understand that. Please try again."
+        return "Sorry, I didn't catch that. Could you try again?"
 
     # --- helpers ------------------------------------------------------------
 
