@@ -16,15 +16,28 @@ match our app-facing codes (`en`, `tl`). The driver takes a mapping
 dict so the executor can pass its friendly code and get the right
 Tesseract language pack under the hood.
 
-The tesseract binary AND the required language packs must be
-installed via apt:
+Installation on the Pi:
 
-    sudo apt install -y tesseract-ocr             # includes English
-    sudo apt install -y tesseract-ocr-tgl         # Tagalog
+    sudo apt install -y tesseract-ocr tesseract-ocr-eng
 
-If a mapped language pack is missing, `read_text` will raise a
-`pytesseract.TesseractError`. Callers catch this and return a
-graceful "I couldn't read the text" message.
+The Debian Trixie apt repo does NOT ship `tesseract-ocr-tgl`. To get
+Tagalog data, download the trained model directly from upstream. Use
+the standard `tessdata` repo — the `tessdata_fast` variant does NOT
+include a Tagalog model (verified 2026-07):
+
+    sudo wget -O /usr/share/tesseract-ocr/5/tessdata/tgl.traineddata \\
+        https://github.com/tesseract-ocr/tessdata/raw/main/tgl.traineddata
+
+The `tessdata` (standard) tgl model is ~7 MB — slightly larger than
+`tessdata_fast` would have been, but combines the LSTM engine and
+legacy Tesseract engine so it works with any Tesseract 4/5 config.
+
+Verify with `tesseract --list-langs` (should list `eng`, `osd`, `tgl`).
+
+If a mapped language pack is missing at runtime, `read_text` will
+raise a `pytesseract.TesseractError`. The executor catches this and
+returns a graceful "I couldn't read the text" spoken message — the
+wearable does not crash.
 """
 from indepensense.vision.base import Frame
 

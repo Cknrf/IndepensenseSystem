@@ -71,8 +71,22 @@ YOLO_CONFIDENCE_THRESHOLD = 0.5
 
 # Tesseract OCR — reads printed text via `vision.read` intent.
 # `OCR_LANGUAGES` maps our SYSTEM_LANGUAGE codes to Tesseract language
-# packs. Install packs on the Pi via:
-#   sudo apt install -y tesseract-ocr tesseract-ocr-tgl
+# packs.
+#
+# Installation on the Pi:
+#   sudo apt install -y tesseract-ocr tesseract-ocr-eng
+# The Debian Trixie apt repo does NOT ship `tesseract-ocr-tgl`, so
+# Tagalog data must be downloaded manually from upstream. Use the
+# standard tessdata repo (the `tessdata_fast` variant does not have
+# a Tagalog model as of 2026-07):
+#   sudo wget -O /usr/share/tesseract-ocr/5/tessdata/tgl.traineddata \
+#       https://github.com/tesseract-ocr/tessdata/raw/main/tgl.traineddata
+# Verify with:  tesseract --list-langs   (should list eng, osd, tgl)
+#
+# If `tgl` isn't installed and SYSTEM_LANGUAGE is "tl", vision.read
+# will fail with a graceful "couldn't read the text" spoken response —
+# the wearable doesn't crash.
+#
 # `OCR_MAX_CHARS` caps spoken responses — a full receipt/menu can be
 # 1000+ characters, which is ~90 s of Piper speech. Truncating to
 # ~500 characters (~30 s) keeps responses digestible.
