@@ -15,7 +15,8 @@ from typing import Any
 
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.routing.base import Coordinate, Geocoder, GeocodingResult, Route, Router
-from indepensense.navigation.monitor import NavigationMonitor
+from indepensense.navigation.monitor import NavigationMonitor, round_speech_distance
+from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
 
@@ -53,6 +54,47 @@ def _format_location_response(hit: GeocodingResult) -> str:
     return "You are near " + ", ".join(parts) + "."
 
 
+def _first_action_description(route: Route) -> str:
+    """Build the "what to do first" sentence for the initial nav response.
+
+    GraphHopper's first instruction is usually "Head [direction] on
+    [street]" — a starter, not a turn. If we said just that, the user
+    would only hear about the starter and miss knowing when the first
+    TURN is coming. So this helper looks for the first non-straight
+    instruction (a left, right, or arrive) and phrases the response
+    around it:
+
+      "In 120 meters, turn left onto Second Avenue."     (turn follows starter)
+      "Walk 120 meters to arrive."                        (short route, no turns)
+      "Turn left onto Second Avenue immediately."         (rare — no starter)
+
+    Distance is rounded to a speech-friendly number so Piper says
+    "120 meters" rather than "117 point 3 meters".
+    """
+    if not route.instructions:
+        return "Start walking."
+
+    # Find the first non-straight instruction and sum distances up to it.
+    distance_to_action = 0.0
+    for idx, instr in enumerate(route.instructions):
+        if instr.direction in ("left", "right", "arrive"):
+            if instr.direction == "arrive":
+                if distance_to_action == 0.0:
+                    return "You are already at your destination."
+                rounded = round_speech_distance(distance_to_action)
+                return f"Walk {rounded} meters to arrive at your destination."
+            # left or right
+            if distance_to_action == 0.0:
+                return f"{instr.text} immediately."
+            rounded = round_speech_distance(distance_to_action)
+            return f"In {rounded} meters, {instr.text}."
+        distance_to_action += instr.distance_m
+
+    # Fell through — no turns found at all. Return the first instruction
+    # text as a fallback ("Head north on Elm Street").
+    return route.instructions[0].text
+
+
 class IntentExecutor:
     def __init__(
         self,
@@ -62,6 +104,7 @@ class IntentExecutor:
         telemetry: TelemetryClient | None = None,
         device_id: str = "",
         monitor: NavigationMonitor | None = None,
+        battery: BatteryReader | None = None,
     ):
         self._router = router
         self._geocoder = geocoder
@@ -69,6 +112,7 @@ class IntentExecutor:
         self._telemetry = telemetry
         self._device_id = device_id
         self._monitor = monitor
+        self._battery = battery
 
         self._current_route: Route | None = None
 
@@ -132,14 +176,10 @@ class IntentExecutor:
         if self._monitor is not None:
             self._monitor.set_route(route, destination.name)
 
-        first_instruction = (
-            route.instructions[0].text if route.instructions else "Start walking."
-        )
-
         return (
             f"Navigating to {destination.name}. "
             f"Total distance {route.distance_m:.0f} meters. "
-            f"{first_instruction}"
+            f"{_first_action_description(route)}"
         )
 
     def _handle_navigation_stop(self, result: IntentResult) -> str:
@@ -209,9 +249,7 @@ class IntentExecutor:
         field = result.parameters.get("status_field", "")
 
         if field == "battery":
-            # TODO: read from an actual power-monitoring HAT when installed.
-            # Pi 5 has no built-in battery sensing.
-            return "Battery status is not yet monitored on this prototype."
+            return self._describe_battery()
 
         if field == "gps":
             if self._gps is None:
@@ -225,10 +263,96 @@ class IntentExecutor:
             )
 
         if field == "signal":
-            # TODO: read from ModemManager (mmcli -m any) for LTE signal.
-            return "Cellular signal reporting is not yet implemented."
+            return self._describe_cellular_signal()
 
         return f"I don't know how to report on '{field}'."
+
+    def _describe_battery(self) -> str:
+        """Build a spoken description of current battery state.
+
+        Prefers the real UPS HAT reading; falls back to a stub message
+        when no reader is wired (dev on Mac, HAT missing).
+        """
+        if self._battery is None:
+            return "Battery monitoring is not available on this device."
+        try:
+            reading = self._battery.read()
+        except Exception:
+            return "I couldn't read the battery status right now."
+        if reading is None:
+            return "I couldn't read the battery status right now."
+
+        pct = reading.percentage
+        if reading.is_charging:
+            return f"Battery is at {pct} percent and charging."
+        if reading.time_to_empty_min > 0:
+            hours = reading.time_to_empty_min // 60
+            minutes = reading.time_to_empty_min % 60
+            if hours > 0:
+                return (
+                    f"Battery is at {pct} percent, "
+                    f"about {hours} hours and {minutes} minutes remaining."
+                )
+            return (
+                f"Battery is at {pct} percent, "
+                f"about {minutes} minutes remaining."
+            )
+        return f"Battery is at {pct} percent."
+
+    def _describe_cellular_signal(self) -> str:
+        """Query ModemManager for cellular state + signal quality.
+
+        Uses `mmcli -m any -K` (key=value output) so the parse is
+        stable across versions. Handles the common failure modes
+        gracefully:
+
+          - mmcli not installed → generic unavailable message
+          - no modem detected → clear message
+          - modem in `failed` state (e.g. SIM missing) → tells the user
+          - modem disabled → tells the user
+          - registered but no quality data → says so
+          - connected with quality → strength as strong/medium/weak
+        """
+        import subprocess
+
+        try:
+            r = subprocess.run(
+                ["mmcli", "-m", "any", "-K"],
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return "Cellular status is not available on this device."
+
+        if r.returncode != 0:
+            return "No cellular modem is detected."
+
+        state = ""
+        quality: int | None = None
+        for line in r.stdout.splitlines():
+            if "modem.generic.state " in line and ":" in line:
+                state = line.split(":", 1)[1].strip()
+            elif "signal-quality.value" in line and ":" in line:
+                try:
+                    quality = int(line.split(":", 1)[1].strip())
+                except ValueError:
+                    pass
+
+        if "failed" in state:
+            return "Cellular is unavailable. Check that the SIM card is inserted."
+        if state in ("disabled", "disabling"):
+            return "Cellular is disabled."
+        if state in ("searching", "enabling"):
+            return "Cellular is still connecting."
+
+        if quality is None:
+            return "Cellular is connected, but signal strength is not reported."
+        if quality >= 60:
+            return f"Cellular signal is strong, at {quality} percent."
+        if quality >= 30:
+            return f"Cellular signal is medium, at {quality} percent."
+        return f"Cellular signal is weak, at {quality} percent."
 
     def _handle_system_time(self, result: IntentResult) -> str:
         now = datetime.now()

@@ -220,14 +220,14 @@ class NavigationMonitor:
                 text=f"You have arrived at {self._destination_name}.",
             )
         # Round distance to a friendlier number for speech.
-        rounded = _round_speech_distance(distance)
+        rounded = round_speech_distance(distance)
         return NavigationCue(
             kind="announce",
             text=f"In {rounded} meters, {instr.text}.",
         )
 
 
-def _round_speech_distance(m: float) -> int:
+def round_speech_distance(m: float) -> int:
     """Round a distance to a value pleasant for speech synthesis.
 
     "In 87 meters, turn left" sounds robotic. "In 90 meters..." sounds

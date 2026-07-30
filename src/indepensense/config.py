@@ -165,6 +165,14 @@ NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 NLU_TIMEOUT_S = 30.0
 NLU_WARMUP_TIMEOUT_S = 90.0
 
+h# Internet connectivity probe. The heartbeat sender uses this before
+# each POST to populate `internet_status` honestly (rather than
+# hardcoded True). Cloudflare's 1.1.1.1 is the target — direct IP so
+# DNS breakage doesn't confuse it with internet breakage, high uptime,
+# fast response globally.
+INTERNET_PROBE_URL = "http://1.1.1.1"
+INTERNET_PROBE_TIMEOUT_S = 2.0
+
 # Guardian-dashboard backend (NestJS + MySQL, see ../IndepenSense).
 # The dev seed provisions DEVICE_ID with an assisted user + linked guardian.
 # Every deployed wearable gets its own unique UUID here.

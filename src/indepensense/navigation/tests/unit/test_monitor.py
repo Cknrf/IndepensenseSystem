@@ -6,7 +6,7 @@ by feeding synthetic GPS positions and asserting on the cues returned.
 from indepensense.navigation.monitor import (
     NavigationCue,
     NavigationMonitor,
-    _round_speech_distance,
+    round_speech_distance,
 )
 from indepensense.routing.base import Coordinate, Route, RouteInstruction
 
@@ -210,12 +210,12 @@ def test_haptic_direction_matches_instruction():
 # --- distance rounding ------------------------------------------------------
 
 def test_round_speech_distance_examples():
-    assert _round_speech_distance(87.0) == 90    # nearest 10 under 100
-    assert _round_speech_distance(43.0) == 40
-    assert _round_speech_distance(5.0) == 10     # min 10
-    assert _round_speech_distance(150.0) == 150  # nearest 50 up to 500
-    assert _round_speech_distance(178.0) == 200
-    assert _round_speech_distance(650.0) == 700  # nearest 100 beyond 500
+    assert round_speech_distance(87.0) == 90    # nearest 10 under 100
+    assert round_speech_distance(43.0) == 40
+    assert round_speech_distance(5.0) == 10     # min 10
+    assert round_speech_distance(150.0) == 150  # nearest 50 up to 500
+    assert round_speech_distance(178.0) == 200
+    assert round_speech_distance(650.0) == 700  # nearest 100 beyond 500
 
 
 # --- edge cases -------------------------------------------------------------

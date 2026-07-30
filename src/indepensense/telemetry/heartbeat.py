@@ -52,6 +52,8 @@ class PeriodicHeartbeatSender:
         device_id: str,
         interval_s: float = 30.0,
         battery: BatteryReader | None = None,
+        internet_probe_url: str = "http://1.1.1.1",
+        internet_probe_timeout_s: float = 2.0,
     ):
         if interval_s <= 0:
             raise ValueError("interval_s must be > 0")
@@ -60,6 +62,8 @@ class PeriodicHeartbeatSender:
         self._battery = battery
         self._device_id = device_id
         self._interval_s = interval_s
+        self._internet_probe_url = internet_probe_url
+        self._internet_probe_timeout_s = internet_probe_timeout_s
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -112,11 +116,37 @@ class PeriodicHeartbeatSender:
         return IntervalInformation(
             device_id=self._device_id,
             battery_health=self._read_battery_percent_or_default(),
-            internet_status=True,     # TODO: HEAD probe or last-POST outcome
+            internet_status=self._probe_internet(),
             latitude=lat,
             longitude=lon,
             created_at=datetime.now(timezone.utc),
         )
+
+    def _probe_internet(self) -> bool:
+        """Lightweight HTTP HEAD to a highly-available target.
+
+        Returns True if any HTTP response comes back within the timeout;
+        False on connection error, DNS failure, or timeout.
+
+        Note: we accept any response including error status codes as
+        "we have internet" — a 5xx from Cloudflare still means we're
+        reaching Cloudflare, which means we're online. Only a network
+        failure means we're actually offline.
+
+        This runs on the heartbeat thread once per interval — no
+        contention with the main loop or voice pipeline.
+        """
+        try:
+            import requests
+            requests.head(
+                self._internet_probe_url,
+                timeout=self._internet_probe_timeout_s,
+            )
+            return True
+        except Exception:
+            # Any exception (RequestException, timeout, DNS, etc.) means
+            # we couldn't reach the probe target. Treat as offline.
+            return False
 
     def _read_battery_percent_or_default(self) -> int:
         """Read the current battery percentage.

@@ -82,6 +82,8 @@ from indepensense.config import (
     EMERGENCY_BUTTON_GPIO,
     GRAPHHOPPER_URL,
     HEARTBEAT_INTERVAL_S,
+    INTERNET_PROBE_TIMEOUT_S,
+    INTERNET_PROBE_URL,
     LOW_BATTERY_PERCENT,
     LOW_BATTERY_RECOVERY_PERCENT,
     MPU6050_ADDRESS,
@@ -307,6 +309,9 @@ class App:
         )
         self.buffered = BufferedTelemetryClient(raw_client)
 
+        # NB: battery isn't opened yet — wire it after this block. Store
+        # the executor construction here anyway so the button handlers
+        # can be registered right after. We patch the battery in later.
         self.executor = IntentExecutor(
             router=router,
             geocoder=geocoder,
@@ -340,6 +345,12 @@ class App:
         print("  Opening UPS HAT (battery)...", flush=True)
         self.battery = self._try_open_battery()
 
+        # Late-bind battery into the executor so the device.status intent
+        # can read it. Executor was constructed before battery to keep
+        # the button-handler registration close to executor creation.
+        if self.executor is not None:
+            self.executor._battery = self.battery
+
         print("  Starting heartbeat sender...", flush=True)
         self.heartbeat_sender = PeriodicHeartbeatSender(
             telemetry=self.buffered,
@@ -347,6 +358,8 @@ class App:
             device_id=DEVICE_ID,
             interval_s=HEARTBEAT_INTERVAL_S,
             battery=self.battery,
+            internet_probe_url=INTERNET_PROBE_URL,
+            internet_probe_timeout_s=INTERNET_PROBE_TIMEOUT_S,
         )
         self.heartbeat_sender.start()
 
