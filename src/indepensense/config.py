@@ -69,6 +69,19 @@ TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8n.pt"
 YOLO_CONFIDENCE_THRESHOLD = 0.5
 
+# Tesseract OCR — reads printed text via `vision.read` intent.
+# `OCR_LANGUAGES` maps our SYSTEM_LANGUAGE codes to Tesseract language
+# packs. Install packs on the Pi via:
+#   sudo apt install -y tesseract-ocr tesseract-ocr-tgl
+# `OCR_MAX_CHARS` caps spoken responses — a full receipt/menu can be
+# 1000+ characters, which is ~90 s of Piper speech. Truncating to
+# ~500 characters (~30 s) keeps responses digestible.
+OCR_LANGUAGES = {
+    "en": "eng",
+    "tl": "tgl",
+}
+OCR_MAX_CHARS = 500
+
 # Local routing / geocoding services (see docs/graphhopper.md, docs/photon.md).
 # When running from a Mac against the Pi, replace 127.0.0.1 with the Pi's LAN IP.
 GRAPHHOPPER_URL = "http://127.0.0.1:8989"

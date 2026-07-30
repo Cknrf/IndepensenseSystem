@@ -42,3 +42,18 @@ class Camera(Protocol):
 class Detector(Protocol):
     def detect(self, frame: Frame) -> list[Detection]:
         """Run inference on the frame and return detected objects."""
+
+
+class OCR(Protocol):
+    def read_text(self, frame: Frame, language: str = "en") -> str:
+        """Extract text from a camera frame.
+
+        `language` is the app-facing code (e.g. "en", "tl"); the driver
+        translates it to whatever the underlying OCR engine expects
+        (Tesseract uses "eng"/"tgl"). Returns the raw extracted text,
+        which the caller is responsible for cleaning/truncating for
+        speech synthesis.
+        """
+
+    def close(self) -> None:
+        ...

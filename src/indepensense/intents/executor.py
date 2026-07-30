@@ -21,7 +21,7 @@ from indepensense.navigation.monitor import NavigationMonitor, round_speech_dist
 from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
-from indepensense.vision.base import Camera, Detection, Detector
+from indepensense.vision.base import Camera, Detection, Detector, OCR
 
 
 def _format_location_response(hit: GeocodingResult) -> str:
@@ -161,6 +161,32 @@ def _describe_scene(detections: list[Detection]) -> str:
     return "I see " + _join_items(items) + "."
 
 
+def _clean_ocr_text(text: str) -> str:
+    """Turn Tesseract's raw output into a speech-friendly string.
+
+    Tesseract emits real line breaks inside paragraphs (matching the
+    source layout of the image). Piper reads those as awkward pauses.
+    We flatten single line breaks to spaces, keep paragraph breaks
+    (double line breaks) as a natural full stop + pause, and collapse
+    runs of whitespace.
+    """
+    # Split into paragraphs on 2+ newlines, then rejoin single line
+    # breaks within each paragraph as spaces.
+    import re
+    paragraphs = re.split(r"\n\s*\n", text)
+    cleaned_paras = []
+    for p in paragraphs:
+        # Replace any remaining internal newlines/tabs with spaces,
+        # then collapse multiple spaces into one.
+        p = re.sub(r"[\n\t]+", " ", p)
+        p = re.sub(r" {2,}", " ", p).strip()
+        if p:
+            cleaned_paras.append(p)
+    # Join paragraphs with a full stop + space so Piper takes a real
+    # pause between them.
+    return ". ".join(cleaned_paras)
+
+
 class IntentExecutor:
     def __init__(
         self,
@@ -173,6 +199,9 @@ class IntentExecutor:
         battery: BatteryReader | None = None,
         camera: Camera | None = None,
         detector: Detector | None = None,
+        ocr: OCR | None = None,
+        system_language: str = "en",
+        ocr_max_chars: int = 500,
     ):
         self._router = router
         self._geocoder = geocoder
@@ -183,6 +212,9 @@ class IntentExecutor:
         self._battery = battery
         self._camera = camera
         self._detector = detector
+        self._ocr = ocr
+        self._system_language = system_language
+        self._ocr_max_chars = ocr_max_chars
 
         self._current_route: Route | None = None
 
@@ -217,6 +249,7 @@ class IntentExecutor:
             Intent.DEVICE_STATUS:       self._handle_device_status,
             Intent.SYSTEM_TIME:         self._handle_system_time,
             Intent.VISION_DESCRIBE:     self._handle_vision_describe,
+            Intent.VISION_READ:         self._handle_vision_read,
         }
 
     # --- handlers -----------------------------------------------------------
@@ -456,6 +489,47 @@ class IntentExecutor:
             return "I couldn't analyze the image right now. Please try again."
 
         return _describe_scene(detections)
+
+    def _handle_vision_read(self, result: IntentResult) -> str:
+        """Capture a frame, run Tesseract OCR, speak the extracted text.
+
+        Fails gracefully when the camera or OCR is missing (dev on Mac,
+        Tesseract not installed). Truncates long text so a full receipt
+        doesn't turn into a 90-second Piper monologue.
+
+        Uses `self._system_language` to pick which Tesseract language
+        pack to invoke — same code the rest of the wearable uses for
+        STT and TTS, so all language-aware components stay in sync.
+        """
+        if self._camera is None or self._ocr is None:
+            return "The camera is not available on this device."
+
+        try:
+            frame = self._camera.capture()
+        except Exception as exc:
+            print(f"[ocr] camera error: {exc}", file=sys.stderr, flush=True)
+            return "I couldn't take a photo right now. Please try again."
+        if frame is None:
+            return "The camera returned no image."
+
+        try:
+            text = self._ocr.read_text(frame, language=self._system_language)
+        except Exception as exc:
+            print(f"[ocr] tesseract error: {exc}", file=sys.stderr, flush=True)
+            return "I couldn't read the text right now. Please try again."
+
+        text = text.strip()
+        if not text:
+            return "I don't see any readable text."
+
+        # Collapse internal whitespace — Tesseract emits raw line breaks
+        # that sound choppy when Piper reads them. Preserve paragraphs
+        # but replace newlines within a paragraph with spaces.
+        text = _clean_ocr_text(text)
+
+        if len(text) > self._ocr_max_chars:
+            text = text[: self._ocr_max_chars].rstrip() + "... and more."
+        return text
 
     def _handle_unknown(self, result: IntentResult) -> str:
         return "Sorry, I didn't catch that. Could you try again?"

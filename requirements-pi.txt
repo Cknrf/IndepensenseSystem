@@ -27,3 +27,9 @@ lgpio>=0.2
 torch==2.6.0
 torchvision==0.21.0
 ultralytics>=8.0
+
+# Tesseract OCR — printed-text reader for the `vision.read` intent.
+# The binary + language packs come from apt:
+#   sudo apt install -y tesseract-ocr tesseract-ocr-tgl
+# `pytesseract` is just the Python wrapper; it shells out to the binary.
+pytesseract>=0.3

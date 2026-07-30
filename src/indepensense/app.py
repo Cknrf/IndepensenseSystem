@@ -111,6 +111,8 @@ from indepensense.config import (
     VIBRATION_FRONT_GPIO,
     VIBRATION_LEFT_GPIO,
     VIBRATION_RIGHT_GPIO,
+    OCR_LANGUAGES,
+    OCR_MAX_CHARS,
     VOICE_TEST_DIR,
     WHISPER_INITIAL_PROMPTS,
     YOLO_CONFIDENCE_THRESHOLD,
@@ -138,6 +140,7 @@ from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.heartbeat import PeriodicHeartbeatSender
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
 from indepensense.vision.detector import YOLOv8Detector
+from indepensense.vision.ocr import TesseractOCR
 from indepensense.vision.picamera import PiCamera
 from indepensense.voice.audio import play, play_chime, record_until_button
 from indepensense.voice.piper import PiperTTS
@@ -241,6 +244,7 @@ class App:
         self.battery: WaveshareUPSHatE | None = None
         self.camera: PiCamera | None = None
         self.detector: YOLOv8Detector | None = None
+        self.ocr: TesseractOCR | None = None
 
         # Navigation monitor: tracks user progress against the active route
         # and returns cues (announce / haptic / arrive) as they get near
@@ -328,6 +332,8 @@ class App:
             telemetry=self.buffered,
             device_id=DEVICE_ID,
             monitor=self.nav_monitor,
+            system_language=SYSTEM_LANGUAGE,
+            ocr_max_chars=OCR_MAX_CHARS,
         )
 
         print("  Opening buttons...", flush=True)
@@ -358,14 +364,18 @@ class App:
         self.camera = self._try_open_camera()
         self.detector = self._try_open_detector()
 
-        # Late-bind battery + camera + detector into the executor. They
-        # weren't ready at executor construction time; injecting them
-        # now lets vision.describe and device.status work without a
-        # bigger startup reshuffle.
+        print("  Opening Tesseract OCR...", flush=True)
+        self.ocr = self._try_open_ocr()
+
+        # Late-bind battery + camera + detector + ocr into the executor.
+        # They weren't ready at executor construction time; injecting
+        # them now lets vision.*/device.status work without a bigger
+        # startup reshuffle.
         if self.executor is not None:
             self.executor._battery = self.battery
             self.executor._camera = self.camera
             self.executor._detector = self.detector
+            self.executor._ocr = self.ocr
 
         print("  Starting heartbeat sender...", flush=True)
         self.heartbeat_sender = PeriodicHeartbeatSender(
@@ -467,6 +477,7 @@ class App:
             ("BOTTOM ultrasonic", self.bottom_sensor),
             ("UPS HAT", self.battery),
             ("Camera", self.camera),
+            ("OCR", self.ocr),
             ("PTT button", self.ptt_button),
             ("Emergency button", self.emergency_button),
             ("Repeat button", self.repeat_button),
@@ -1066,6 +1077,17 @@ class App:
             print(
                 f"  YOLO detector unavailable ({exc}). "
                 f"vision.describe will report unavailable.",
+                flush=True,
+            )
+            return None
+
+    def _try_open_ocr(self) -> TesseractOCR | None:
+        try:
+            return TesseractOCR(language_map=OCR_LANGUAGES)
+        except Exception as exc:
+            print(
+                f"  Tesseract OCR unavailable ({exc}). "
+                f"vision.read will report unavailable.",
                 flush=True,
             )
             return None

@@ -52,6 +52,7 @@ intent.
    - `device.status` — the user is asking about the device (battery, GPS lock, signal).
    - `system.time` — the user is asking for the current time.
    - `vision.describe` — the user is asking what is around them (uses the camera).
+   - `vision.read` — the user is asking the wearable to read printed text (a sign, menu, receipt, label).
    - `unknown` — nothing above fits, OR you are not confident.
 
 2. If more than one intent appears in a single utterance, choose the primary
@@ -204,6 +205,26 @@ Output: `{"intent": "vision.describe", "parameters": {}}`
 
 User: "Ano ang nakikita mo"
 Output: `{"intent": "vision.describe", "parameters": {}}`
+
+## vision.read
+
+User: "Read this"
+Output: `{"intent": "vision.read", "parameters": {}}`
+
+User: "Read the sign"
+Output: `{"intent": "vision.read", "parameters": {}}`
+
+User: "What does this say"
+Output: `{"intent": "vision.read", "parameters": {}}`
+
+User: "Read the menu"
+Output: `{"intent": "vision.read", "parameters": {}}`
+
+User: "Basahin mo ito"
+Output: `{"intent": "vision.read", "parameters": {}}`
+
+User: "Anong nakasulat"
+Output: `{"intent": "vision.read", "parameters": {}}`
 
 ## unknown — the safe default
 

@@ -25,6 +25,7 @@ class Intent(Enum):
     DEVICE_STATUS = "device.status"
     SYSTEM_TIME = "system.time"
     VISION_DESCRIBE = "vision.describe"
+    VISION_READ = "vision.read"
     UNKNOWN = "unknown"
 
 
