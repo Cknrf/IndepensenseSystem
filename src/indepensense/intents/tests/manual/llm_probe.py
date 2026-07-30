@@ -27,54 +27,75 @@ import requests
 from indepensense.config import PROJECT_ROOT
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-DEFAULT_MODEL = "qwen2.5:3b-instruct"
+# Kept in sync with `config.NLU_MODEL` — 1.5B was chosen empirically over
+# 3B (100% intent accuracy on the earlier 30-case set, ~2.8 s latency,
+# 1.4 GB RAM). Override on the command line to benchmark other models.
+DEFAULT_MODEL = "qwen2.5:1.5b-instruct"
 MODEL = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
 
 PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 SYSTEM_PROMPT = PROMPT_PATH.read_text()
 
 
-# Test cases with expected intent + expected slot values.
-# The checker compares intent equality and REQUIRED-slot equality (case-
-# insensitive for strings). Extra slots the model adds are tolerated.
+# Test cases: (transcript, expected_intent, expected_slots).
+# The checker compares intent equality and REQUIRED-slot equality
+# (case-insensitive for strings). Extra slots the model adds are
+# tolerated (the executor drops them for `unknown` and normalises
+# them for `navigation.start`).
+#
+# Coverage aims:
+# - Every intent has positive cases in both English and Tagalog.
+# - "Adversarial" cases at the end verify the Phase 1 prompt
+#   hardening: transcripts that a naive model would misclassify as
+#   a specific intent when they should be `unknown`.
 TEST_CASES = [
-    # navigation.start (English)
+    # --- navigation.start ---
     ("Navigate to SM Lipa",              "navigation.start", {"location": "SM Lipa", "nearest": False}),
     ("Take me to Jollibee",              "navigation.start", {"location": "Jollibee", "nearest": False}),
     ("Guide me to the nearest hospital", "navigation.start", {"location": "hospital", "nearest": True}),
     ("How do I get to the pharmacy",     "navigation.start", {"location": "pharmacy"}),
     ("Bring me to school",               "navigation.start", {"location": "school"}),
 
-    # navigation.location (English)
+    # --- navigation.location ---
     ("Where am I?",                      "navigation.location", {}),
     ("What's my current address",        "navigation.location", {}),
     ("Tell me my location",              "navigation.location", {}),
 
-    # navigation.stop (English)
+    # --- navigation.stop ---
     ("Cancel navigation",                "navigation.stop", {}),
     ("Stop the trip",                    "navigation.stop", {}),
 
-    # navigation.repeat (English)
+    # --- navigation.repeat ---
     ("Repeat the last instruction",      "navigation.repeat", {}),
     ("Say that again",                   "navigation.repeat", {}),
 
-    # emergency.trigger (English)
+    # --- emergency.trigger ---
     ("Help me, this is an emergency",    "emergency.trigger", {}),
     ("I need help now",                  "emergency.trigger", {}),
     ("SOS",                              "emergency.trigger", {}),
 
-    # device.status (English)
+    # --- device.status ---
     ("How much battery do I have left",  "device.status", {"status_field": "battery"}),
     ("Is the GPS connected",             "device.status", {"status_field": "gps"}),
 
-    # system.time (English)
+    # --- system.time ---
     ("What time is it",                  "system.time", {}),
 
-    # unknown (English)
+    # --- vision.describe ---
+    ("What's around me",                 "vision.describe", {}),
+    ("Describe my surroundings",         "vision.describe", {}),
+    ("What do you see",                  "vision.describe", {}),
+
+    # --- vision.read ---
+    ("Read this",                        "vision.read", {}),
+    ("What does this sign say",          "vision.read", {}),
+    ("Read the menu for me",             "vision.read", {}),
+
+    # --- unknown (clear non-commands) ---
     ("Play some music",                  "unknown", {}),
     ("Send a text to my mom",            "unknown", {}),
 
-    # Tagalog
+    # --- Tagalog ---
     ("Dalhin mo ako sa Jollibee",                    "navigation.start",    {"location": "Jollibee"}),
     ("Puntahan mo ang pinakamalapit na ospital",     "navigation.start",    {"location": "ospital", "nearest": True}),
     ("Nasaan ako",                                    "navigation.location", {}),
@@ -84,7 +105,36 @@ TEST_CASES = [
     ("Tulong! Emergency!",                            "emergency.trigger",   {}),
     ("Ilan pa ang natitirang battery",                "device.status",       {"status_field": "battery"}),
     ("Anong oras na",                                 "system.time",         {}),
+    ("Ano ang nakikita mo",                           "vision.describe",     {}),
+    ("Basahin mo ito",                                "vision.read",         {}),
     ("Magpatugtog ka ng musika",                      "unknown",             {}),
+
+    # --- Adversarial: verify Phase 1 prompt hardening ---
+    # These are transcripts where a naive LLM might latch onto a
+    # keyword ("time", "help", "location") and pick the wrong intent.
+    # After the "prefer unknown when in doubt" prompt rewrite, these
+    # should all resolve as expected.
+
+    # "time" in non-time-query context → unknown, not system.time
+    ("sometime tomorrow",                "unknown", {}),
+    ("one at a time please",             "unknown", {}),
+    ("in a bit",                         "unknown", {}),
+
+    # "help" in non-emergency context
+    ("help me find the pharmacy",        "navigation.start", {"location": "pharmacy"}),
+    ("how do I use this",                "unknown", {}),
+
+    # "location" / "where" about a place, not the user
+    ("where is Jollibee",                "unknown", {}),
+
+    # Statements and chatter (not commands)
+    ("the weather is nice today",        "unknown", {}),
+    ("I'm feeling tired",                "unknown", {}),
+
+    # Common Whisper hallucinations on silence / background noise
+    ("you",                              "unknown", {}),
+    ("thanks for watching",              "unknown", {}),
+    ("okay",                             "unknown", {}),
 ]
 
 
