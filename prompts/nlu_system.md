@@ -51,6 +51,7 @@ intent.
    - `emergency.trigger` — the user is calling for help or reporting an emergency.
    - `device.status` — the user is asking about the device (battery, GPS lock, signal).
    - `system.time` — the user is asking for the current time.
+   - `vision.describe` — the user is asking what is around them (uses the camera).
    - `unknown` — nothing above fits, OR you are not confident.
 
 2. If more than one intent appears in a single utterance, choose the primary
@@ -189,6 +190,20 @@ Output: `{"intent": "system.time", "parameters": {}}`
 
 User: "Anong oras na?"
 Output: `{"intent": "system.time", "parameters": {}}`
+
+## vision.describe
+
+User: "What's around me"
+Output: `{"intent": "vision.describe", "parameters": {}}`
+
+User: "Describe my surroundings"
+Output: `{"intent": "vision.describe", "parameters": {}}`
+
+User: "What do you see"
+Output: `{"intent": "vision.describe", "parameters": {}}`
+
+User: "Ano ang nakikita mo"
+Output: `{"intent": "vision.describe", "parameters": {}}`
 
 ## unknown — the safe default
 

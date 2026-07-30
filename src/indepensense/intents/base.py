@@ -24,6 +24,7 @@ class Intent(Enum):
     EMERGENCY_TRIGGER = "emergency.trigger"
     DEVICE_STATUS = "device.status"
     SYSTEM_TIME = "system.time"
+    VISION_DESCRIBE = "vision.describe"
     UNKNOWN = "unknown"
 
 

@@ -10,6 +10,8 @@ battery reading, cellular signal), the handler currently returns a
 placeholder message. TODO comments mark the ones that need real
 integration when those subsystems land.
 """
+import sys
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +21,7 @@ from indepensense.navigation.monitor import NavigationMonitor, round_speech_dist
 from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
+from indepensense.vision.base import Camera, Detection, Detector
 
 
 def _format_location_response(hit: GeocodingResult) -> str:
@@ -95,6 +98,69 @@ def _first_action_description(route: Route) -> str:
     return route.instructions[0].text
 
 
+# --- vision scene-description helpers ---------------------------------------
+
+# COCO class labels that need irregular plural forms. Everything else
+# gets the naive suffix rules in `_pluralize()`.
+_IRREGULAR_PLURALS: dict[str, str] = {
+    "person": "people",
+    "child": "children",
+    "mouse": "mice",       # COCO's "mouse" is a computer mouse
+    "foot": "feet",
+    "tooth": "teeth",
+}
+
+# Cap how many distinct object classes we mention in one description.
+# YOLO can detect 20+ things in a crowded scene; reading them all takes
+# too long and overwhelms the listener. Cap at 5 most-frequent classes.
+_MAX_SCENE_ITEMS = 5
+
+
+def _pluralize(label: str, count: int) -> str:
+    """English plural + article. "1 chair" → "a chair", "2 chairs" → "2 chairs"."""
+    if count == 1:
+        article = "an" if label[:1].lower() in "aeiou" else "a"
+        return f"{article} {label}"
+    plural = _IRREGULAR_PLURALS.get(label)
+    if plural is None:
+        # Basic English pluralization rules — good enough for COCO labels.
+        if label.endswith(("s", "x", "z", "ch", "sh")):
+            plural = label + "es"
+        elif label.endswith("y") and len(label) >= 2 and label[-2] not in "aeiou":
+            plural = label[:-1] + "ies"
+        else:
+            plural = label + "s"
+    return f"{count} {plural}"
+
+
+def _join_items(items: list[str]) -> str:
+    """Comma-and join for spoken lists: [a, b, c] → 'a, b, and c'."""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
+def _describe_scene(detections: list[Detection]) -> str:
+    """Build a spoken description from a list of YOLO detections.
+
+    Groups by class label, counts instances, orders by frequency, caps
+    to `_MAX_SCENE_ITEMS` classes so the response stays short. Uses
+    natural English plurals and articles.
+    """
+    if not detections:
+        return "I don't see anything I recognize right now."
+
+    counts = Counter(d.class_name for d in detections)
+    # `most_common` returns [(label, count), ...] sorted by count desc.
+    ordered = counts.most_common(_MAX_SCENE_ITEMS)
+    items = [_pluralize(label, n) for label, n in ordered]
+    return "I see " + _join_items(items) + "."
+
+
 class IntentExecutor:
     def __init__(
         self,
@@ -105,6 +171,8 @@ class IntentExecutor:
         device_id: str = "",
         monitor: NavigationMonitor | None = None,
         battery: BatteryReader | None = None,
+        camera: Camera | None = None,
+        detector: Detector | None = None,
     ):
         self._router = router
         self._geocoder = geocoder
@@ -113,6 +181,8 @@ class IntentExecutor:
         self._device_id = device_id
         self._monitor = monitor
         self._battery = battery
+        self._camera = camera
+        self._detector = detector
 
         self._current_route: Route | None = None
 
@@ -146,6 +216,7 @@ class IntentExecutor:
             Intent.EMERGENCY_TRIGGER:   self._handle_emergency_trigger,
             Intent.DEVICE_STATUS:       self._handle_device_status,
             Intent.SYSTEM_TIME:         self._handle_system_time,
+            Intent.VISION_DESCRIBE:     self._handle_vision_describe,
         }
 
     # --- handlers -----------------------------------------------------------
@@ -358,6 +429,33 @@ class IntentExecutor:
         now = datetime.now()
         # e.g. "It's currently 2:34 PM."
         return f"It's currently {now.strftime('%I:%M %p').lstrip('0')}."
+
+    def _handle_vision_describe(self, result: IntentResult) -> str:
+        """Capture a frame from the camera, run YOLO, describe what was found.
+
+        Total latency on Pi 5: ~50 ms capture + ~500-1000 ms YOLOv8n
+        inference. Runs on the voice thread so it doesn't block the
+        main polling loop. Fails gracefully when the camera or detector
+        is missing (dev on Mac, hardware not wired).
+        """
+        if self._camera is None or self._detector is None:
+            return "The camera is not available on this device."
+
+        try:
+            frame = self._camera.capture()
+        except Exception as exc:
+            print(f"[vision] camera error: {exc}", file=sys.stderr, flush=True)
+            return "I couldn't take a photo right now. Please try again."
+        if frame is None:
+            return "The camera returned no image."
+
+        try:
+            detections = self._detector.detect(frame)
+        except Exception as exc:
+            print(f"[vision] detector error: {exc}", file=sys.stderr, flush=True)
+            return "I couldn't analyze the image right now. Please try again."
+
+        return _describe_scene(detections)
 
     def _handle_unknown(self, result: IntentResult) -> str:
         return "Sorry, I didn't catch that. Could you try again?"

@@ -75,6 +75,9 @@ from indepensense.config import (
     BACKEND_URL,
     BATTERY_CHECK_INTERVAL_S,
     BUZZER_GPIO,
+    CAMERA_FPS,
+    CAMERA_HEIGHT,
+    CAMERA_WIDTH,
     DEVICE_ID,
     DYP_A22_BAUDRATE,
     DYP_A22_BOTTOM_PORT,
@@ -110,6 +113,8 @@ from indepensense.config import (
     VIBRATION_RIGHT_GPIO,
     VOICE_TEST_DIR,
     WHISPER_INITIAL_PROMPTS,
+    YOLO_CONFIDENCE_THRESHOLD,
+    YOLO_MODEL_PATH,
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
 )
@@ -132,6 +137,8 @@ from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.heartbeat import PeriodicHeartbeatSender
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
+from indepensense.vision.detector import YOLOv8Detector
+from indepensense.vision.picamera import PiCamera
 from indepensense.voice.audio import play, play_chime, record_until_button
 from indepensense.voice.piper import PiperTTS
 from indepensense.voice.whisper import FasterWhisperSTT
@@ -232,6 +239,8 @@ class App:
         self.emergency_button: GPIOButton | None = None
         self.repeat_button: GPIOButton | None = None
         self.battery: WaveshareUPSHatE | None = None
+        self.camera: PiCamera | None = None
+        self.detector: YOLOv8Detector | None = None
 
         # Navigation monitor: tracks user progress against the active route
         # and returns cues (announce / haptic / arrive) as they get near
@@ -345,11 +354,18 @@ class App:
         print("  Opening UPS HAT (battery)...", flush=True)
         self.battery = self._try_open_battery()
 
-        # Late-bind battery into the executor so the device.status intent
-        # can read it. Executor was constructed before battery to keep
-        # the button-handler registration close to executor creation.
+        print("  Opening camera + YOLO detector...", flush=True)
+        self.camera = self._try_open_camera()
+        self.detector = self._try_open_detector()
+
+        # Late-bind battery + camera + detector into the executor. They
+        # weren't ready at executor construction time; injecting them
+        # now lets vision.describe and device.status work without a
+        # bigger startup reshuffle.
         if self.executor is not None:
             self.executor._battery = self.battery
+            self.executor._camera = self.camera
+            self.executor._detector = self.detector
 
         print("  Starting heartbeat sender...", flush=True)
         self.heartbeat_sender = PeriodicHeartbeatSender(
@@ -450,6 +466,7 @@ class App:
             ("TOP ultrasonic", self.top_sensor),
             ("BOTTOM ultrasonic", self.bottom_sensor),
             ("UPS HAT", self.battery),
+            ("Camera", self.camera),
             ("PTT button", self.ptt_button),
             ("Emergency button", self.emergency_button),
             ("Repeat button", self.repeat_button),
@@ -1010,6 +1027,30 @@ class App:
         except Exception as exc:
             print(
                 f"  UPS HAT unavailable ({exc}). Heartbeats will report 100%.",
+                flush=True,
+            )
+            return None
+
+    def _try_open_camera(self) -> PiCamera | None:
+        try:
+            return PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
+        except Exception as exc:
+            print(
+                f"  Camera unavailable ({exc}). vision.describe will report unavailable.",
+                flush=True,
+            )
+            return None
+
+    def _try_open_detector(self) -> YOLOv8Detector | None:
+        try:
+            return YOLOv8Detector(
+                model_path=YOLO_MODEL_PATH,
+                confidence_threshold=YOLO_CONFIDENCE_THRESHOLD,
+            )
+        except Exception as exc:
+            print(
+                f"  YOLO detector unavailable ({exc}). "
+                f"vision.describe will report unavailable.",
                 flush=True,
             )
             return None
