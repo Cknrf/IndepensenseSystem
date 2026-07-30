@@ -253,3 +253,105 @@ def test_set_route_resets_state():
     # Same position should now announce/haptic again (fresh latches).
     cues = m.check(Coordinate(lat=14.00117, lon=121.0000))
     assert any(c.kind == "haptic" for c in cues)
+
+
+# --- off-route detection ----------------------------------------------------
+
+# ~44 m east of the route (which runs along lon=121.0000 north-south).
+_OFF_ROUTE_44M = Coordinate(lat=14.0006, lon=121.0004)
+# ~5 m east of the route — inside recovery zone.
+_ON_ROUTE_5M = Coordinate(lat=14.0006, lon=121.00005)
+
+
+def test_on_route_does_not_emit_off_route_cue():
+    m = NavigationMonitor(
+        off_route_distance_m=30.0,
+        on_route_recovery_m=15.0,
+        off_route_duration_s=15.0,
+    )
+    m.set_route(_make_route(), "Home")
+    cues = m.check(Coordinate(14.0006, 121.0000), now=0.0)
+    assert not any(c.kind == "off_route" for c in cues)
+
+
+def test_off_route_debounces_before_warning():
+    """The user must be off-route for the full duration before we warn."""
+    m = NavigationMonitor(
+        off_route_distance_m=30.0,
+        on_route_recovery_m=15.0,
+        off_route_duration_s=15.0,
+    )
+    m.set_route(_make_route(), "Home")
+
+    # First observation — no warning yet.
+    cues = m.check(_OFF_ROUTE_44M, now=0.0)
+    assert not any(c.kind == "off_route" for c in cues)
+
+    # 10 seconds later — still under the 15 s debounce.
+    cues = m.check(_OFF_ROUTE_44M, now=10.0)
+    assert not any(c.kind == "off_route" for c in cues)
+
+
+def test_off_route_warning_fires_after_duration():
+    m = NavigationMonitor(
+        off_route_distance_m=30.0,
+        on_route_recovery_m=15.0,
+        off_route_duration_s=15.0,
+    )
+    m.set_route(_make_route(), "Home")
+
+    m.check(_OFF_ROUTE_44M, now=0.0)
+    cues = m.check(_OFF_ROUTE_44M, now=16.0)
+    off_route_cues = [c for c in cues if c.kind == "off_route"]
+    assert len(off_route_cues) == 1
+    assert "off the planned route" in off_route_cues[0].text.lower()
+
+
+def test_off_route_warning_latches_after_firing():
+    """Once fired, don't warn again until the user gets back on route."""
+    m = NavigationMonitor(off_route_duration_s=1.0)
+    m.set_route(_make_route(), "Home")
+
+    m.check(_OFF_ROUTE_44M, now=0.0)
+    m.check(_OFF_ROUTE_44M, now=2.0)   # warns once
+    cues = m.check(_OFF_ROUTE_44M, now=5.0)
+    assert not any(c.kind == "off_route" for c in cues)
+
+
+def test_off_route_recovery_clears_latch():
+    """Getting back within recovery threshold clears the warning latch."""
+    m = NavigationMonitor(
+        off_route_distance_m=30.0,
+        on_route_recovery_m=15.0,
+        off_route_duration_s=1.0,
+    )
+    m.set_route(_make_route(), "Home")
+
+    # Deviate and warn.
+    m.check(_OFF_ROUTE_44M, now=0.0)
+    m.check(_OFF_ROUTE_44M, now=2.0)
+
+    # Recover.
+    m.check(_ON_ROUTE_5M, now=10.0)
+
+    # Second deviation — should warn again (fresh event).
+    m.check(_OFF_ROUTE_44M, now=15.0)
+    cues = m.check(_OFF_ROUTE_44M, now=17.0)
+    assert any(c.kind == "off_route" for c in cues)
+
+
+def test_set_route_clears_off_route_state():
+    """Starting a new route clears any prior deviation state."""
+    m = NavigationMonitor(off_route_duration_s=1.0)
+    m.set_route(_make_route(), "First")
+    m.check(_OFF_ROUTE_44M, now=0.0)
+    m.check(_OFF_ROUTE_44M, now=2.0)   # warns for first route
+
+    # New route resets everything.
+    m.set_route(_make_route(), "Second")
+
+    # Same deviation on the new route — should warn again (not latched
+    # from the previous route).
+    m.check(_OFF_ROUTE_44M, now=10.0)
+    cues = m.check(_OFF_ROUTE_44M, now=12.0)
+    assert any(c.kind == "off_route" for c in cues)

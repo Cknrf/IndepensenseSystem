@@ -639,6 +639,21 @@ class App:
                     self._pulse_all_motors(duration_s=0.4)
                 if not self._voice_active.is_set() and cue.text is not None:
                     self._speak_error(cue.text)
+            elif cue.kind == "off_route":
+                # Deviation warning — spoken + a distinctive all-motor
+                # pulse so the user notices even if they missed the
+                # audio. Deferred when a voice command is in flight.
+                if self._voice_active.is_set():
+                    print(
+                        f"[nav] deferred off_route (voice busy): {cue.text}",
+                        flush=True,
+                    )
+                    return
+                print(f"[nav] off_route: {cue.text}", flush=True)
+                with self._warning_lock:
+                    self._pulse_all_motors(duration_s=0.3)
+                if cue.text is not None:
+                    self._speak_error(cue.text)
         except Exception as exc:
             print(f"[nav] fire error: {exc}", file=sys.stderr, flush=True)
 
