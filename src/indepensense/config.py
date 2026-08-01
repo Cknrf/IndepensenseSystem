@@ -76,9 +76,15 @@ MOCK_ULTRASONIC_MIN_CM = 20.0
 MOCK_ULTRASONIC_MAX_CM = 200.0
 MOCK_ULTRASONIC_PERIOD_S = 5.0
 
-# Raspberry Pi Camera Module 3
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
+# Raspberry Pi Camera Module 3.
+#
+# 1280×720 gives YOLO ~4× more pixels per object than 640×480 — noticeably
+# better detection of small items (mouse, phone, cables) at the cost of
+# ~2× slower inference. For the wearable's on-demand vision.describe this
+# tradeoff is fine (~1.5 s YOLO time invisible next to STT+LLM+TTS chain).
+# Drop back to 640×480 if you need higher preview FPS.
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
 CAMERA_FPS = 15
 TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 
@@ -99,7 +105,11 @@ TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 #
 # Ultralytics auto-downloads the weights (~22 MB) on first use.
 YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8s-oiv7.pt"
-YOLO_CONFIDENCE_THRESHOLD = 0.5
+# 0.3 (was 0.5) — more permissive so small/uncertain objects like a
+# distant mouse or partially-occluded cable don't get silently filtered.
+# Trade-off: more false positives. Watch the continuous_detect_test
+# output for hallucinations; if they return, dial back up to 0.4.
+YOLO_CONFIDENCE_THRESHOLD = 0.3
 
 # Tesseract OCR — reads printed text via `vision.read` intent.
 # `OCR_LANGUAGES` maps our SYSTEM_LANGUAGE codes to Tesseract language
