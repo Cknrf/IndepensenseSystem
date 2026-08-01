@@ -82,8 +82,18 @@ CAMERA_HEIGHT = 480
 CAMERA_FPS = 15
 TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 
-# YOLOv8 object detection
-YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8n.pt"
+# YOLOv8 object detection.
+#
+# The `-oiv7` suffix picks the variant trained on Open Images V7 (600
+# classes) instead of the default COCO (80 classes). Same nano
+# architecture, same ~300 ms inference on Pi 5 CPU, but 7.5× more
+# object types recognized — including doors, stairs, windows, and
+# many objects COCO omits that matter for an assistive wearable.
+#
+# Ultralytics auto-downloads the weights (~7 MB) on first use.
+# Fall back to `yolov8n.pt` if OIV7 turns out to have worse precision
+# on your specific scenes; classes vs precision is a real tradeoff.
+YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8n-oiv7.pt"
 YOLO_CONFIDENCE_THRESHOLD = 0.5
 
 # Tesseract OCR — reads printed text via `vision.read` intent.
