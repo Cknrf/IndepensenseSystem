@@ -75,3 +75,41 @@ class GPSSensor(Protocol):
 
     def close(self) -> None:
         ...
+
+
+@dataclass(frozen=True)
+class MagnetometerReading:
+    """One sample from a 3-axis magnetometer.
+
+    Field values are in microtesla (μT), calibrated (user hard-iron
+    offsets applied). Earth's magnetic field is ~25-65 μT depending on
+    location.
+
+    `heading_deg` is the horizontal compass heading in degrees:
+      0°   = magnetic north
+      90°  = east
+      180° = south
+      270° = west
+
+    The heading assumes the X-axis of the sensor points TOWARD the
+    front of the cane. Rotate the module 90° at mount time if your
+    physical layout puts a different axis forward, or apply a rotation
+    offset in the config.
+
+    No tilt compensation is applied — if the cane is significantly
+    off-vertical, the heading degrades. Adding tilt compensation using
+    the accelerometer is future work.
+    """
+    magnetic_x: float
+    magnetic_y: float
+    magnetic_z: float
+    heading_deg: float
+    timestamp: float
+
+
+class Magnetometer(Protocol):
+    def read(self) -> MagnetometerReading | None:
+        """Return one magnetometer reading with heading, or None on error."""
+
+    def close(self) -> None:
+        ...

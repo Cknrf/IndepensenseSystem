@@ -89,6 +89,10 @@ from indepensense.config import (
     INTERNET_PROBE_URL,
     LOW_BATTERY_PERCENT,
     LOW_BATTERY_RECOVERY_PERCENT,
+    MAG_ADDRESS,
+    MAG_OFFSET_X,
+    MAG_OFFSET_Y,
+    MAG_OFFSET_Z,
     MPU6050_ADDRESS,
     MPU6050_I2C_BUS,
     NLU_MODEL,
@@ -134,6 +138,7 @@ from indepensense.routing.photon import PhotonGeocoder
 from indepensense.safety.fall_detector import ThresholdFallDetector
 from indepensense.sensors.dyp_a22 import DYPA22
 from indepensense.sensors.gps import SIM7600GPS
+from indepensense.sensors.magnetometer import AK8963Magnetometer
 from indepensense.sensors.mpu6050 import MPU6050
 from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.telemetry.buffered import BufferedTelemetryClient
@@ -242,6 +247,7 @@ class App:
         self.emergency_button: GPIOButton | None = None
         self.repeat_button: GPIOButton | None = None
         self.battery: WaveshareUPSHatE | None = None
+        self.magnetometer: AK8963Magnetometer | None = None
         self.camera: PiCamera | None = None
         # `object_detector` (YOLO) is deliberately named differently from
         # `self.detector` above — that one is the ThresholdFallDetector
@@ -367,6 +373,9 @@ class App:
         print("  Opening UPS HAT (battery)...", flush=True)
         self.battery = self._try_open_battery()
 
+        print("  Opening magnetometer (compass, part of MPU9250)...", flush=True)
+        self.magnetometer = self._try_open_magnetometer()
+
         print("  Opening camera + YOLO detector...", flush=True)
         self.camera = self._try_open_camera()
         self.object_detector = self._try_open_detector()
@@ -483,6 +492,7 @@ class App:
             ("TOP ultrasonic", self.top_sensor),
             ("BOTTOM ultrasonic", self.bottom_sensor),
             ("UPS HAT", self.battery),
+            ("Magnetometer", self.magnetometer),
             ("Camera", self.camera),
             ("OCR", self.ocr),
             ("PTT button", self.ptt_button),
@@ -1060,6 +1070,24 @@ class App:
         except Exception as exc:
             print(
                 f"  UPS HAT unavailable ({exc}). Heartbeats will report 100%.",
+                flush=True,
+            )
+            return None
+
+    def _try_open_magnetometer(self) -> AK8963Magnetometer | None:
+        try:
+            return AK8963Magnetometer(
+                bus_number=MPU6050_I2C_BUS,
+                mpu9250_address=MPU6050_ADDRESS,
+                magnetometer_address=MAG_ADDRESS,
+                offset_x=MAG_OFFSET_X,
+                offset_y=MAG_OFFSET_Y,
+                offset_z=MAG_OFFSET_Z,
+            )
+        except Exception as exc:
+            print(
+                f"  Magnetometer unavailable ({exc}). Heading verification "
+                f"will not be active.",
                 flush=True,
             )
             return None

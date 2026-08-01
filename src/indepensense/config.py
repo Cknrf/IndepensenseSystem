@@ -31,9 +31,26 @@ OBSTACLE_WARNING_CM = 100.0      # early notice — obstacle within reach
 OBSTACLE_DANGER_CM = 50.0        # imminent — user should stop
 OBSTACLE_COOLDOWN_S = 2.0        # per sensor: don't fire the same tier again
 
-# MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus)
+# MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus).
+# When the wearable is upgraded to an MPU9250, this same address serves
+# the accel + gyro (byte-compatible with MPU6050). The magnetometer
+# lives at MAG_ADDRESS below.
 MPU6050_I2C_BUS = 1
 MPU6050_ADDRESS = 0x68
+
+# AK8963 magnetometer inside the MPU9250. Accessed on the main I²C
+# bus after we enable "bypass mode" on the MPU9250 at startup. Address
+# is fixed by the chip and is not configurable in hardware.
+MAG_ADDRESS = 0x0C
+
+# Hard-iron calibration offsets (μT). Zero until you run the helper:
+#   python -m indepensense.sensors.tests.manual.magnetometer_calibrate
+# Paste the printed values here. Re-run whenever the wearable's
+# physical layout changes materially (batteries moved, motor added,
+# ferromagnetic component relocated).
+MAG_OFFSET_X = 0.0
+MAG_OFFSET_Y = 0.0
+MAG_OFFSET_Z = 0.0
 
 # Waveshare UPS HAT (E) — battery + power management, also on I2C1 bus.
 # The HAT mounts under the Pi via pogo pins (no GPIO header conflict).
