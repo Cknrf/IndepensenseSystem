@@ -85,15 +85,20 @@ TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 # YOLOv8 object detection.
 #
 # The `-oiv7` suffix picks the variant trained on Open Images V7 (600
-# classes) instead of the default COCO (80 classes). Same nano
-# architecture, same ~300 ms inference on Pi 5 CPU, but 7.5× more
-# object types recognized — including doors, stairs, windows, and
-# many objects COCO omits that matter for an assistive wearable.
+# classes) instead of the default COCO (80 classes) — 7.5× more object
+# types recognized, including doors, stairs, windows, and many things
+# COCO omits that matter for an assistive wearable.
 #
-# Ultralytics auto-downloads the weights (~7 MB) on first use.
-# Fall back to `yolov8n.pt` if OIV7 turns out to have worse precision
-# on your specific scenes; classes vs precision is a real tradeoff.
-YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8n-oiv7.pt"
+# `yolov8s-oiv7` (small) has ~4× more parameters than `yolov8n-oiv7`
+# (nano). Real accuracy improvement on cluttered scenes — catches more
+# small objects (mouse, cable, phone) and hallucinates less. Trade-off
+# is ~2× slower inference (~600 ms vs ~300 ms on Pi 5 CPU).
+#
+# For the wearable's on-demand `vision.describe`, ~600 ms is invisible
+# next to the ~5 s STT+LLM+TTS chain. Accuracy > speed here.
+#
+# Ultralytics auto-downloads the weights (~22 MB) on first use.
+YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8s-oiv7.pt"
 YOLO_CONFIDENCE_THRESHOLD = 0.5
 
 # Tesseract OCR — reads printed text via `vision.read` intent.
