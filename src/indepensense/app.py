@@ -243,7 +243,14 @@ class App:
         self.repeat_button: GPIOButton | None = None
         self.battery: WaveshareUPSHatE | None = None
         self.camera: PiCamera | None = None
-        self.detector: YOLOv8Detector | None = None
+        # `object_detector` (YOLO) is deliberately named differently from
+        # `self.detector` above — that one is the ThresholdFallDetector
+        # for the fall-detection state machine. They live in the same
+        # class so the names must NOT collide, or one silently
+        # overwrites the other (this bug bit us in commit history — the
+        # fall detector was shadowed, so the main loop tried to call
+        # YOLO.process(reading) and crashed with AttributeError).
+        self.object_detector: YOLOv8Detector | None = None
         self.ocr: TesseractOCR | None = None
 
         # Navigation monitor: tracks user progress against the active route
@@ -362,7 +369,7 @@ class App:
 
         print("  Opening camera + YOLO detector...", flush=True)
         self.camera = self._try_open_camera()
-        self.detector = self._try_open_detector()
+        self.object_detector = self._try_open_detector()
 
         print("  Opening Tesseract OCR...", flush=True)
         self.ocr = self._try_open_ocr()
@@ -374,7 +381,7 @@ class App:
         if self.executor is not None:
             self.executor._battery = self.battery
             self.executor._camera = self.camera
-            self.executor._detector = self.detector
+            self.executor._detector = self.object_detector
             self.executor._ocr = self.ocr
 
         print("  Starting heartbeat sender...", flush=True)
