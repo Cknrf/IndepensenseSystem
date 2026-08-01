@@ -192,7 +192,7 @@ NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 NLU_TIMEOUT_S = 30.0
 NLU_WARMUP_TIMEOUT_S = 90.0
 
-h# Internet connectivity probe. The heartbeat sender uses this before
+# Internet connectivity probe. The heartbeat sender uses this before
 # each POST to populate `internet_status` honestly (rather than
 # hardcoded True). Cloudflare's 1.1.1.1 is the target — direct IP so
 # DNS breakage doesn't confuse it with internet breakage, high uptime,
