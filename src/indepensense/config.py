@@ -95,16 +95,19 @@ TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 # types recognized, including doors, stairs, windows, and many things
 # COCO omits that matter for an assistive wearable.
 #
-# `yolov8s-oiv7` (small) has ~4× more parameters than `yolov8n-oiv7`
-# (nano). Real accuracy improvement on cluttered scenes — catches more
-# small objects (mouse, cable, phone) and hallucinates less. Trade-off
-# is ~2× slower inference (~600 ms vs ~300 ms on Pi 5 CPU).
+# Model size progression (all use OIV7 weights):
+#   yolov8n  ~3 M params   ~300 ms   good for people/furniture
+#   yolov8s  ~11 M params  ~950 ms   adds keyboards, bottles
+#   yolov8m  ~26 M params  ~1500-2000 ms   adds smaller items, fewer false positives
+#   yolov8l  ~44 M params  ~3-5 s (borderline unusable on Pi CPU)
 #
-# For the wearable's on-demand `vision.describe`, ~600 ms is invisible
-# next to the ~5 s STT+LLM+TTS chain. Accuracy > speed here.
+# yolov8m is the practical ceiling on Pi 5 CPU. For on-demand
+# vision.describe the ~2 s inference is acceptable next to the ~5 s
+# STT+LLM+TTS chain. Continuous testing at this size is painful
+# (~0.5 FPS) but production doesn't run continuously.
 #
-# Ultralytics auto-downloads the weights (~22 MB) on first use.
-YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8s-oiv7.pt"
+# Ultralytics auto-downloads the weights (~52 MB) on first use.
+YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8m-oiv7.pt"
 # 0.3 (was 0.5) — more permissive so small/uncertain objects like a
 # distant mouse or partially-occluded cable don't get silently filtered.
 # Trade-off: more false positives. Watch the continuous_detect_test
