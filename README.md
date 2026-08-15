@@ -72,7 +72,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 
 **Voice Interaction**
 - Push-to-talk speech input (Whisper STT)
-- LLM-based intent classification (Qwen 2.5 1.5B via Ollama)
+- LLM-based intent classification (Qwen 3 1.7B via Ollama)
 - Natural-language responses (Piper TTS)
 
 **Guardian System**
@@ -125,7 +125,7 @@ That file contains:
 - **Language:** Python 3.13
 - **OS:** Raspberry Pi OS (Trixie / Debian 13) on device, macOS for development
 - **Computer Vision:** Ultralytics YOLOv8 (medium, Open Images V7 weights), Tesseract OCR
-- **Voice:** faster-whisper (STT), Piper (TTS), Ollama + Qwen 2.5 1.5B Instruct (NLU)
+- **Voice:** faster-whisper (STT), Piper (TTS), Ollama + Qwen 3 1.7B (NLU)
 - **Hardware Interface:** GPIO (gpiozero), I²C, UART
 - **Database:** handled by the backend repository
 

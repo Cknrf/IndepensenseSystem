@@ -4,6 +4,14 @@ Thin wrapper around a local Ollama HTTP server. Sends each transcript with
 the system prompt from `prompts/nlu_system.md`, requests JSON-formatted
 output, and normalises the response into an `IntentResult`.
 
+Thinking mode is disabled on every request (`"think": False`). Qwen 3 is a
+hybrid reasoning model: by default it emits a `<think>...</think>` block
+before its answer. That is actively harmful here — it spends seconds of the
+latency budget reasoning about a 10-way classification, and the leading
+prose breaks `format: "json"`. We want the model's language coverage, not
+its reasoning. Ollama rejects this flag on models that cannot think, so it
+must be dropped if we ever move back to a non-reasoning model.
+
 Normalisation handles two known LLM quirks observed during benchmarking:
 
 - `navigation.start` responses sometimes omit `nearest`. We inject
@@ -23,8 +31,9 @@ Every defensive knob below was added deliberately after real failures
 observed during hardware integration. Kept together here so the reasoning
 survives beyond commit history:
 
-- **Startup warmup with full system prompt.** Cold-loading Qwen 2.5 1.5B on
-  the Pi 5 takes ~25-40 s. Doing this once at construction — with the
+- **Startup warmup with full system prompt.** Cold-loading a model in this
+  size class on the Pi 5 takes ~25-40 s (measured on Qwen 2.5 1.5B; re-measure
+  for Qwen 3 1.7B). Doing this once at construction — with the
   actual system prompt the parser will send later, not just a throwaway
   "ok" — means the model *and* its prompt-prefix KV cache are hot before
   the first real user query. Without this the first command of every
@@ -37,8 +46,9 @@ survives beyond commit history:
   wearable that must respond snappily whenever the user speaks, cold
   reloads are unacceptable — the 25-40 s first-query pause would ruin the
   UX. Setting `keep_alive` to `-1` pins the model in memory until Ollama
-  itself restarts. Costs ~1.4 GB of RAM permanently but that budget was
-  planned for.
+  itself restarts. Costs ~1.4 GB of RAM permanently on Qwen 2.5 1.5B; Qwen 3
+  1.7B is a larger parameter count so expect somewhat more — confirm with
+  `llm_probe` on the Pi before assuming the budget still holds.
 - **stderr logging on failure.** When the HTTP call fails we log the exact
   exception before returning UNKNOWN. Early builds swallowed these errors
   silently, which cost hours during debugging when the model weights had
@@ -95,6 +105,7 @@ class OllamaIntentParser:
                     "prompt": "ok",
                     "stream": False,
                     "format": "json",
+                    "think": False,                    # see module docstring
                     "options": {"temperature": 0.0, "num_predict": 32},
                     "keep_alive": -1,
                 },
@@ -117,6 +128,7 @@ class OllamaIntentParser:
             "prompt": transcript,
             "stream": False,
             "format": "json",
+            "think": False,             # see module docstring
             "options": {"temperature": 0.0},
             "keep_alive": -1,           # keep model resident between queries
         }

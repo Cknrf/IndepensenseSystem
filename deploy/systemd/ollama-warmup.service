@@ -10,7 +10,7 @@ Type=oneshot
 # specific model catalogued. `--fail` returns non-zero on any HTTP error
 # so the `until` loop keeps trying if Ollama returns 500 while still
 # initialising.
-ExecStartPre=/bin/bash -c 'until curl -sf http://127.0.0.1:11434/api/tags | grep -q "qwen2.5:1.5b-instruct"; do sleep 1; done'
+ExecStartPre=/bin/bash -c 'until curl -sf http://127.0.0.1:11434/api/tags | grep -q "qwen3:1.7b"; do sleep 1; done'
 # Hit the model once with keep_alive=-1 so it's pinned in RAM.
 #
 # Flags:
@@ -22,7 +22,7 @@ ExecStartPre=/bin/bash -c 'until curl -sf http://127.0.0.1:11434/api/tags | grep
 # shows the real error (was previously silenced by `-s` + no `--fail`).
 ExecStart=/usr/bin/curl -sS --fail-with-body --max-time 300 -X POST http://127.0.0.1:11434/api/generate \
     -H 'Content-Type: application/json' \
-    -d '{"model":"qwen2.5:1.5b-instruct","prompt":"ok","keep_alive":-1,"stream":false,"options":{"num_predict":4}}' \
+    -d '{"model":"qwen3:1.7b","prompt":"ok","keep_alive":-1,"stream":false,"options":{"num_predict":4}}' \
     -o /dev/null
 RemainAfterExit=yes
 

@@ -225,14 +225,26 @@ FALL_STILLNESS_DURATION_S = 2.0
 
 # Local LLM used for natural-language intent parsing. See prompts/nlu_system.md
 # for the system prompt and docs/voice.md → intent parser section for setup.
-# Qwen 2.5 1.5B Instruct was chosen empirically over 3B: 100% intent accuracy
-# on our 30-case benchmark, ~2.8 s per query on Pi 5, ~1.4 GB RAM footprint.
+#
+# Model choice — Qwen 3 1.7B over Qwen 2.5 1.5B Instruct:
+# Qwen 2.5's model card claims 29 languages and Tagalog/Filipino is NOT among
+# them; it classified our Tagalog probe cases by pattern-matching the few-shot
+# examples in the system prompt rather than from real language coverage. Qwen 3
+# expands to 119 languages/dialects, Tagalog included. With Tagalog as the
+# system's priority language that support has to be in the model, not carried
+# entirely by prompt exemplars. The 1.7B tier keeps us in the same size class,
+# so the RAM and latency profile stays close to what the Pi 5 budget allows.
+#
+# Qwen 3 is a *hybrid reasoning* model — left alone it emits a `<think>` block
+# before its answer, which breaks both the strict-JSON contract and the latency
+# budget. The parser disables this per request (`"think": False`); see
+# `intents/parser.py`.
 #
 # `NLU_TIMEOUT_S` is the per-query budget once the model is already loaded.
-# Cold model loads (~25 s for 1.5B on Pi 5) are absorbed by the parser's
-# startup warmup, which uses `NLU_WARMUP_TIMEOUT_S`.
+# Cold model loads are absorbed by the parser's startup warmup, which uses
+# `NLU_WARMUP_TIMEOUT_S`.
 OLLAMA_URL = "http://127.0.0.1:11434"
-NLU_MODEL = "qwen2.5:1.5b-instruct"
+NLU_MODEL = "qwen3:1.7b"
 NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 NLU_TIMEOUT_S = 30.0
 NLU_WARMUP_TIMEOUT_S = 90.0

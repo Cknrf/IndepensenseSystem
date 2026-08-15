@@ -1,8 +1,14 @@
 """Empirical probe: benchmark a local LLM as an NLU engine on the Pi 5.
 
 Measures per-query latency, RAM usage, and semantic accuracy against a fixed
-set of expected intent + slot values. Used to decide whether Qwen 2.5 1.5B,
-3B, or something else earns a place in the final wearable.
+set of expected intent + slot values. Used to decide which model earns a
+place in the final wearable.
+
+Accuracy is reported **per language group** (English, Tagalog, adversarial)
+as well as overall. A single blended number is not decision-useful here:
+Tagalog is the system's priority language, so a model that scores well
+overall by acing English while failing Tagalog must be rejected, and a
+blended figure hides exactly that.
 
 The system prompt is loaded from `prompts/nlu_system.md` at the project
 root — kept out of code so it can be iterated without editing this file.
@@ -15,7 +21,7 @@ Run from repo root:
     # default model
     python -m indepensense.intents.tests.manual.llm_probe
 
-    # or specify a different model
+    # or specify a different model — e.g. to re-run the old baseline
     python -m indepensense.intents.tests.manual.llm_probe qwen2.5:1.5b-instruct
 """
 import json
@@ -27,11 +33,17 @@ import requests
 from indepensense.config import PROJECT_ROOT
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-# Kept in sync with `config.NLU_MODEL` — 1.5B was chosen empirically over
-# 3B (100% intent accuracy on the earlier 30-case set, ~2.8 s latency,
-# 1.4 GB RAM). Override on the command line to benchmark other models.
-DEFAULT_MODEL = "qwen2.5:1.5b-instruct"
+# Kept in sync with `config.NLU_MODEL`. Override on the command line to
+# benchmark other models — that is the point of this script.
+DEFAULT_MODEL = "qwen3:1.7b"
 MODEL = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
+
+# Qwen 3 is a hybrid reasoning model and emits a `<think>` block unless told
+# otherwise, which wrecks both latency and the strict-JSON contract. Ollama
+# rejects `think` on models that cannot reason (e.g. the Qwen 2.5 baseline we
+# compare against), so we send it, detect rejection once, and fall back for
+# the rest of the run rather than forcing the user to pass a flag.
+_send_think = True
 
 PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 SYSTEM_PROMPT = PROMPT_PATH.read_text()
@@ -48,7 +60,7 @@ SYSTEM_PROMPT = PROMPT_PATH.read_text()
 # - "Adversarial" cases at the end verify the Phase 1 prompt
 #   hardening: transcripts that a naive model would misclassify as
 #   a specific intent when they should be `unknown`.
-TEST_CASES = [
+ENGLISH_CASES = [
     # --- navigation.start ---
     ("Navigate to SM Lipa",              "navigation.start", {"location": "SM Lipa", "nearest": False}),
     ("Take me to Jollibee",              "navigation.start", {"location": "Jollibee", "nearest": False}),
@@ -95,7 +107,9 @@ TEST_CASES = [
     ("Play some music",                  "unknown", {}),
     ("Send a text to my mom",            "unknown", {}),
 
-    # --- Tagalog ---
+]
+
+TAGALOG_CASES = [
     ("Dalhin mo ako sa Jollibee",                    "navigation.start",    {"location": "Jollibee"}),
     ("Puntahan mo ang pinakamalapit na ospital",     "navigation.start",    {"location": "ospital", "nearest": True}),
     ("Nasaan ako",                                    "navigation.location", {}),
@@ -109,12 +123,14 @@ TEST_CASES = [
     ("Basahin mo ito",                                "vision.read",         {}),
     ("Magpatugtog ka ng musika",                      "unknown",             {}),
 
-    # --- Adversarial: verify Phase 1 prompt hardening ---
-    # These are transcripts where a naive LLM might latch onto a
-    # keyword ("time", "help", "location") and pick the wrong intent.
-    # After the "prefer unknown when in doubt" prompt rewrite, these
-    # should all resolve as expected.
+]
 
+# Adversarial: verify Phase 1 prompt hardening. These are transcripts where a
+# naive LLM might latch onto a keyword ("time", "help", "location") and pick
+# the wrong intent. After the "prefer unknown when in doubt" prompt rewrite,
+# these should all resolve as expected. English-only for now — the Tagalog
+# equivalents are a known gap (see module docstring).
+ADVERSARIAL_CASES = [
     # "time" in non-time-query context → unknown, not system.time
     ("sometime tomorrow",                "unknown", {}),
     ("one at a time please",             "unknown", {}),
@@ -137,6 +153,16 @@ TEST_CASES = [
     ("okay",                             "unknown", {}),
 ]
 
+# (group, transcript, expected_intent, expected_slots). `group` drives the
+# per-language breakdown in the summary.
+TEST_CASES = (
+    [("english", *case) for case in ENGLISH_CASES]
+    + [("tagalog", *case) for case in TAGALOG_CASES]
+    + [("adversarial", *case) for case in ADVERSARIAL_CASES]
+)
+
+GROUPS = ("english", "tagalog", "adversarial")
+
 
 def free_ram_mb() -> int:
     """Return currently-free RAM in MB from /proc/meminfo."""
@@ -149,7 +175,15 @@ def free_ram_mb() -> int:
 
 
 def query(text: str) -> tuple[float, dict | None, str]:
-    """Send one transcript to Ollama. Return (elapsed_s, parsed_json_or_None, raw_response)."""
+    """Send one transcript to Ollama. Return (elapsed_s, parsed_json_or_None, raw_response).
+
+    Sends `think: False` for reasoning models. If Ollama rejects the flag
+    (non-reasoning model), disables it for the remainder of the run and
+    retries once. Without this the rejection would surface as an empty
+    response on every case and look like a total accuracy collapse.
+    """
+    global _send_think
+
     payload = {
         "model": MODEL,
         "system": SYSTEM_PROMPT,
@@ -158,10 +192,27 @@ def query(text: str) -> tuple[float, dict | None, str]:
         "format": "json",
         "options": {"temperature": 0.0},
     }
+    if _send_think:
+        payload["think"] = False
+
     t0 = time.time()
     response = requests.post(OLLAMA_URL, json=payload, timeout=60)
     elapsed = time.time() - t0
-    raw = response.json().get("response", "")
+
+    try:
+        body = response.json()
+    except ValueError:
+        return elapsed, None, response.text[:200]
+
+    if response.status_code != 200:
+        error = str(body.get("error", ""))
+        if _send_think and "think" in error.lower():
+            _send_think = False
+            print(f"  note: {MODEL} rejected `think` — disabling it for the rest of this run")
+            return query(text)
+        return elapsed, None, f"HTTP {response.status_code}: {error[:150]}"
+
+    raw = body.get("response", "")
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
@@ -229,11 +280,14 @@ def main():
     slots_correct_count = 0
     slots_measured_count = 0
     combined_correct_count = 0
-    misses: list[tuple[str, str, dict, str]] = []   # (input, expected_intent, expected_slots, got)
+    misses: list[tuple[str, str, str, dict, str]] = []   # (group, input, expected_intent, expected_slots, got)
+    stats = {g: {"n": 0, "intent": 0, "combined": 0, "time": 0.0} for g in GROUPS}
 
-    for i, (text, expected_intent, expected_slots) in enumerate(TEST_CASES, 1):
+    for i, (group, text, expected_intent, expected_slots) in enumerate(TEST_CASES, 1):
         elapsed, parsed, raw = query(text)
         total_time += elapsed
+        stats[group]["n"] += 1
+        stats[group]["time"] += elapsed
 
         if parsed is None:
             parse_failures += 1
@@ -253,6 +307,7 @@ def main():
 
         if intent_ok:
             intent_correct_count += 1
+            stats[group]["intent"] += 1
         if slots_ok is not None:
             slots_measured_count += 1
             if slots_ok:
@@ -260,10 +315,11 @@ def main():
         combined = intent_ok and (slots_ok is None or slots_ok)
         if combined:
             combined_correct_count += 1
+            stats[group]["combined"] += 1
         else:
-            misses.append((text, expected_intent, expected_slots, summary))
+            misses.append((group, text, expected_intent, expected_slots, summary))
 
-        print(f"[{i:2d}/{len(TEST_CASES)}] ({elapsed:5.2f}s) {marker}")
+        print(f"[{i:2d}/{len(TEST_CASES)}] [{group:11s}] ({elapsed:5.2f}s) {marker}")
         print(f"    in:       {text}")
         print(f"    expected: intent={expected_intent}, slots={expected_slots}")
         print(f"    got:      {summary}")
@@ -285,12 +341,25 @@ def main():
     print(f"  Total time (warm):   {total_time:.1f}s")
     print(f"  Avg per query:       {total_time / total:.2f}s")
     print(f"  Free RAM at end:     {free_ram_mb()} MB")
+    print(f"  Thinking disabled:   {_send_think}")
+
+    print()
+    print("Per-group breakdown (Tagalog is the priority language):")
+    for group in GROUPS:
+        s = stats[group]
+        if not s["n"]:
+            continue
+        print(f"  {group:12s} intent {s['intent']:2d}/{s['n']:2d} "
+              f"({100 * s['intent'] / s['n']:5.1f}%)   "
+              f"combined {s['combined']:2d}/{s['n']:2d} "
+              f"({100 * s['combined'] / s['n']:5.1f}%)   "
+              f"avg {s['time'] / s['n']:.2f}s")
 
     if misses:
         print()
         print(f"Failures ({len(misses)}):")
-        for text, expected_intent, expected_slots, got in misses:
-            print(f"  '{text}'")
+        for group, text, expected_intent, expected_slots, got in misses:
+            print(f"  [{group}] '{text}'")
             print(f"    expected: intent={expected_intent}, slots={expected_slots}")
             print(f"    got:      {got}")
 
