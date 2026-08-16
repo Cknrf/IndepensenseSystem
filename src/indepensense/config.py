@@ -43,6 +43,13 @@ MPU6050_ADDRESS = 0x68
 # is fixed by the chip and is not configurable in hardware.
 MAG_ADDRESS = 0x0C
 
+# How often the main loop samples the compass. The AK8963 runs at 100 Hz
+# natively in continuous mode 2, but no consumer needs heading that fast —
+# it changes on human timescales. 2 Hz keeps the shared I²C bus free for
+# the things that are latency-sensitive: the IMU at 100 Hz, both DYP-A22
+# ultrasonics, and the UPS HAT.
+HEADING_CHECK_INTERVAL_S = 0.5
+
 # Hard-iron calibration offsets (μT). Zero until you run the helper:
 #   python -m indepensense.sensors.tests.manual.magnetometer_calibrate
 # Paste the printed values here. Re-run whenever the wearable's

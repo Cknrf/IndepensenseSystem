@@ -38,7 +38,7 @@ post-processing.
 import math
 import time
 
-from indepensense.sensors.base import Magnetometer, MagnetometerReading
+from indepensense.sensors.base import MagnetometerReading
 
 
 # --- MPU9250 registers we need to enable bypass -----------------------------

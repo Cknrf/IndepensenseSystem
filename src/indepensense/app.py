@@ -84,6 +84,7 @@ from indepensense.config import (
     DYP_A22_TOP_PORT,
     EMERGENCY_BUTTON_GPIO,
     GRAPHHOPPER_URL,
+    HEADING_CHECK_INTERVAL_S,
     HEARTBEAT_INTERVAL_S,
     INTERNET_PROBE_TIMEOUT_S,
     INTERNET_PROBE_URL,
@@ -273,6 +274,12 @@ class App:
         self._low_battery_alerted = False
         self._last_battery_check = 0.0
 
+        # Latest compass heading, refreshed at HEADING_CHECK_INTERVAL_S.
+        # None until the first successful read (and stays None when no
+        # magnetometer is present). Read it via `latest_heading()`.
+        self._last_heading_check = 0.0
+        self._last_heading_deg: float | None = None
+
         # Obstacle detection: two DYP-A22 sensors + haptic + audio feedback.
         self.top_sensor: DYPA22 | None = None
         self.bottom_sensor: DYPA22 | None = None
@@ -414,6 +421,9 @@ class App:
         ultrasonic sensors (for obstacle detection). All three drivers
         return quickly — MPU6050 does one I²C burst; DYP-A22 returns
         None if no new UART frame has arrived. No blocking I/O here.
+
+        Battery, navigation and heading are checked on every tick too, but
+        each self-throttles internally to its own much slower interval.
         """
         try:
             while not self._shutdown.is_set():
@@ -445,6 +455,10 @@ class App:
                 # route. Fires announce/haptic/arrive as user approaches
                 # turns. No-op when there's no active navigation.
                 self._check_navigation()
+
+                # Compass heading — throttled to `HEADING_CHECK_INTERVAL_S`.
+                # Caches the latest reading; nothing acts on it yet.
+                self._check_heading()
 
                 self._shutdown.wait(timeout=FALL_LOOP_INTERVAL_S)
         finally:
@@ -586,6 +600,47 @@ class App:
                 )
                 self._fire_low_battery_alert(pct)
                 self._low_battery_alerted = True
+
+    def latest_heading(self) -> float | None:
+        """Most recent compass heading in degrees, or None if unavailable.
+
+        Never touches the I²C bus — returns whatever `_check_heading` last
+        cached. `None` means either no magnetometer or no successful read yet.
+        """
+        return self._last_heading_deg
+
+    def _check_heading(self) -> None:
+        """Refresh the cached compass heading.
+
+        Called from the 100 Hz main loop but internally rate-limited to
+        `HEADING_CHECK_INTERVAL_S` — heading changes on human timescales and
+        the I²C bus is shared with the IMU, both ultrasonics and the UPS HAT.
+
+        Caching rather than acting: no consumer uses heading yet. Wiring it
+        into navigation turn verification needs a trustworthy compass first,
+        and `MAG_OFFSET_X/Y/Z` are still 0.0 — hard-iron calibration has
+        never been run. See `magnetometer_calibrate` in sensors/tests/manual.
+
+        A stale reading is kept on failure. That is deliberate: heading is
+        advisory, and a transient I²C glitch should not blank it.
+        """
+        if self.magnetometer is None:
+            return
+
+        now = time.monotonic()
+        if now - self._last_heading_check < HEADING_CHECK_INTERVAL_S:
+            return
+        self._last_heading_check = now
+
+        try:
+            reading = self.magnetometer.read()
+        except Exception as exc:
+            print(f"[heading] read error: {exc}", file=sys.stderr, flush=True)
+            return
+        if reading is None:
+            return
+
+        self._last_heading_deg = reading.heading_deg
 
     def _fire_low_battery_alert(self, percentage: int) -> None:
         """POST a Low Battery alert to the guardian backend."""

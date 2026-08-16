@@ -3,6 +3,8 @@ from indepensense.sensors.base import (
     GPSSensor,
     IMUReading,
     IMUSensor,
+    Magnetometer,
+    MagnetometerReading,
     UltrasonicReading,
     UltrasonicSensor,
 )
@@ -12,6 +14,8 @@ __all__ = [
     "GPSSensor",
     "IMUReading",
     "IMUSensor",
+    "Magnetometer",
+    "MagnetometerReading",
     "UltrasonicReading",
     "UltrasonicSensor",
 ]
