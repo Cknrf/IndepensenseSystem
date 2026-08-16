@@ -135,17 +135,26 @@ class PeriodicHeartbeatSender:
 
         This runs on the heartbeat thread once per interval — no
         contention with the main loop or voice pipeline.
+
+        Only `RequestException` counts as offline. A broader `except
+        Exception` here would also swallow an ImportError from the lazy
+        import below, so a missing `requests` install would report the
+        device as permanently offline instead of surfacing the real
+        cause — a misleading signal for a guardian watching the
+        dashboard. Anything that isn't a network error propagates to the
+        loop in `_run`, which logs it and counts a failed heartbeat.
         """
+        import requests
+
         try:
-            import requests
             requests.head(
                 self._internet_probe_url,
                 timeout=self._internet_probe_timeout_s,
             )
             return True
-        except Exception:
-            # Any exception (RequestException, timeout, DNS, etc.) means
-            # we couldn't reach the probe target. Treat as offline.
+        except requests.RequestException:
+            # Connection refused, DNS failure, timeout — we couldn't
+            # reach the probe target. Treat as offline.
             return False
 
     def _read_battery_percent_or_default(self) -> int:

@@ -32,8 +32,11 @@ Assumptions and known limitations
 - We do NOT try to identify "past the turn" from a distance increase;
   that's fragile with GPS jitter. Advancement is strictly on proximity.
 - If the user never gets within 5 m of a turn (GPS bias, wide turn),
-  the monitor gets stuck on that instruction. The user can voice
-  "cancel navigation" to reset.
+  the monitor gets stuck on that instruction and its remaining turns
+  go unspoken. The user can voice "cancel navigation" to reset.
+  Arrival is deliberately exempt: it is checked against the
+  destination directly, not through the cursor, so a missed turn
+  still ends with "you have arrived".
 
 Both are acceptable for a thesis MVP; recovering from route deviation
 is a future-work bullet.
@@ -247,6 +250,20 @@ class NavigationMonitor:
         deviation_cue = self._check_off_route(position, now)
         if deviation_cue is not None:
             cues.append(deviation_cue)
+
+        # Arrival is tested independently of the turn cursor, and before
+        # it. The cursor only advances when the user passes within
+        # `advance_distance_m` of each turn, so a turn missed to GPS bias
+        # or a wide corner leaves it stuck — and a stuck cursor would
+        # otherwise mean the user reaches their destination and is never
+        # told. Arrival is the single cue they most need, so it must not
+        # depend on turn-by-turn bookkeeping being perfect.
+        arrival_cue = self._check_arrival(position)
+        if arrival_cue is not None:
+            cues.append(arrival_cue)
+            self.clear()
+            return cues
+
         # Loop so we can advance through consecutive instructions the
         # user is already past. `break` ends the loop as soon as we
         # find one we haven't reached yet.
@@ -257,6 +274,14 @@ class NavigationMonitor:
                 # skip forward and don't fire a cue.
                 self._current_index += 1
                 continue
+
+            if instr.direction == "arrive":
+                # Handled by `_check_arrival` above, which fires on
+                # proximity to the destination rather than at the much
+                # larger announce distance. Letting the announce branch
+                # below see this instruction would say "you have arrived"
+                # up to `announce_distance_m` (100 m) early.
+                break
 
             distance = _haversine_m(position, instr.location)
 
@@ -276,16 +301,6 @@ class NavigationMonitor:
 
             # Advance to next instruction if we're at the turn point.
             if distance <= self._advance_distance_m:
-                # For arrive, emit the arrival cue (if not already
-                # emitted via announce) and stop tracking.
-                if instr.direction == "arrive":
-                    # Only add arrive cue if we haven't already
-                    # announced (the announce for arrive already fired
-                    # the spoken confirmation).
-                    if self._current_index not in self._announced:
-                        cues.append(self._build_announce_cue(instr, distance))
-                    self.clear()
-                    return cues
                 self._current_index += 1
                 continue
 
@@ -293,6 +308,36 @@ class NavigationMonitor:
             break
 
         return cues
+
+    def _check_arrival(self, position: Coordinate) -> NavigationCue | None:
+        """Fire the arrival cue when within `advance_distance_m` of the
+        destination, whatever the turn cursor is doing.
+
+        Uses the advance threshold rather than the announce threshold so
+        the confirmation lands where the user actually is, not 100 m out.
+        Returns None when the route has no "arrive" instruction, or the
+        router gave it no coordinates — in that degenerate case the
+        monitor simply runs out of instructions and stays active until
+        the user cancels.
+        """
+        destination = self._destination_instruction()
+        if destination is None or destination.location is None:
+            return None
+        if _haversine_m(position, destination.location) > self._advance_distance_m:
+            return None
+        return NavigationCue(
+            kind="arrive",
+            text=f"You have arrived at {self._destination_name}.",
+        )
+
+    def _destination_instruction(self):
+        """The final "arrive" instruction, or None if the route has none."""
+        if self._route is None:
+            return None
+        for instr in reversed(self._route.instructions):
+            if instr.direction == "arrive":
+                return instr
+        return None
 
     def _check_off_route(
         self,
@@ -366,12 +411,11 @@ class NavigationMonitor:
         return 0
 
     def _build_announce_cue(self, instr, distance: float) -> NavigationCue:
-        """Build the spoken text for an approaching instruction."""
-        if instr.direction == "arrive":
-            return NavigationCue(
-                kind="arrive",
-                text=f"You have arrived at {self._destination_name}.",
-            )
+        """Build the spoken text for an approaching turn.
+
+        Never called for the "arrive" instruction — `check()` breaks out
+        of the loop before it, and `_check_arrival` builds that cue.
+        """
         # Round distance to a friendlier number for speech.
         rounded = round_speech_distance(distance)
         return NavigationCue(
@@ -384,11 +428,23 @@ def round_speech_distance(m: float) -> int:
     """Round a distance to a value pleasant for speech synthesis.
 
     "In 87 meters, turn left" sounds robotic. "In 90 meters..." sounds
-    natural. Rounds up to the nearest 10 m for distances under 100 m,
+    natural. Rounds to the nearest 10 m for distances under 100 m,
     nearest 50 m up to 500 m, nearest 100 m beyond. Never returns 0.
+
+    Halves round up (25 -> 30, 650 -> 700). We deliberately avoid the
+    builtin `round()` here: it uses banker's rounding (round-half-to-
+    even), so `round(6.5)` is 6, not 7 — which would speak 650 m as
+    "600 meters". Overstating the remaining distance by a half-step is
+    also the safer error for a walking user: they arrive slightly
+    early rather than being told to turn after they have passed it.
     """
     if m < 100:
-        return max(10, int(round(m / 10) * 10))
+        return max(10, _round_half_up(m, 10))
     if m < 500:
-        return int(round(m / 50) * 50)
-    return int(round(m / 100) * 100)
+        return _round_half_up(m, 50)
+    return _round_half_up(m, 100)
+
+
+def _round_half_up(m: float, step: int) -> int:
+    """Round `m` to the nearest multiple of `step`, halves going up."""
+    return int(math.floor(m / step + 0.5)) * step

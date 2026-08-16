@@ -160,18 +160,43 @@ def test_advance_when_close_to_turn():
 
 
 def test_arrival_fires_arrive_cue_and_deactivates():
+    """Arrival is checked against the destination directly, not through
+    the turn cursor. Here the user is at the destination without ever
+    having come within the advance threshold of the midpoint turn — a
+    missed turn must not suppress the arrival cue."""
     m = NavigationMonitor()
     m.set_route(_make_route(), "Home")
+    assert m.current_index() == 1   # cursor still on the midpoint turn
 
-    # Position right at the destination — advance through midpoint and
-    # then reach arrive. The check() loop advances through both.
-    m.check(_END)   # this should reach both midpoint and end in one call
+    cues = m.check(_END)
 
-    # We should have received an arrive cue at some point. In practice
-    # a single call at exactly the destination triggers the advance
-    # through midpoint (via loop) and then the arrival cue for `end`.
-    # After arrive, the monitor deactivates.
+    assert any(c.kind == "arrive" for c in cues)
     assert m.is_active() is False
+
+
+def test_no_arrive_cue_before_reaching_destination():
+    """Arrival uses the advance threshold (5 m), not the announce
+    threshold (100 m). Guards against speaking "you have arrived" while
+    the user is still most of a block away."""
+    two_step = Route(
+        distance_m=290.0,
+        duration_s=210.0,
+        instructions=[
+            RouteInstruction("Head north", 290.0, None, location=_START, direction="straight"),
+            RouteInstruction("Arrive", 0.0, None, location=_END, direction="arrive"),
+        ],
+        points=[_START, _END],
+    )
+    m = NavigationMonitor(announce_distance_m=100.0, advance_distance_m=5.0)
+    m.set_route(two_step, "Home")
+    assert m.current_index() == 1   # cursor sits on the arrive instruction
+
+    # ~78 m short of the destination — inside announce range, well
+    # outside the advance threshold.
+    cues = m.check(Coordinate(lat=14.0019, lon=121.0000))
+
+    assert not any(c.kind == "arrive" for c in cues)
+    assert m.is_active() is True
 
 
 def test_arrive_cue_names_destination():

@@ -3,15 +3,32 @@
 Uses short intervals (10-50 ms) so tests complete quickly. Waits use
 polling with a 2 s hard timeout so tests never hang if a bug freezes
 the worker thread.
+
+The sender's `_probe_internet()` makes a real HTTP HEAD request once per
+heartbeat. Left unstubbed that would make this suite depend on the dev
+machine's connectivity — tests would flip result offline, and each beat
+would stall for the 2 s probe timeout behind a firewall. The autouse
+`_no_network` fixture below stubs it out for every test in this module;
+the two probe-specific tests override the stub to assert each branch.
 """
 import threading
 import time
 
 import pytest
+import requests
 
 from indepensense.sensors.base import GPSFix
 from indepensense.telemetry.heartbeat import PeriodicHeartbeatSender
 from indepensense.telemetry.mock import MockTelemetryClient
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """Stub `requests.head` so no test in this module touches the network."""
+    def _refuse(*_args, **_kwargs):
+        raise requests.RequestException("network disabled in unit tests")
+
+    monkeypatch.setattr(requests, "head", _refuse)
 
 
 class _FakeGPS:
@@ -238,20 +255,63 @@ def test_heartbeat_uses_configured_device_id():
         sender.stop(timeout_s=1.0)
 
 
-def test_heartbeat_hardcoded_fields_for_now():
-    """Battery and internet_status are hardcoded until real hardware
-    reading lands. This test guards against the hardcodes being changed
-    silently without wiring the real reading path."""
+def test_battery_health_defaults_to_100_without_a_reader():
+    """With no BatteryReader wired (dev on Mac, HAT not installed) we
+    report 100 rather than 0, so the guardian dashboard doesn't misread
+    "no reader" as "critical low battery". This guards that deliberate
+    default against being changed silently."""
     tel = MockTelemetryClient()
     sender = PeriodicHeartbeatSender(tel, _FakeGPS(), "dev", interval_s=0.02)
     sender.start()
     try:
         assert _wait_until(lambda: len(tel.heartbeats) >= 1)
-        hb = tel.heartbeats[0]
-        assert hb.battery_health == 100
-        assert hb.internet_status is True
+        assert tel.heartbeats[0].battery_health == 100
     finally:
         sender.stop(timeout_s=1.0)
+
+
+def test_internet_status_false_when_probe_fails(monkeypatch):
+    """A network-level failure reaching the probe target means offline."""
+    def _fail(*_args, **_kwargs):
+        raise requests.ConnectionError("simulated DNS failure")
+
+    monkeypatch.setattr(requests, "head", _fail)
+
+    tel = MockTelemetryClient()
+    sender = PeriodicHeartbeatSender(tel, _FakeGPS(), "dev", interval_s=0.02)
+    sender.start()
+    try:
+        assert _wait_until(lambda: len(tel.heartbeats) >= 1)
+        assert tel.heartbeats[0].internet_status is False
+    finally:
+        sender.stop(timeout_s=1.0)
+
+
+def test_internet_status_true_when_probe_reaches_target(monkeypatch):
+    """Any HTTP response — including a 5xx — means we reached the target,
+    which means we're online. Only a network failure means offline."""
+    calls: list[dict] = []
+
+    def _respond(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        response = requests.Response()
+        response.status_code = 503
+        return response
+
+    monkeypatch.setattr(requests, "head", _respond)
+
+    tel = MockTelemetryClient()
+    sender = PeriodicHeartbeatSender(
+        tel, _FakeGPS(), "dev", interval_s=0.02, internet_probe_url="http://probe.test",
+    )
+    sender.start()
+    try:
+        assert _wait_until(lambda: len(tel.heartbeats) >= 1)
+        assert tel.heartbeats[0].internet_status is True
+    finally:
+        sender.stop(timeout_s=1.0)
+
+    assert calls[0]["url"] == "http://probe.test"
 
 
 # --- validation --------------------------------------------------------------
