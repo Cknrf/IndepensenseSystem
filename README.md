@@ -154,6 +154,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `telemetry/` | Buffered heartbeat + alert sender to the backend |
 | `tools/` | Utility scripts (e.g., live system-performance monitor) |
 | `app.py` | Main synchronous polling loop that wires everything together |
+| `app_mock.py` | Development-only subclass of `App` with every device mocked — runs the full runtime on a Mac. Never deployed |
 | `config.py` | All tunable parameters (thresholds, pins, addresses, model paths) |
 
 **Design conventions** worth knowing before touching code (see also `CLAUDE.md`):

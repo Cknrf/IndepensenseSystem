@@ -63,6 +63,21 @@ loop keeps running so a temporary I²C glitch doesn't take down fall
 detection permanently. Fatal errors during startup or an uncaught
 exception in the loop propagate to `main()`, which exits non-zero;
 systemd's `Restart=on-failure` brings us back up after 5 seconds.
+
+Device construction
+-------------------
+
+Every device is constructed in an `_open_*` / `_try_open_*` factory
+method and nowhere else — `start()` calls those factories but never a
+driver constructor directly. That single rule is what lets `app_mock.py`
+subclass this class, override only the factories, and run the entire
+runtime on a Mac with the loop, threads and decision logic inherited
+untouched. If you add a device, add a factory for it; putting the
+constructor inline in `start()` silently drops it out of mock coverage.
+
+`_open_*` means the runtime cannot function without that device and a
+failure aborts startup. `_try_open_*` means degraded operation is
+acceptable — it logs, returns None, and every caller handles None.
 """
 import signal
 import sys
@@ -307,44 +322,32 @@ class App:
         print("Initialising IndepenSense runtime...", flush=True)
 
         print("  Opening MPU6050...", flush=True)
-        self.imu = MPU6050(bus_number=MPU6050_I2C_BUS, address=MPU6050_ADDRESS)
+        self.imu = self._open_imu()
         self.detector = ThresholdFallDetector()
 
         print("  Opening GPS...", flush=True)
-        try:
-            self.gps = SIM7600GPS(port=SIM7600_GPS_PORT)
+        self.gps = self._try_open_gps()
+        cached_gps = None
+        if self.gps is not None:
             self.gps_cache = GPSCache(self.gps, poll_interval_s=GPS_CACHE_INTERVAL_S)
             self.gps_cache.start()
             cached_gps = _CachedGPSAdapter(self.gps_cache)
-        except Exception as exc:
-            print(f"  GPS unavailable ({exc}). Location intents will be limited.", flush=True)
-            cached_gps = None
 
         print("  Loading Whisper models...", flush=True)
-        self.stt = FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
+        self.stt = self._open_stt()
 
         print("  Loading Piper voices...", flush=True)
-        self.tts = PiperTTS(voices=PIPER_VOICES)
+        self.tts = self._open_tts()
 
         print("  Connecting to Ollama (with warmup)...", flush=True)
-        self.parser = OllamaIntentParser(
-            model=NLU_MODEL,
-            ollama_url=OLLAMA_URL,
-            prompt_path=NLU_PROMPT_PATH,
-            timeout_s=NLU_TIMEOUT_S,
-            warmup=True,
-            warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
-        )
+        self.parser = self._open_parser()
 
         print("  Connecting to GraphHopper + Photon...", flush=True)
-        router = GraphHopperRouter(base_url=GRAPHHOPPER_URL)
-        geocoder = PhotonGeocoder(base_url=PHOTON_URL)
+        router = self._open_router()
+        geocoder = self._open_geocoder()
 
         print(f"  Building buffered telemetry to {BACKEND_URL}...", flush=True)
-        raw_client = NestJSTelemetryClient(
-            base_url=BACKEND_URL, timeout_s=TELEMETRY_TIMEOUT_S,
-        )
-        self.buffered = BufferedTelemetryClient(raw_client)
+        self.buffered = BufferedTelemetryClient(self._open_telemetry_client())
 
         # NB: battery isn't opened yet — wire it after this block. Store
         # the executor construction here anyway so the button handlers
@@ -1091,6 +1094,66 @@ class App:
         except Exception as exc:
             print(f"[error-speech] failed to speak: {exc}", file=sys.stderr, flush=True)
 
+    # ------------------------------------------------------- device factories
+    #
+    # Every device the runtime talks to is constructed in one of the
+    # methods below and nowhere else. This is what makes `MockApp` in
+    # `app_mock.py` possible: it subclasses `App` and overrides only
+    # these, inheriting the loop, the threads and all the decision logic
+    # unchanged. Keep `start()` free of direct driver constructor calls
+    # or the mock runtime silently stops covering that device.
+    #
+    # Two naming conventions, and the difference is deliberate:
+    #   `_open_*`     — the runtime cannot do its job without this. A
+    #                   failure propagates and aborts startup.
+    #   `_try_open_*` — degraded operation is acceptable. Logs and
+    #                   returns None; callers already handle None.
+
+    def _open_imu(self) -> MPU6050:
+        """Open the IMU. Fatal on failure — no IMU means no fall detection,
+        which is a safety guarantee we will not start up pretending to have."""
+        return MPU6050(bus_number=MPU6050_I2C_BUS, address=MPU6050_ADDRESS)
+
+    def _try_open_gps(self) -> SIM7600GPS | None:
+        try:
+            return SIM7600GPS(port=SIM7600_GPS_PORT)
+        except Exception as exc:
+            print(
+                f"  GPS unavailable ({exc}). Location intents will be limited.",
+                flush=True,
+            )
+            return None
+
+    def _open_stt(self) -> FasterWhisperSTT:
+        return FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
+
+    def _open_tts(self) -> PiperTTS:
+        return PiperTTS(voices=PIPER_VOICES)
+
+    def _open_parser(self) -> OllamaIntentParser:
+        return OllamaIntentParser(
+            model=NLU_MODEL,
+            ollama_url=OLLAMA_URL,
+            prompt_path=NLU_PROMPT_PATH,
+            timeout_s=NLU_TIMEOUT_S,
+            warmup=True,
+            warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
+        )
+
+    def _open_router(self) -> GraphHopperRouter:
+        return GraphHopperRouter(base_url=GRAPHHOPPER_URL)
+
+    def _open_geocoder(self) -> PhotonGeocoder:
+        return PhotonGeocoder(base_url=PHOTON_URL)
+
+    def _open_telemetry_client(self) -> NestJSTelemetryClient:
+        """The raw backend client. `start()` wraps whatever this returns in
+        a `BufferedTelemetryClient`, so the buffering/retry behaviour is
+        exercised identically under mocks."""
+        return NestJSTelemetryClient(
+            base_url=BACKEND_URL, timeout_s=TELEMETRY_TIMEOUT_S,
+        )
+
     # ---------------------------------------------------------------- helpers
 
     def _try_open_button(self, gpio_pin: int, label: str) -> GPIOButton | None:
@@ -1190,9 +1253,13 @@ class App:
             return None
 
 
-def main() -> None:
+def run_app(app: App) -> None:
+    """Install signal handlers, start the runtime, and block in the loop.
+
+    Takes the app as an argument so `app_mock.py` can run a `MockApp`
+    through the exact same startup and shutdown path as production.
+    """
     VOICE_TEST_DIR.mkdir(parents=True, exist_ok=True)
-    app = App()
 
     def _signal_handler(signum, _frame):
         print(f"\nReceived signal {signum}. Shutting down...", flush=True)
@@ -1207,6 +1274,10 @@ def main() -> None:
     except Exception as exc:
         print(f"Fatal error: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
+
+
+def main() -> None:
+    run_app(App())
 
 
 if __name__ == "__main__":
