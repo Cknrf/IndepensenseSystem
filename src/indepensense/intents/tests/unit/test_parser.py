@@ -6,7 +6,7 @@ into a normalised `IntentResult`. No LLM or Ollama server is required.
 import json
 
 from indepensense.intents.base import Intent
-from indepensense.intents.parser import parse_llm_response
+from indepensense.intents.parser import _normalise_parameters, parse_llm_response
 
 
 def test_navigation_start_with_nearest_true():
@@ -91,3 +91,35 @@ def test_device_status_preserves_status_field():
     result = parse_llm_response(raw, "how much battery")
     assert result.intent is Intent.DEVICE_STATUS
     assert result.parameters == {"status_field": "battery"}
+
+
+# --- system.language normalisation ------------------------------------------
+
+def test_language_name_is_folded_to_a_code():
+    """Small models return "English" instead of "en" often enough that a
+    switch failing on it would be an avoidable dead end for the user."""
+    result = _normalise_parameters(Intent.SYSTEM_LANGUAGE, {"language": "English"})
+    assert result["language"] == "en"
+
+
+def test_tagalog_aliases_fold_to_tl():
+    for name in ("Tagalog", "tagalog", "Filipino", "TL", "fil"):
+        result = _normalise_parameters(Intent.SYSTEM_LANGUAGE, {"language": name})
+        assert result["language"] == "tl", name
+
+
+def test_unrecognised_language_is_passed_through_not_defaulted():
+    """Substituting a supported language the user didn't ask for would be
+    worse than telling them it's unsupported."""
+    result = _normalise_parameters(Intent.SYSTEM_LANGUAGE, {"language": "German"})
+    assert result["language"] == "german"
+
+
+def test_missing_language_becomes_empty_string():
+    result = _normalise_parameters(Intent.SYSTEM_LANGUAGE, {})
+    assert result["language"] == ""
+
+
+def test_non_string_language_becomes_empty_string():
+    result = _normalise_parameters(Intent.SYSTEM_LANGUAGE, {"language": 42})
+    assert result["language"] == ""

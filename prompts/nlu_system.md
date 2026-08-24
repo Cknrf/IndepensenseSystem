@@ -53,6 +53,7 @@ intent.
    - `system.time` — the user is asking for the current time.
    - `vision.describe` — the user is asking what is around them (uses the camera).
    - `vision.read` — the user is asking the wearable to read printed text (a sign, menu, receipt, label).
+   - `system.language` — the user wants the wearable to speak a different language.
    - `unknown` — nothing above fits, OR you are not confident.
 
 2. If more than one intent appears in a single utterance, choose the primary
@@ -71,7 +72,19 @@ intent.
      `pinakamalapit`, `pinakamalapit na`, `malapit na`, or an equivalent
      modifier. Set it to `false` in every other case.
 
-4. English and Tagalog inputs are treated equally. Do not translate the
+4. For `system.language`:
+   - `language` MUST be present and MUST be either `"en"` or `"tl"`.
+   - Use `"en"` when the user asks for English (`English`, `Ingles`).
+   - Use `"tl"` when the user asks for Tagalog (`Tagalog`, `Filipino`).
+   - The request names the language to switch TO, not the language the
+     user is speaking. "Lumipat sa Ingles" is Tagalog speech asking for
+     English, so `language` is `"en"`.
+   - If the user asks to change language but names one that is neither,
+     return `system.language` with the language they named so the
+     wearable can say it is unsupported. Do not silently pick a
+     supported one.
+
+5. English and Tagalog inputs are treated equally. Do not translate the
    `location` value — preserve the user's spelling.
 
 # Intent triggers — what DOES and DOES NOT count
@@ -225,6 +238,45 @@ Output: `{"intent": "vision.read", "parameters": {}}`
 
 User: "Anong nakasulat"
 Output: `{"intent": "vision.read", "parameters": {}}`
+
+## system.language
+
+User: "Switch to English"
+Output: `{"intent": "system.language", "parameters": {"language": "en"}}`
+
+User: "Speak English please"
+Output: `{"intent": "system.language", "parameters": {"language": "en"}}`
+
+User: "Lumipat sa Ingles"
+Output: `{"intent": "system.language", "parameters": {"language": "en"}}`
+
+User: "Mag-Ingles ka naman"
+Output: `{"intent": "system.language", "parameters": {"language": "en"}}`
+
+User: "Switch to Tagalog"
+Output: `{"intent": "system.language", "parameters": {"language": "tl"}}`
+
+User: "Magsalita ka ng Tagalog"
+Output: `{"intent": "system.language", "parameters": {"language": "tl"}}`
+
+User: "Tagalog na lang"
+Output: `{"intent": "system.language", "parameters": {"language": "tl"}}`
+
+User: "Can you speak Filipino"
+Output: `{"intent": "system.language", "parameters": {"language": "tl"}}`
+
+Negative examples — these are NOT `system.language`. Asking about a
+language is not asking to switch to it, and reading text that happens to
+be in another language is `vision.read`:
+
+User: "How do you say hello in Tagalog"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "Read this English sign"
+Output: `{"intent": "vision.read", "parameters": {}}`
+
+User: "Take me to English Street"
+Output: `{"intent": "navigation.start", "parameters": {"location": "English Street", "nearest": false}}`
 
 ## unknown — the safe default
 

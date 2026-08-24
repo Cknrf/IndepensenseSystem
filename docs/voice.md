@@ -19,7 +19,7 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 | STT engine | faster-whisper (CTranslate2 backend) |
 | STT model (English) | `tiny` (~75 MB), `int8` quantized |
 | STT model (Tagalog) | `small` (~460 MB), `int8` quantized |
-| Active language | English (see `SYSTEM_LANGUAGE` in config; Tagalog voice + model loaded but not yet wired to a switch) |
+| Active language | Tagalog by default (`DEFAULT_LANGUAGE`), switchable at runtime by voice — see below |
 | Models stored at | `models/voices/`, `models/whisper/` (gitignored, downloaded on demand) |
 | Test artifacts at | `data/test/voice/` |
 
@@ -129,7 +129,7 @@ are instant — models are loaded from local disk.
 python -m indepensense.voice.tests.manual.tts_test
 ```
 
-Synthesises a sample sentence in the current `SYSTEM_LANGUAGE` and writes
+Synthesises a sample sentence in `DEFAULT_LANGUAGE` and writes
 `data/test/voice/<timestamp>_tts_<lang>.wav`. Copy to your Mac (`scp ...`) or
 play locally (`aplay data/test/voice/*_tts.wav` on the Pi if audio output is
 configured).
@@ -193,9 +193,68 @@ tts.synthesize("Hello", out_path, language="en")
 tts.synthesize("Kumusta", out_path, language="tl")
 ```
 
-The active language at build time is `SYSTEM_LANGUAGE` in config. Runtime
-switching (via the guardian dashboard) is planned but not yet implemented —
-when it lands, only the application layer needs to change, not this driver.
+The active language is runtime state, not a build-time constant — see the
+next section. This driver only ever sees an explicit `language=` argument,
+so switching required no change here.
+
+## Language switching
+
+The wearable starts in `config.DEFAULT_LANGUAGE` (Tagalog) and switches on
+a voice command. The choice persists to `var/language`, so it survives a
+reboot — a user who chose English is not greeted in Tagalog after a power
+cycle.
+
+```
+"Lumipat sa Ingles"        -> switches to English
+"Switch to Tagalog"        -> switches to Tagalog
+```
+
+### The switch phrase must be in the language currently active
+
+Whisper is **pinned** per language (`whisper.py` passes `language=`)
+rather than auto-detecting. Two reasons, both practical:
+
+- Detection on a two-second command is unreliable. Voice commands are
+  short, which is very little signal to identify a language from, and a
+  misdetection corrupts the entire transcription rather than just
+  degrading it.
+- Each language loads a *different model size* — `tiny` for English,
+  `small` for Tagalog. Auto-detecting would mean choosing a model before
+  knowing the language, then re-transcribing with the other one if the
+  guess was wrong. Two passes on a CPU-only Pi.
+
+So the user says "lumipat sa Ingles" *in Tagalog* to get English. This
+trades a small interaction constraint for accuracy and latency.
+
+### How the user knows which language is active
+
+Two audible cues, since the user cannot read a screen:
+
+1. **On boot**, the wearable greets in the active language.
+2. **On switch**, the confirmation is spoken in the language being
+   switched *to*. Asking for English and hearing Tagalog means the switch
+   failed — the confirmation verifies itself.
+
+`device.status` also reports the active language on request.
+
+### Where the strings live
+
+No response text is in Python. Every spoken string is in
+`intents/messages.py`, keyed by message then language, and the executor
+only ever calls `messages.get(key, language)`. Unit tests enforce that
+every key covers every language and that placeholders match across
+translations — a missing translation is a test failure, not a runtime
+surprise.
+
+Sentence *structure* can differ per language, not just wording. Tagalog
+does not inflect nouns for number ("2 upuan", not "2 upuans"), so the
+scene description takes a different code path per language. See
+`messages.count_label`.
+
+Object labels from YOLO stay in English unless `_TL_LABELS` translates
+them. That is deliberate: Manila speech code-switches, so "Nakikita ko
+ang 2 tao at isang chair" sounds natural while forcing a Tagalog coinage
+for every COCO class would not.
 
 ## Updating voices or models
 

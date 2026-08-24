@@ -135,7 +135,7 @@ YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8m-oiv7.pt"
 YOLO_CONFIDENCE_THRESHOLD = 0.3
 
 # Tesseract OCR — reads printed text via `vision.read` intent.
-# `OCR_LANGUAGES` maps our SYSTEM_LANGUAGE codes to Tesseract language
+# `OCR_LANGUAGES` maps our language codes to Tesseract language
 # packs.
 #
 # Installation on the Pi:
@@ -148,7 +148,7 @@ YOLO_CONFIDENCE_THRESHOLD = 0.3
 #       https://github.com/tesseract-ocr/tessdata/raw/main/tgl.traineddata
 # Verify with:  tesseract --list-langs   (should list eng, osd, tgl)
 #
-# If `tgl` isn't installed and SYSTEM_LANGUAGE is "tl", vision.read
+# If `tgl` isn't installed and the active language is "tl", vision.read
 # will fail with a graceful "couldn't read the text" spoken response —
 # the wearable doesn't crash.
 #
@@ -207,9 +207,23 @@ WHISPER_INITIAL_PROMPTS: dict[str, str] = {
 
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 
-# Active system language. Currently fixed at build time; will become a
-# runtime setting once guardian-dashboard control is implemented.
-SYSTEM_LANGUAGE = "en"
+# Language the wearable starts in, and the set it can switch between.
+#
+# Tagalog is the default because it is the system's priority language and
+# most of the intended users speak it first. The user switches with a
+# voice command ("lumipat sa Ingles" / "switch to Tagalog") and the choice
+# persists to `LANGUAGE_STATE_PATH` so it survives a reboot.
+#
+# The switch phrase must be spoken in the language currently active.
+# Whisper is pinned per language (`whisper.py` passes `language=`) rather
+# than auto-detecting, because detection on a two-second command is
+# unreliable and because each language loads a different model size —
+# auto-detect would mean transcribing twice on a CPU-only Pi. See
+# docs/voice.md.
+DEFAULT_LANGUAGE = "tl"
+SUPPORTED_LANGUAGES = ("en", "tl")
+LANGUAGE_STATE_PATH = PROJECT_ROOT / "var" / "language"
+
 
 # Physical buttons (KY-004 style breakouts with on-board 10kΩ pull-down)
 PTT_BUTTON_GPIO = 23         # physical pin 16 — push-to-talk (click to start, click to stop)

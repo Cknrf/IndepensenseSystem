@@ -21,6 +21,19 @@ class MockIntentParser:
         if any(w in text for w in ("emergency", "help", "sos", "tulong")):
             return IntentResult(Intent.EMERGENCY_TRIGGER, {}, transcript, "")
 
+        # Language switching. Checked before the other intents because
+        # "switch to English" contains no keyword that would collide, and
+        # putting it first keeps the target-language extraction simple.
+        if any(w in text for w in ("switch to", "speak", "lumipat sa", "magsalita")):
+            if any(w in text for w in ("english", "ingles")):
+                return IntentResult(
+                    Intent.SYSTEM_LANGUAGE, {"language": "en"}, transcript, "",
+                )
+            if any(w in text for w in ("tagalog", "filipino", "tagalog na")):
+                return IntentResult(
+                    Intent.SYSTEM_LANGUAGE, {"language": "tl"}, transcript, "",
+                )
+
         if any(w in text for w in ("cancel navigation", "stop navigation", "ihinto")):
             return IntentResult(Intent.NAVIGATION_STOP, {}, transcript, "")
 

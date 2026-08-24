@@ -54,7 +54,7 @@ from indepensense.config import (
     PIPER_VOICES,
     PTT_BUTTON_GPIO,
     SIM7600_GPS_PORT,
-    SYSTEM_LANGUAGE,
+    DEFAULT_LANGUAGE,
     TELEMETRY_TIMEOUT_S,
     VOICE_TEST_DIR,
     WHISPER_INITIAL_PROMPTS,
@@ -172,7 +172,7 @@ def main():
             try:
                 response = executor.execute(IntentResult(intent=Intent.EMERGENCY_TRIGGER))
                 print(f"[EMERGENCY BUTTON] response: {response}", flush=True)
-                tts.synthesize(response, resp_path, language=SYSTEM_LANGUAGE)
+                tts.synthesize(response, resp_path, language=DEFAULT_LANGUAGE)
                 play(resp_path)
             except Exception as exc:
                 print(f"[EMERGENCY BUTTON] handler error: {exc}", flush=True)
@@ -181,7 +181,7 @@ def main():
 
     trigger = "button" if button is not None else "keyboard"
     emerg = "wired" if emergency_button is not None else "not wired"
-    print(f"Ready. Active language: {SYSTEM_LANGUAGE}. PTT: {trigger}. Emergency button: {emerg}.\n")
+    print(f"Ready. Active language: {DEFAULT_LANGUAGE}. PTT: {trigger}. Emergency button: {emerg}.\n")
 
     try:
         while True:
@@ -220,8 +220,8 @@ def main():
             t0 = time.time()
             transcript = stt.transcribe(
                 input_path,
-                language=SYSTEM_LANGUAGE,
-                initial_prompt=WHISPER_INITIAL_PROMPTS.get(SYSTEM_LANGUAGE) or None,
+                language=DEFAULT_LANGUAGE,
+                initial_prompt=WHISPER_INITIAL_PROMPTS.get(DEFAULT_LANGUAGE) or None,
             )
             print(f"  ({time.time() - t0:.1f}s) transcript: {transcript.text or '(silence)'}")
 
@@ -245,7 +245,7 @@ def main():
             # 5. Synthesise + play — check cancel one more time so we don't
             # step on the emergency's TTS output at the speaker.
             t0 = time.time()
-            tts.synthesize(response, response_path, language=SYSTEM_LANGUAGE)
+            tts.synthesize(response, response_path, language=DEFAULT_LANGUAGE)
             print(f"  ({time.time() - t0:.1f}s) synthesised {response_path.name}")
 
             if cancel_recording.is_set():

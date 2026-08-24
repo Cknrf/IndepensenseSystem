@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from indepensense.config import (
-    SYSTEM_LANGUAGE,
+    DEFAULT_LANGUAGE,
     VOICE_TEST_DIR,
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
@@ -40,10 +40,10 @@ def main():
     print(f"Loading Whisper models {WHISPER_MODELS} from {WHISPER_MODEL_DIR}")
     stt = FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
 
-    size = stt.model_size_for(SYSTEM_LANGUAGE)
-    print(f"Transcribing {audio_path} with '{size}' model (language={SYSTEM_LANGUAGE})...")
+    size = stt.model_size_for(DEFAULT_LANGUAGE)
+    print(f"Transcribing {audio_path} with '{size}' model (language={DEFAULT_LANGUAGE})...")
     t0 = time.time()
-    transcript = stt.transcribe(audio_path, language=SYSTEM_LANGUAGE)
+    transcript = stt.transcribe(audio_path, language=DEFAULT_LANGUAGE)
     elapsed = time.time() - t0
 
     print(f"Done in {elapsed:.2f}s (detected language={transcript.language}).")

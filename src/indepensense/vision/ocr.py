@@ -45,7 +45,7 @@ from indepensense.vision.base import Frame
 class TesseractOCR:
     def __init__(self, language_map: dict[str, str]):
         """`language_map` is app_code → tesseract_code, e.g.
-        `{"en": "eng", "tl": "tgl"}`. Callers pass their SYSTEM_LANGUAGE
+        `{"en": "eng", "tl": "tgl"}`. Callers pass their active language
         (or per-command language once we support runtime switching)
         and the driver picks the right Tesseract pack.
         """

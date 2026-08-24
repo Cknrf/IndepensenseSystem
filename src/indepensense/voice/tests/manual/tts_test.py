@@ -10,7 +10,7 @@ you can copy it back to a Mac (or play with `aplay` on the Pi) and listen.
 import time
 from datetime import datetime
 
-from indepensense.config import PIPER_VOICES, SYSTEM_LANGUAGE, VOICE_TEST_DIR
+from indepensense.config import PIPER_VOICES, DEFAULT_LANGUAGE, VOICE_TEST_DIR
 from indepensense.voice.piper import PiperTTS
 
 SAMPLE_TEXT_EN = (
@@ -29,14 +29,14 @@ def main():
     print(f"Loading Piper voices: {sorted(PIPER_VOICES)}")
     tts = PiperTTS(voices=PIPER_VOICES)
 
-    text = SAMPLE_TEXT_EN if SYSTEM_LANGUAGE == "en" else SAMPLE_TEXT_TL
+    text = SAMPLE_TEXT_EN if DEFAULT_LANGUAGE == "en" else SAMPLE_TEXT_TL
     output_path = VOICE_TEST_DIR / (
-        datetime.now().strftime("%B-%d-%Y_%H-%M-%S") + f"_tts_{SYSTEM_LANGUAGE}.wav"
+        datetime.now().strftime("%B-%d-%Y_%H-%M-%S") + f"_tts_{DEFAULT_LANGUAGE}.wav"
     )
 
-    print(f"Synthesizing {len(text)} chars in '{SYSTEM_LANGUAGE}'...")
+    print(f"Synthesizing {len(text)} chars in '{DEFAULT_LANGUAGE}'...")
     t0 = time.time()
-    tts.synthesize(text, output_path, language=SYSTEM_LANGUAGE)
+    tts.synthesize(text, output_path, language=DEFAULT_LANGUAGE)
     elapsed = time.time() - t0
 
     print(f"Done in {elapsed:.2f}s. WAV saved to {output_path}")

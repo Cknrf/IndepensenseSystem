@@ -93,6 +93,7 @@ from indepensense.config import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
     CAMERA_WIDTH,
+    DEFAULT_LANGUAGE,
     DEVICE_ID,
     DYP_A22_BAUDRATE,
     DYP_A22_BOTTOM_PORT,
@@ -130,13 +131,14 @@ from indepensense.config import (
     PTT_BUTTON_GPIO,
     PTT_MAX_RECORDING_S,
     REPEAT_BUTTON_GPIO,
+    LANGUAGE_STATE_PATH,
     SIM7600_GPS_PORT,
     SMS_ALERT_EVENT_TYPES,
     SMS_DEFAULT_COUNTRY_CODE,
     SMS_ENABLED,
     SMS_MODEM_INDEX,
     SMS_SEND_TIMEOUT_S,
-    SYSTEM_LANGUAGE,
+    SUPPORTED_LANGUAGES,
     TELEMETRY_TIMEOUT_S,
     UPS_HAT_I2C_BUS,
     VIBRATION_FRONT_GPIO,
@@ -154,9 +156,11 @@ from indepensense.config import (
 from indepensense.feedback.gpio_button import GPIOButton
 from indepensense.feedback.gpio_buzzer import GPIOBuzzer
 from indepensense.feedback.gpio_vibration import GPIOVibrationMotor
+from indepensense.intents import messages
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
+from indepensense.language import LanguageState
 from indepensense.messaging.mmcli_sms import MMCLISMSSender
 from indepensense.navigation.monitor import NavigationCue, NavigationMonitor
 from indepensense.power.waveshare_ups_e import WaveshareUPSHatE
@@ -254,6 +258,16 @@ class _CachedGPSAdapter:
 class App:
     def __init__(self):
         self._shutdown = threading.Event()
+
+        # Active language, shared by reference with the executor so a
+        # switch it handles is visible here on the very next response.
+        # Restored from disk, so a user who switched to English is not
+        # greeted in Tagalog after a power cycle.
+        self.language = LanguageState(
+            default=DEFAULT_LANGUAGE,
+            supported=SUPPORTED_LANGUAGES,
+            state_path=LANGUAGE_STATE_PATH,
+        )
 
         # Voice concurrency: one voice thread at a time; a second PTT
         # press while _voice_active is set is ignored. Emergency press
@@ -404,7 +418,7 @@ class App:
             telemetry=self.alert_sink,
             device_id=DEVICE_ID,
             monitor=self.nav_monitor,
-            system_language=SYSTEM_LANGUAGE,
+            language=self.language,
             ocr_max_chars=OCR_MAX_CHARS,
         )
 
@@ -464,7 +478,12 @@ class App:
         )
         self.heartbeat_sender.start()
 
-        print("Ready. Running fall-detection loop. SIGINT/SIGTERM to stop.", flush=True)
+        print(
+            f"Ready (language: {self.language.current}). Running fall-detection "
+            f"loop. SIGINT/SIGTERM to stop.",
+            flush=True,
+        )
+        self._speak_greeting()
 
     def run(self) -> None:
         """Main 100 Hz sensor loop. Blocks until shutdown.
@@ -952,7 +971,7 @@ class App:
 
             timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
             resp_path = VOICE_TEST_DIR / f"{timestamp}_emergency.wav"
-            self.tts.synthesize(response, resp_path, language=SYSTEM_LANGUAGE)
+            self.tts.synthesize(response, resp_path, language=self.language.current)
             play(resp_path)
         except Exception as exc:
             print(f"[EMERGENCY BUTTON] handler error: {exc}", file=sys.stderr, flush=True)
@@ -980,7 +999,7 @@ class App:
 
             timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
             resp_path = VOICE_TEST_DIR / f"{timestamp}_repeat.wav"
-            self.tts.synthesize(response, resp_path, language=SYSTEM_LANGUAGE)
+            self.tts.synthesize(response, resp_path, language=self.language.current)
             play(resp_path)
         except Exception as exc:
             print(f"[REPEAT] handler error: {exc}", file=sys.stderr, flush=True)
@@ -1092,8 +1111,8 @@ class App:
 
             transcript = self.stt.transcribe(
                 input_path,
-                language=SYSTEM_LANGUAGE,
-                initial_prompt=WHISPER_INITIAL_PROMPTS.get(SYSTEM_LANGUAGE) or None,
+                language=self.language.current,
+                initial_prompt=WHISPER_INITIAL_PROMPTS.get(self.language.current) or None,
             )
             print(f"[PTT] Transcript: {transcript.text!r}", flush=True)
             if self._voice_cancel.is_set() or not transcript.text.strip():
@@ -1111,7 +1130,7 @@ class App:
             if self._voice_cancel.is_set():
                 return
 
-            self.tts.synthesize(response, response_path, language=SYSTEM_LANGUAGE)
+            self.tts.synthesize(response, response_path, language=self.language.current)
             if self._voice_cancel.is_set():
                 return
             play(response_path)
@@ -1130,12 +1149,32 @@ class App:
                     pass
             self._voice_active.clear()
 
+    def _speak_greeting(self) -> None:
+        """Announce readiness in the active language. Never raises.
+
+        This is how a user who cannot see a screen learns which language
+        the wearable came up in — hearing Tagalog tells them the switch
+        command must be spoken in Tagalog. Best-effort: a device that
+        boots without working audio must still boot.
+        """
+        try:
+            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
+            greeting_path = VOICE_TEST_DIR / f"{timestamp}_greeting.wav"
+            self.tts.synthesize(
+                messages.get("language.greeting", self.language.current),
+                greeting_path,
+                language=self.language.current,
+            )
+            play(greeting_path)
+        except Exception as exc:
+            print(f"[greeting] could not speak: {exc}", file=sys.stderr, flush=True)
+
     def _speak_error(self, message: str) -> None:
         """Best-effort audible error message. Never raises."""
         try:
             timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
             error_path = VOICE_TEST_DIR / f"{timestamp}_error.wav"
-            self.tts.synthesize(message, error_path, language=SYSTEM_LANGUAGE)
+            self.tts.synthesize(message, error_path, language=self.language.current)
             play(error_path)
         except Exception as exc:
             print(f"[error-speech] failed to speak: {exc}", file=sys.stderr, flush=True)

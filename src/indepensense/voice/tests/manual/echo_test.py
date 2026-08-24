@@ -14,7 +14,7 @@ from datetime import datetime
 
 from indepensense.config import (
     PIPER_VOICES,
-    SYSTEM_LANGUAGE,
+    DEFAULT_LANGUAGE,
     VOICE_TEST_DIR,
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
@@ -41,9 +41,9 @@ def main():
     record(RECORDING_DURATION_S, input_path)
     print(f"({(time.time() - t0):.1f}s) Saved raw audio to {input_path.name}")
 
-    print(f"Transcribing (language={SYSTEM_LANGUAGE})...")
+    print(f"Transcribing (language={DEFAULT_LANGUAGE})...")
     t0 = time.time()
-    transcript = stt.transcribe(input_path, language=SYSTEM_LANGUAGE)
+    transcript = stt.transcribe(input_path, language=DEFAULT_LANGUAGE)
     print(f"({(time.time() - t0):.1f}s) You said: {transcript.text or '(nothing detected)'}")
 
     if not transcript.text.strip():
@@ -53,7 +53,7 @@ def main():
 
     print("Synthesising echo...")
     t0 = time.time()
-    tts.synthesize(transcript.text, echo_path, language=SYSTEM_LANGUAGE)
+    tts.synthesize(transcript.text, echo_path, language=DEFAULT_LANGUAGE)
     print(f"({(time.time() - t0):.1f}s) Saved echo to {echo_path.name}")
 
     print("Playing echo...")

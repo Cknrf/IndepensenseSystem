@@ -188,6 +188,9 @@ def _normalise_parameters(intent: Intent, params: dict) -> dict:
 
     - unknown: strip all parameters (LLM sometimes hallucinates them)
     - navigation.start: ensure `nearest` is always present as a bool
+    - system.language: fold the language name the model returned down to
+      a code, so the executor only ever sees `"en"`, `"tl"`, or a value
+      it can reject
     """
     if intent is Intent.UNKNOWN:
         return {}
@@ -199,7 +202,42 @@ def _normalise_parameters(intent: Intent, params: dict) -> dict:
         result["nearest"] = _to_bool(result["nearest"])
         return result
 
+    if intent is Intent.SYSTEM_LANGUAGE:
+        result = dict(params)
+        result["language"] = _to_language_code(result.get("language"))
+        return result
+
     return dict(params)
+
+
+# Language names the model returns instead of the codes the prompt asks
+# for. Small models comply with the schema most of the time but not
+# always, and a language switch failing because the model said "English"
+# rather than "en" would be an avoidable dead end for the user.
+_LANGUAGE_ALIASES: dict[str, str] = {
+    "en": "en",
+    "eng": "en",
+    "english": "en",
+    "ingles": "en",
+    "tl": "tl",
+    "tgl": "tl",
+    "tagalog": "tl",
+    "filipino": "tl",
+    "fil": "tl",
+}
+
+
+def _to_language_code(value: object) -> str:
+    """Map whatever the model returned to a language code.
+
+    Unrecognised values are passed through lowercased rather than
+    defaulted to a supported language: the executor answers "I can only
+    speak English and Tagalog", which is honest. Silently substituting a
+    language the user did not ask for would be worse.
+    """
+    if not isinstance(value, str):
+        return ""
+    return _LANGUAGE_ALIASES.get(value.strip().lower(), value.strip().lower())
 
 
 def _to_bool(value: object) -> bool:
