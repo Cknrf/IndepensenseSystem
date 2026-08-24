@@ -91,9 +91,13 @@ from indepensense.config import (
     LOW_BATTERY_PERCENT,
     LOW_BATTERY_RECOVERY_PERCENT,
     MAG_ADDRESS,
+    MAG_I2C_BUS,
     MAG_OFFSET_X,
     MAG_OFFSET_Y,
     MAG_OFFSET_Z,
+    MAG_SCALE_X,
+    MAG_SCALE_Y,
+    MAG_SCALE_Z,
     MPU6050_ADDRESS,
     MPU6050_I2C_BUS,
     NLU_MODEL,
@@ -139,8 +143,8 @@ from indepensense.routing.photon import PhotonGeocoder
 from indepensense.safety.fall_detector import ThresholdFallDetector
 from indepensense.sensors.dyp_a22 import DYPA22
 from indepensense.sensors.gps import SIM7600GPS
-from indepensense.sensors.magnetometer import AK8963Magnetometer
 from indepensense.sensors.mpu6050 import MPU6050
+from indepensense.sensors.qmc5883l import QMC5883L
 from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.heartbeat import PeriodicHeartbeatSender
@@ -248,7 +252,7 @@ class App:
         self.emergency_button: GPIOButton | None = None
         self.repeat_button: GPIOButton | None = None
         self.battery: WaveshareUPSHatE | None = None
-        self.magnetometer: AK8963Magnetometer | None = None
+        self.magnetometer: QMC5883L | None = None
         self.camera: PiCamera | None = None
         # `object_detector` (YOLO) is deliberately named differently from
         # `self.detector` above — that one is the ThresholdFallDetector
@@ -380,7 +384,7 @@ class App:
         print("  Opening UPS HAT (battery)...", flush=True)
         self.battery = self._try_open_battery()
 
-        print("  Opening magnetometer (compass, part of MPU9250)...", flush=True)
+        print("  Opening magnetometer (QMC5883L compass)...", flush=True)
         self.magnetometer = self._try_open_magnetometer()
 
         print("  Opening camera + YOLO detector...", flush=True)
@@ -618,8 +622,9 @@ class App:
 
         Caching rather than acting: no consumer uses heading yet. Wiring it
         into navigation turn verification needs a trustworthy compass first,
-        and `MAG_OFFSET_X/Y/Z` are still 0.0 — hard-iron calibration has
-        never been run. See `magnetometer_calibrate` in sensors/tests/manual.
+        and `MAG_OFFSET_X/Y/Z` and `MAG_SCALE_X/Y/Z` are still at their
+        identity values — calibration has never been run. See
+        `magnetometer_calibrate` in sensors/tests/manual.
 
         A stale reading is kept on failure. That is deliberate: heading is
         advisory, and a transient I²C glitch should not blank it.
@@ -1129,15 +1134,17 @@ class App:
             )
             return None
 
-    def _try_open_magnetometer(self) -> AK8963Magnetometer | None:
+    def _try_open_magnetometer(self) -> QMC5883L | None:
         try:
-            return AK8963Magnetometer(
-                bus_number=MPU6050_I2C_BUS,
-                mpu9250_address=MPU6050_ADDRESS,
-                magnetometer_address=MAG_ADDRESS,
+            return QMC5883L(
+                bus_number=MAG_I2C_BUS,
+                address=MAG_ADDRESS,
                 offset_x=MAG_OFFSET_X,
                 offset_y=MAG_OFFSET_Y,
                 offset_z=MAG_OFFSET_Z,
+                scale_x=MAG_SCALE_X,
+                scale_y=MAG_SCALE_Y,
+                scale_z=MAG_SCALE_Z,
             )
         except Exception as exc:
             print(

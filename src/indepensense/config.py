@@ -32,32 +32,45 @@ OBSTACLE_DANGER_CM = 50.0        # imminent — user should stop
 OBSTACLE_COOLDOWN_S = 2.0        # per sensor: don't fire the same tier again
 
 # MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus).
-# When the wearable is upgraded to an MPU9250, this same address serves
-# the accel + gyro (byte-compatible with MPU6050). The magnetometer
-# lives at MAG_ADDRESS below.
+# Accelerometer + gyroscope only; heading comes from the separate
+# QMC5883L below. (The MPU9250 bought as an upgrade turned out to be a
+# relabelled MPU6500 with no magnetometer die, so there is no upgrade
+# path here — this is the IMU.)
 MPU6050_I2C_BUS = 1
 MPU6050_ADDRESS = 0x68
 
-# AK8963 magnetometer inside the MPU9250. Accessed on the main I²C
-# bus after we enable "bypass mode" on the MPU9250 at startup. Address
-# is fixed by the chip and is not configurable in hardware.
-MAG_ADDRESS = 0x0C
+# QMC5883L magnetometer — a standalone compass chip on the same I2C1
+# bus, at its own fixed address. Its own bus constant rather than
+# reusing MPU6050_I2C_BUS: this is an unrelated device that merely
+# shares the wires, and conflating them would hide that.
+MAG_I2C_BUS = 1
+MAG_ADDRESS = 0x0D
 
-# How often the main loop samples the compass. The AK8963 runs at 100 Hz
-# natively in continuous mode 2, but no consumer needs heading that fast —
-# it changes on human timescales. 2 Hz keeps the shared I²C bus free for
-# the things that are latency-sensitive: the IMU at 100 Hz, both DYP-A22
-# ultrasonics, and the UPS HAT.
+# How often the main loop samples the compass. The QMC5883L is
+# configured for a 10 Hz output rate (see the driver docstring), and no
+# consumer needs heading even that fast — it changes on human
+# timescales. 2 Hz keeps the shared I²C bus free for the things that
+# are latency-sensitive: the IMU at 100 Hz, both DYP-A22 ultrasonics,
+# and the UPS HAT.
 HEADING_CHECK_INTERVAL_S = 0.5
 
-# Hard-iron calibration offsets (μT). Zero until you run the helper:
+# Magnetometer calibration. Identity values until you run the helper:
 #   python -m indepensense.sensors.tests.manual.magnetometer_calibrate
 # Paste the printed values here. Re-run whenever the wearable's
 # physical layout changes materially (batteries moved, motor added,
 # ferromagnetic component relocated).
+#
+# OFFSET (μT) cancels hard-iron bias — the constant pull of permanent
+# magnets and ferrous mass bolted to the cane. SCALE (dimensionless)
+# cancels soft-iron distortion, which stretches the field sphere into an
+# ellipsoid so that a given rotation reads as a different number of
+# degrees depending on which way you face.
 MAG_OFFSET_X = 0.0
 MAG_OFFSET_Y = 0.0
 MAG_OFFSET_Z = 0.0
+MAG_SCALE_X = 1.0
+MAG_SCALE_Y = 1.0
+MAG_SCALE_Z = 1.0
 
 # Waveshare UPS HAT (E) — battery + power management, also on I2C1 bus.
 # The HAT mounts under the Pi via pogo pins (no GPIO header conflict).

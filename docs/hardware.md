@@ -92,48 +92,66 @@ Manual test:
 python -m indepensense.sensors.tests.manual.single_mpu6050_test
 ```
 
-### MPU9250 IMU + AK8963 magnetometer — STATUS: driver ready, awaiting wiring
+### QMC5883L magnetometer — STATUS: driver ready, awaiting wiring
 
-Drop-in replacement for the MPU6050. The accel + gyro half is byte-compatible
-and sits at the same address `0x68`, so `sensors/mpu6050.py` drives it
-unchanged — same register map, same ±8 g configuration, same 14-byte burst.
+Standalone 3-axis compass on I2C1 at address `0x0D`. Independent of the IMU:
+it shares only the SDA/SCL wires, so it appears in `i2cdetect` immediately,
+with no host-side setup needed.
+
+**Why a separate chip.** The plan was an MPU9250, whose package contains an
+AK8963 magnetometer beside the accel + gyro. The module that arrived is a
+relabelled MPU6500 with no magnetometer die at all — a common counterfeit.
+Its accel + gyro half still works as an MPU6050 (`0x68`, byte-compatible),
+but heading had to move to a dedicated part, and the AK8963 driver
+(`sensors/magnetometer.py`, which enabled MPU9250 bypass mode to reach
+`0x0C`) was deleted along with it.
+
+To check whether an "MPU9250" is genuine, read `WHO_AM_I` (`0x75`): `0x71` =
+MPU9250, `0x73` = MPU9255, `0x70` = MPU6500 (no compass), `0x68` = MPU6050.
 
 **⚠️ Power it from 3.3 V (Pin 1 or 17), NOT Pin 2.** The MPU6050 row above
-uses Pin 2, which is 5 V. The MPU9250 die is a 3.3 V part. Most breakout
-boards regulate VCC but pass SDA/SCL through **unshifted**, so check your
-specific board before wiring. Copying the MPU6050 pin table verbatim is the
-most likely way to destroy this sensor.
-
-The extra part is the **AK8963 magnetometer**, a separate die in the same
-package at address `0x0C`. It is not visible on the bus until the MPU9250's
-INT_PIN_CFG (`0x37`) bypass bit is set — which `sensors/magnetometer.py` does
-at construction. That is why `i2cdetect` shows `0x0C` only after the
-magnetometer driver (or its manual test) has run once.
+uses Pin 2, which is 5 V. GY-271-style QMC5883L breakouts are 3.3 V parts;
+some carry a regulator, many do not, and most pass SDA/SCL through
+**unshifted**. Copying the MPU6050 pin table verbatim is the most likely way
+to destroy this sensor.
 
 ```
 Pin 1 (3V3)     VCC     <-- NOT Pin 2
 Pin 9 (GND)     GND
 Pin 3 (GPIO 2)  SDA
 Pin 5 (GPIO 3)  SCL
+DRDY            not connected
 ```
 
-Configurable via `MPU6050_I2C_BUS`, `MPU6050_ADDRESS`, `MAG_ADDRESS` and
-`HEADING_CHECK_INTERVAL_S` in `indepensense.config`. Heading is sampled at
-2 Hz by the main loop and cached; the IMU keeps its own 100 Hz path.
+**Naming trap.** Modules sold as "HMC5883L" or "GY-271" almost always carry a
+QMC5883L, which is *not* register-compatible with Honeywell's original. The
+QMC5883L answers at `0x0D` with little-endian data; a real HMC5883L answers
+at `0x1E` with big-endian data and is not supported by this driver. The
+driver checks the chip-ID register (`0x0D`, expects `0xFF`) at construction
+and refuses to open on a mismatch — the app then runs without a compass and
+prints the reason, rather than reporting a heading that never moves.
 
-**Hard-iron calibration is required before heading means anything.**
-`MAG_OFFSET_X/Y/Z` in `config.py` are all still `0.0`. Run the 30 s sweep and
-paste the printed values back into `config.py`. Re-run whenever the physical
-layout changes — batteries moved, motor added, any ferromagnetic part
-relocated.
+Mount the board with its **X-axis pointing toward the front of the cane** and
+Z vertical. `sensors/base.heading_from_field` computes heading as
+`atan2(y, x)`; a rotated mount yields a rotated heading.
+
+Configurable via `MAG_I2C_BUS`, `MAG_ADDRESS` and `HEADING_CHECK_INTERVAL_S`
+in `indepensense.config`. The chip runs continuous ±8 G, 10 Hz, 512×
+oversampling (set in the driver — see its docstring for the reasoning);
+`app.py` samples the cached heading at 2 Hz.
+
+**Calibration is required before heading means anything.** `MAG_OFFSET_X/Y/Z`
+and `MAG_SCALE_X/Y/Z` in `config.py` are still at identity values. One 30 s
+rotation sweep produces both: offsets cancel hard-iron bias (constant pull
+from the motor magnets, battery pack, Pi), scales cancel soft-iron distortion
+(the field sphere stretched into an ellipsoid, which makes heading error
+depend on which way you face). Re-run whenever the physical layout changes —
+batteries moved, motor added, any ferromagnetic part relocated. Calibrate
+away from desks, speakers and steel furniture.
 
 Known limitations: no tilt compensation (heading degrades when the cane is
 off-vertical) and no magnetic declination applied, so this reports *magnetic*
 north, not true north.
-
-Also note many modules sold as "MPU9250" are relabelled MPU6500s with no
-magnetometer at all. Check `WHO_AM_I` (`0x75`): `0x71` = MPU9250,
-`0x73` = MPU9255, `0x70` = MPU6500 (no compass), `0x68` = MPU6050.
 
 Manual tests:
 

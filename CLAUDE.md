@@ -79,7 +79,7 @@ Manual tests run on the Pi with `python -m indepensense.<module>.tests.manual.<n
 Small, focused, and written so the implementation chapter can cite them. Lowercase verb prefix, then what changed, then an em dash and the *why* when it isn't obvious:
 
 ```
-add: AK8963 magnetometer driver with MockMagnetometer, calibration helper, and app wiring
+add: QMC5883L magnetometer driver with MockMagnetometer, calibration helper, and app wiring
 fix: correct battery current sign convention — positive = charging, negative = discharging
 switch: NLU Qwen 2.5 1.5B → Qwen 3 1.7B
 tune: bump camera to 1280x720 and drop YOLO confidence threshold to 0.3

@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -105,6 +106,17 @@ class MagnetometerReading:
     magnetic_z: float
     heading_deg: float
     timestamp: float
+
+
+def heading_from_field(magnetic_x: float, magnetic_y: float) -> float:
+    """Compass heading in degrees (0-360) from horizontal field components.
+
+    Lives here, beside the `MagnetometerReading` docstring that defines the
+    convention, so the driver and the mock cannot drift apart on the sign or
+    the axis order — a flipped `atan2` argument produces a heading that looks
+    plausible while being mirrored, which is close to invisible in testing.
+    """
+    return math.degrees(math.atan2(magnetic_y, magnetic_x)) % 360.0
 
 
 class Magnetometer(Protocol):

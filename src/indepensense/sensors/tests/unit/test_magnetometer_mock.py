@@ -2,13 +2,16 @@
 
 Nothing here touches real hardware — the mock is deterministic. These
 tests lock down the compass-heading convention (0°=north, 90°=east)
-so future refactors can't silently flip the sign.
+so future refactors can't silently flip the sign. The convention itself
+lives in `sensors/base.heading_from_field`, shared by the mock and the
+QMC5883L driver, so exercising it through the mock covers both.
 """
 import math
 
 import pytest
 
-from indepensense.sensors.magnetometer import MockMagnetometer
+from indepensense.sensors.base import heading_from_field
+from indepensense.sensors.mock import MockMagnetometer
 
 
 def test_default_heading_is_zero():
@@ -81,3 +84,33 @@ def test_computed_heading_from_x_y_matches_stored():
     r = m.read()
     computed = math.degrees(math.atan2(r.magnetic_y, r.magnetic_x)) % 360.0
     assert computed == pytest.approx(r.heading_deg, abs=1e-6)
+
+
+# --- the shared convention, tested directly --------------------------------
+
+
+@pytest.mark.parametrize(
+    "x, y, expected",
+    [
+        (50.0, 0.0, 0.0),      # north
+        (0.0, 50.0, 90.0),     # east
+        (-50.0, 0.0, 180.0),   # south
+        (0.0, -50.0, 270.0),   # west
+        (50.0, 50.0, 45.0),    # north-east
+    ],
+)
+def test_heading_from_field_cardinal_directions(x, y, expected):
+    assert heading_from_field(x, y) == pytest.approx(expected)
+
+
+def test_heading_from_field_never_returns_negative():
+    """atan2 returns -180..180; the compass contract is 0..360. A negative
+    heading leaking through would break any consumer doing arithmetic on it."""
+    for x, y in [(-1.0, -1.0), (1.0, -1.0), (-1.0, -0.001)]:
+        assert 0.0 <= heading_from_field(x, y) < 360.0
+
+
+def test_heading_from_field_is_magnitude_independent():
+    """Only direction matters — a weak field and a strong one pointing the
+    same way must give the same heading."""
+    assert heading_from_field(1.0, 1.0) == pytest.approx(heading_from_field(500.0, 500.0))

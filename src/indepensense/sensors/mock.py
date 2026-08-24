@@ -1,12 +1,18 @@
-"""Mock ultrasonic sensor for off-device development.
+"""Mocks for off-device development.
 
-Returns a sine-wave varying distance so navigation/fusion logic can be exercised
-on a machine without real hardware (e.g. a Mac dev box).
+Stand-ins for every sensor the wearable carries, so navigation/fusion logic
+can be exercised on a machine without real hardware (e.g. a Mac dev box).
 """
 import math
 import time
 
-from indepensense.sensors.base import GPSFix, IMUReading, UltrasonicReading
+from indepensense.sensors.base import (
+    GPSFix,
+    IMUReading,
+    MagnetometerReading,
+    UltrasonicReading,
+    heading_from_field,
+)
 
 
 class MockUltrasonic:
@@ -48,6 +54,40 @@ class MockIMU:
 
     def close(self) -> None:
         pass
+
+
+class MockMagnetometer:
+    """Configurable mock compass for Mac dev + unit tests.
+
+    Constructed with a heading (0-360). `read()` synthesizes a field vector
+    that genuinely points that way and derives the heading back out of it
+    with `heading_from_field`, so the mock exercises the same convention the
+    real driver does instead of just echoing the number it was given.
+    """
+
+    def __init__(self, heading_deg: float = 0.0, magnitude_ut: float = 40.0):
+        self._heading_deg = heading_deg % 360.0
+        self._magnitude_ut = magnitude_ut
+        self.closed = False
+
+    def set_heading(self, heading_deg: float) -> None:
+        """Change the reported heading — simulates the user turning."""
+        self._heading_deg = heading_deg % 360.0
+
+    def read(self) -> MagnetometerReading | None:
+        rad = math.radians(self._heading_deg)
+        x = self._magnitude_ut * math.cos(rad)
+        y = self._magnitude_ut * math.sin(rad)
+        return MagnetometerReading(
+            magnetic_x=x,
+            magnetic_y=y,
+            magnetic_z=0.0,
+            heading_deg=heading_from_field(x, y),
+            timestamp=time.time(),
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class MockGPS:

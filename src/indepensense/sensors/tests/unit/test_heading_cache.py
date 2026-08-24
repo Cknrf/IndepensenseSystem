@@ -21,7 +21,7 @@ import pytest
 
 from indepensense.app import App
 from indepensense.config import HEADING_CHECK_INTERVAL_S
-from indepensense.sensors.magnetometer import MockMagnetometer
+from indepensense.sensors.mock import MockMagnetometer
 
 
 class _CountingMagnetometer(MockMagnetometer):
@@ -47,7 +47,7 @@ class _FailingMagnetometer:
 
 
 class _NoneMagnetometer:
-    """Returns None on every read — simulates the AK8963 overflow (HOFL) path."""
+    """Returns None on every read — simulates the QMC5883L overflow (STATUS.OVL) path."""
 
     def read(self):
         return None
