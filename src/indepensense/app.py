@@ -79,6 +79,7 @@ constructor inline in `start()` silently drops it out of mock coverage.
 failure aborts startup. `_try_open_*` means degraded operation is
 acceptable — it logs, returns None, and every caller handles None.
 """
+import os
 import signal
 import sys
 import threading
@@ -93,6 +94,9 @@ from indepensense.config import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
     CAMERA_WIDTH,
+    CLOUD_LLM_API_KEY_ENV,
+    CLOUD_LLM_ENABLED,
+    CLOUD_MAX_RESPONSE_CHARS,
     DEFAULT_LANGUAGE,
     DEVICE_ID,
     DYP_A22_BAUDRATE,
@@ -292,6 +296,9 @@ class App:
         self.alert_sink = None
         self.guardians: GuardianDirectory | None = None
         self.sms: MMCLISMSSender | None = None
+        # None means "no cloud fallback": unknown utterances get the
+        # local "I didn't catch that" instead of being forwarded.
+        self.cloud = None
         self.heartbeat_sender: PeriodicHeartbeatSender | None = None
         self.executor: IntentExecutor | None = None
         self.ptt_button: GPIOButton | None = None
@@ -373,6 +380,9 @@ class App:
         print("  Connecting to Ollama (with warmup)...", flush=True)
         self.parser = self._open_parser()
 
+        print("  Checking cloud LLM fallback...", flush=True)
+        self.cloud = self._try_open_cloud_answerer()
+
         print("  Connecting to GraphHopper + Photon...", flush=True)
         router = self._open_router()
         geocoder = self._open_geocoder()
@@ -419,6 +429,8 @@ class App:
             device_id=DEVICE_ID,
             monitor=self.nav_monitor,
             language=self.language,
+            cloud=self.cloud,
+            cloud_max_chars=CLOUD_MAX_RESPONSE_CHARS,
             ocr_max_chars=OCR_MAX_CHARS,
         )
 
@@ -1125,6 +1137,14 @@ class App:
                 flush=True,
             )
 
+            # A cloud answer takes seconds. A sighted user watches a
+            # spinner; this user hears nothing and cannot tell whether
+            # the wearable is thinking or dead. Say so before the wait.
+            if intent_result.intent is Intent.UNKNOWN and self.cloud is not None:
+                self._speak_thinking()
+                if self._voice_cancel.is_set():
+                    return
+
             response = self.executor.execute(intent_result)
             print(f"[PTT] Response: {response}", flush=True)
             if self._voice_cancel.is_set():
@@ -1168,6 +1188,27 @@ class App:
             play(greeting_path)
         except Exception as exc:
             print(f"[greeting] could not speak: {exc}", file=sys.stderr, flush=True)
+
+    def _speak_thinking(self) -> None:
+        """Tell the user we're working before a slow cloud call. Never raises.
+
+        Deliberately spoken rather than a tone: "let me think about that"
+        conveys both that the wearable heard them and that an answer is
+        coming, which a beep does not. It plays synchronously on the voice
+        thread — that costs a second, but overlapping it with the answer
+        would mean two voices talking at once.
+        """
+        try:
+            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
+            thinking_path = VOICE_TEST_DIR / f"{timestamp}_thinking.wav"
+            self.tts.synthesize(
+                messages.get("cloud.thinking", self.language.current),
+                thinking_path,
+                language=self.language.current,
+            )
+            play(thinking_path)
+        except Exception as exc:
+            print(f"[thinking] could not speak: {exc}", file=sys.stderr, flush=True)
 
     def _speak_error(self, message: str) -> None:
         """Best-effort audible error message. Never raises."""
@@ -1230,6 +1271,40 @@ class App:
 
     def _open_geocoder(self) -> PhotonGeocoder:
         return PhotonGeocoder(base_url=PHOTON_URL)
+
+    def _try_open_cloud_answerer(self):
+        """Open the cloud LLM fallback, or None when it isn't configured.
+
+        Returns None whenever `CLOUD_LLM_ENABLED` is False or no key is
+        present in the environment, and the wearable then answers unknown
+        utterances exactly as it did before — a missing key must degrade,
+        never abort startup.
+
+        No provider driver exists yet; `intents/cloud.py` documents what
+        one has to implement. `OfflineGuard` is applied here rather than
+        inside a driver so every future provider inherits it.
+        """
+        if not CLOUD_LLM_ENABLED:
+            return None
+        if not os.environ.get(CLOUD_LLM_API_KEY_ENV):
+            print(
+                f"  Cloud LLM enabled but {CLOUD_LLM_API_KEY_ENV} is not set. "
+                f"Unknown commands will not be forwarded.",
+                flush=True,
+            )
+            return None
+        # A concrete provider goes here, wrapped as:
+        #     return OfflineGuard(
+        #         SomeProviderAnswerer(...),
+        #         probe_url=INTERNET_PROBE_URL,
+        #         probe_timeout_s=INTERNET_PROBE_TIMEOUT_S,
+        #     )
+        print(
+            "  Cloud LLM is enabled but no provider driver is implemented yet "
+            "(see intents/cloud.py).",
+            flush=True,
+        )
+        return None
 
     def _try_open_sms(self) -> MMCLISMSSender | None:
         """Open the SMS sender. Tolerant: the device still works without

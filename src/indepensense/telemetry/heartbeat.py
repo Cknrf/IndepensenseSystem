@@ -6,13 +6,10 @@ every `interval_s` seconds. Reads current GPS position; falls back to
 in the intent executor — a "device is alive" heartbeat is more useful
 than silence, even when we can't say where the device is).
 
-`battery_health` and `internet_status` are hardcoded to `100` and `True`
-for now. Real values will land when:
-
-  - the Waveshare UPS HAT (E) is wired and its INA219 chip is read for
-    real battery voltage → percentage
-  - connectivity is derived from either a lightweight HTTP HEAD probe
-    or the outcome of the previous heartbeat POST
+`battery_health` comes from the Waveshare UPS HAT when one is wired and
+defaults to 100 when none is (see `_read_battery_percent_or_default` for
+why 100 rather than 0). `internet_status` comes from a real HTTP HEAD
+probe — see `net.probe_internet`.
 
 Threading model
 ---------------
@@ -39,6 +36,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 
+from indepensense.net import probe_internet
 from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import IntervalInformation, TelemetryClient
@@ -123,39 +121,16 @@ class PeriodicHeartbeatSender:
         )
 
     def _probe_internet(self) -> bool:
-        """Lightweight HTTP HEAD to a highly-available target.
+        """Whether we currently have internet, for the heartbeat payload.
 
-        Returns True if any HTTP response comes back within the timeout;
-        False on connection error, DNS failure, or timeout.
-
-        Note: we accept any response including error status codes as
-        "we have internet" — a 5xx from Cloudflare still means we're
-        reaching Cloudflare, which means we're online. Only a network
-        failure means we're actually offline.
-
-        This runs on the heartbeat thread once per interval — no
-        contention with the main loop or voice pipeline.
-
-        Only `RequestException` counts as offline. A broader `except
-        Exception` here would also swallow an ImportError from the lazy
-        import below, so a missing `requests` install would report the
-        device as permanently offline instead of surfacing the real
-        cause — a misleading signal for a guardian watching the
-        dashboard. Anything that isn't a network error propagates to the
-        loop in `_run`, which logs it and counts a failed heartbeat.
+        Runs on the heartbeat thread once per interval — no contention
+        with the main loop or voice pipeline. The probe itself lives in
+        `net.py` because the cloud LLM fallback needs the same answer.
         """
-        import requests
-
-        try:
-            requests.head(
-                self._internet_probe_url,
-                timeout=self._internet_probe_timeout_s,
-            )
-            return True
-        except requests.RequestException:
-            # Connection refused, DNS failure, timeout — we couldn't
-            # reach the probe target. Treat as offline.
-            return False
+        return probe_internet(
+            self._internet_probe_url,
+            timeout_s=self._internet_probe_timeout_s,
+        )
 
     def _read_battery_percent_or_default(self) -> int:
         """Read the current battery percentage.

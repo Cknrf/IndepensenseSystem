@@ -182,7 +182,7 @@ wpctl set-profile <device-id> handsfree_head_unit
 
 Device ID is from the `Devices` section of `wpctl status`.
 
-## Language switching (not yet wired)
+## Per-language voices
 
 `PIPER_VOICES` in `indepensense.config` is a `dict[str, Path]` mapping
 language codes to ONNX voice paths. `PiperTTS` loads all configured voices
@@ -193,9 +193,10 @@ tts.synthesize("Hello", out_path, language="en")
 tts.synthesize("Kumusta", out_path, language="tl")
 ```
 
-The active language is runtime state, not a build-time constant — see the
-next section. This driver only ever sees an explicit `language=` argument,
-so switching required no change here.
+All configured voices load at construction, so switching language costs
+nothing at switch time — no model reload, no delay. The active language is
+runtime state (see the next section); this driver only ever sees an
+explicit `language=` argument, so switching required no change here.
 
 ## Language switching
 
@@ -255,6 +256,59 @@ Object labels from YOLO stay in English unless `_TL_LABELS` translates
 them. That is deliberate: Manila speech code-switches, so "Nakikita ko
 ang 2 tao at isang chair" sounds natural while forcing a Tagalog coinage
 for every COCO class would not.
+
+## Cloud LLM fallback
+
+The local NLU is deliberately biased toward `unknown` — a wearable that
+guesses is worse than one that admits it did not understand. That leaves a
+gap: "how many days until Christmas" is a reasonable thing to ask and is
+not an intent.
+
+So `unknown` is the trigger rather than a dead end. When the local parser
+returns `unknown` and a cloud answerer is configured, the transcript goes
+to a cloud LLM.
+
+### Why not a dedicated `cloud.ask` intent
+
+Because it would fight the bias that makes the local model trustworthy. A
+catch-all intent gives the classifier a tempting bucket for anything it is
+unsure about, and the failure mode is severe — "take me to the hospital"
+routed to a chatbot instead of navigation. With `unknown` as the sole
+entry point, the cloud only ever sees utterances the local model already
+declined, so it cannot intercept a real command.
+
+It also gives an honest metric for the thesis: how often the local model
+defers, read straight off the `unknown` rate.
+
+### What the user hears
+
+Cloud answers take seconds. A sighted user watches a spinner; this user
+hears nothing and cannot tell whether the wearable is thinking or dead. So
+the pipeline speaks "let me think about that" before the call — spoken
+rather than a tone, because it conveys both that the wearable heard them
+and that an answer is coming.
+
+Offline and provider-failure are reported differently on purpose. "No
+internet connection" is actionable — move somewhere with signal — while a
+provider error is not, and telling the user the wrong one sends them
+looking for a problem that was never there.
+
+### Privacy
+
+Only the **transcript** is sent, never the recorded audio. STT already runs
+on-device, so there is no reason to ship a voice recording to a third
+party. The words a user spoke still leave the device, which belongs in the
+ethics chapter, but that is a materially smaller disclosure than their
+voice.
+
+### Status: no provider wired
+
+`CLOUD_LLM_ENABLED` is `False` and no driver exists yet, so the wearable
+answers unknown utterances exactly as it did before. `intents/cloud.py`
+documents what a driver must implement; `MockCloudAnswerer` satisfies the
+same protocol, so every other part of the path is already built and
+tested. `OfflineGuard` lives outside any driver so every future provider
+inherits the offline behaviour.
 
 ## Updating voices or models
 

@@ -4,7 +4,7 @@ Simple keyword matching — enough to exercise executor logic on a Mac
 without spinning up Ollama. Not a substitute for the real LLM in accuracy
 or coverage.
 """
-from indepensense.intents.base import Intent, IntentResult
+from indepensense.intents.base import CloudAnswer, Intent, IntentResult
 
 
 class MockIntentParser:
@@ -84,3 +84,34 @@ class MockIntentParser:
                 )
 
         return IntentResult(Intent.UNKNOWN, {}, transcript, "")
+
+
+class MockCloudAnswerer:
+    """Scripted cloud LLM for off-device development and unit tests.
+
+    Defaults to echoing a plausible short answer so the fallback path can
+    be exercised without a provider or an API key. Configure `reason` to
+    rehearse the failure paths — `"offline"` and `"error"` produce
+    different spoken responses and both need testing.
+
+    `asked` records every (question, language) pair, which is how a test
+    asserts that the transcript really was forwarded and that the active
+    language was passed through rather than assumed.
+    """
+
+    def __init__(self, text: str | None = None, reason: str = "ok"):
+        self._text = text
+        self._reason = reason
+        self.asked: list[tuple[str, str]] = []
+
+    def answer(self, question: str, language: str) -> CloudAnswer:
+        self.asked.append((question, language))
+        if self._reason != "ok":
+            return CloudAnswer(text=None, reason=self._reason)
+        if self._text is not None:
+            return CloudAnswer(text=self._text, reason="ok")
+        # Deliberately mentions the question so a test can tell the
+        # transcript was forwarded, and differs per language so a
+        # language-passing bug is visible.
+        prefix = "Ayon sa cloud" if language == "tl" else "According to the cloud"
+        return CloudAnswer(text=f"{prefix}: {question}", reason="ok")

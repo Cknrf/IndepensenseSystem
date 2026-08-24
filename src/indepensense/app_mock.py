@@ -74,7 +74,7 @@ from indepensense.config import (
     MOCK_ULTRASONIC_PERIOD_S,
 )
 from indepensense.feedback.mock import MockButton, MockBuzzer, MockVibrationMotor
-from indepensense.intents.mock import MockIntentParser
+from indepensense.intents.mock import MockCloudAnswerer, MockIntentParser
 from indepensense.messaging.mock import MockSMSSender
 from indepensense.power.mock import MockBatteryReader
 from indepensense.routing.mock import MockGeocoder, MockRouter
@@ -125,6 +125,14 @@ class MockApp(App):
 
     def _open_tts(self) -> MockTTS:
         return MockTTS()
+
+    def _try_open_cloud_answerer(self) -> MockCloudAnswerer:
+        """Always on under mocks, regardless of `CLOUD_LLM_ENABLED`, so the
+        fallback path is exercisable without a provider or an API key.
+        Deliberately *not* wrapped in `OfflineGuard` — the guard would
+        probe the real network and skip the mock on a laptop with no
+        connection. Its offline behaviour is covered by unit tests."""
+        return MockCloudAnswerer()
 
     def _open_parser(self) -> MockIntentParser:
         """Keyword matcher, not an LLM. Good enough to reach every branch

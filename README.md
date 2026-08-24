@@ -72,7 +72,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 
 **Voice Interaction**
 - Push-to-talk speech input (Whisper STT)
-- LLM-based intent classification (Qwen 3 1.7B via Ollama)
+- LLM-based intent classification (Qwen 3 1.7B via Ollama), with a cloud LLM fallback for questions no intent covers
 - Natural-language responses (Piper TTS)
 
 **Guardian System**
@@ -145,7 +145,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `sensors/` | Sensor drivers: DYP-A22 ultrasonic, MPU6050 IMU, QMC5883L magnetometer, GPS via SIM7600 |
 | `vision/` | Camera capture, YOLOv8 object detection, Tesseract OCR |
 | `voice/` | Push-to-talk flow, Whisper STT, Piper TTS |
-| `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency) |
+| `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching), bilingual response catalogue, cloud LLM fallback |
 | `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing |
 | `routing/` | GraphHopper + Photon HTTP clients (routing and geocoding) |
 | `feedback/` | Buzzer, vibration motors, PTT + SOS buttons |

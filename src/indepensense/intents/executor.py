@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from indepensense.intents import messages
-from indepensense.intents.base import Intent, IntentResult
+from indepensense.intents.base import CloudAnswerer, Intent, IntentResult
 from indepensense.language import LanguageState
 from indepensense.routing.base import Coordinate, Geocoder, GeocodingResult, Route, Router
 from indepensense.navigation.monitor import NavigationMonitor, round_speech_distance
@@ -196,7 +196,9 @@ class IntentExecutor:
         detector: Detector | None = None,
         ocr: OCR | None = None,
         language: LanguageState | None = None,
+        cloud: CloudAnswerer | None = None,
         ocr_max_chars: int = 500,
+        cloud_max_chars: int = 500,
     ):
         self._router = router
         self._geocoder = geocoder
@@ -213,7 +215,9 @@ class IntentExecutor:
         self._language = language or LanguageState(
             default=messages.FALLBACK_LANGUAGE, supported=messages.LANGUAGES,
         )
+        self._cloud = cloud
         self._ocr_max_chars = ocr_max_chars
+        self._cloud_max_chars = cloud_max_chars
 
         self._current_route: Route | None = None
 
@@ -560,7 +564,37 @@ class IntentExecutor:
         return messages.get("language.switched", target)
 
     def _handle_unknown(self, result: IntentResult) -> str:
-        return messages.get("generic.unknown_intent", self._lang)
+        """Answer an utterance the local NLU declined to classify.
+
+        With no cloud answerer wired this is the plain "I didn't catch
+        that". With one, the transcript goes to a cloud LLM — the local
+        model stays deliberately conservative and the cloud picks up what
+        it defers, rather than competing with it for real commands. See
+        `intents/cloud.py`.
+        """
+        if self._cloud is None:
+            return messages.get("generic.unknown_intent", self._lang)
+
+        question = (result.raw_transcript or "").strip()
+        if not question:
+            # Nothing was transcribed — there is no question to forward,
+            # and sending an empty string would waste a paid API call to
+            # be told nothing.
+            return messages.get("generic.unknown_intent", self._lang)
+
+        answer = self._cloud.answer(question, self._lang)
+
+        if answer.reason == "offline":
+            return messages.get("cloud.offline", self._lang)
+        if answer.reason != "ok" or not answer.text or not answer.text.strip():
+            return messages.get("cloud.error", self._lang)
+
+        text = answer.text.strip()
+        if len(text) > self._cloud_max_chars:
+            text = text[: self._cloud_max_chars].rstrip() + messages.get(
+                "vision.truncated_suffix", self._lang,
+            )
+        return text
 
     # --- helpers ------------------------------------------------------------
 

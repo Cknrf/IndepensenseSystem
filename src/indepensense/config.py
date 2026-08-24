@@ -277,6 +277,30 @@ FALL_STILLNESS_DURATION_S = 2.0
 # `NLU_TIMEOUT_S` is the per-query budget once the model is already loaded.
 # Cold model loads are absorbed by the parser's startup warmup, which uses
 # `NLU_WARMUP_TIMEOUT_S`.
+# Cloud LLM fallback — see intents/cloud.py for the full rationale.
+#
+# When the local NLU returns `unknown` AND we are online, the transcript
+# is forwarded to a cloud LLM instead of answering "I didn't catch that".
+# `unknown` is the sole entry point on purpose: a dedicated cloud intent
+# would give the local classifier a tempting bucket for anything it was
+# unsure about, and "take me to the hospital" reaching a chatbot instead
+# of navigation is a failure this device cannot afford.
+#
+# No provider is chosen yet. `CLOUD_LLM_ENABLED` stays False until a
+# driver exists, so the wearable answers exactly as it does today. The
+# API key belongs in the environment, never in this file — config.py is
+# committed.
+#
+# `CLOUD_MAX_RESPONSE_CHARS` is a backstop, not the real control. The
+# answer is spoken by Piper, so a provider returning three paragraphs is
+# a 90-second monologue; the driver's prompt should ask for brevity and
+# this catches the times it doesn't. Same reasoning and same size as
+# OCR_MAX_CHARS above.
+CLOUD_LLM_ENABLED = False
+CLOUD_LLM_API_KEY_ENV = "INDEPENSENSE_CLOUD_API_KEY"
+CLOUD_LLM_TIMEOUT_S = 20.0
+CLOUD_MAX_RESPONSE_CHARS = 500
+
 OLLAMA_URL = "http://127.0.0.1:11434"
 NLU_MODEL = "qwen3:1.7b"
 NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
