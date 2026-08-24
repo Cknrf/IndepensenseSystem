@@ -103,9 +103,28 @@ ENGLISH_CASES = [
     ("What does this sign say",          "vision.read", {}),
     ("Read the menu for me",             "vision.read", {}),
 
+    # --- system.language ---
+    # A misclassification here is worse than most: if the model cannot
+    # recognise a switch request, the user is stranded in a language they
+    # may not want and has no settings screen to escape through.
+    ("Switch to English",                "system.language", {"language": "en"}),
+    ("Speak English please",             "system.language", {"language": "en"}),
+    ("Switch to Tagalog",                "system.language", {"language": "tl"}),
+    ("Can you speak Filipino",           "system.language", {"language": "tl"}),
+
     # --- unknown (clear non-commands) ---
     ("Play some music",                  "unknown", {}),
     ("Send a text to my mom",            "unknown", {}),
+
+    # --- unknown, and that is the point: cloud-LLM territory ---
+    # These are reasonable things to ask a voice assistant and are NOT
+    # intents. `unknown` is the correct answer, not a failure — it is the
+    # sole entry point to the cloud fallback (see intents/cloud.py). If
+    # the model ever classified these as a real intent, the command would
+    # be mishandled instead of answered.
+    ("How tall is Mount Apo",            "unknown", {}),
+    ("How many days until Christmas",    "unknown", {}),
+    ("What is the capital of Japan",      "unknown", {}),
 
 ]
 
@@ -122,6 +141,20 @@ TAGALOG_CASES = [
     ("Ano ang nakikita mo",                           "vision.describe",     {}),
     ("Basahin mo ito",                                "vision.read",         {}),
     ("Magpatugtog ka ng musika",                      "unknown",             {}),
+
+    # --- system.language ---
+    # The switch phrase is spoken in the language currently ACTIVE, so
+    # Tagalog speech asking for English is the realistic case and the one
+    # that must work. Note the target is the language asked FOR, not the
+    # language being spoken.
+    ("Lumipat sa Ingles",                             "system.language",     {"language": "en"}),
+    ("Mag-Ingles ka naman",                           "system.language",     {"language": "en"}),
+    ("Magsalita ka ng Tagalog",                       "system.language",     {"language": "tl"}),
+    ("Tagalog na lang",                               "system.language",     {"language": "tl"}),
+
+    # --- unknown, bound for the cloud fallback ---
+    ("Gaano katangkad ang Bundok Apo",                "unknown",             {}),
+    ("Ilang araw na lang bago mag-Pasko",             "unknown",             {}),
 
 ]
 
@@ -151,6 +184,15 @@ ADVERSARIAL_CASES = [
     ("you",                              "unknown", {}),
     ("thanks for watching",              "unknown", {}),
     ("okay",                             "unknown", {}),
+
+    # A language NAME appearing in an utterance is not a request to
+    # switch to it. The third case is the dangerous one: grabbing
+    # "English" out of a destination would swallow a real navigation
+    # command and send the user nowhere.
+    ("How do you say hello in Tagalog",  "unknown", {}),
+    ("Read this English sign",           "vision.read", {}),
+    ("Take me to English Street",        "navigation.start", {"location": "English Street"}),
+    ("I speak Tagalog at home",          "unknown", {}),
 ]
 
 # (group, transcript, expected_intent, expected_slots). `group` drives the

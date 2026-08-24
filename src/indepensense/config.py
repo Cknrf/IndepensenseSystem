@@ -298,7 +298,23 @@ FALL_STILLNESS_DURATION_S = 2.0
 # OCR_MAX_CHARS above.
 CLOUD_LLM_ENABLED = False
 CLOUD_LLM_API_KEY_ENV = "INDEPENSENSE_CLOUD_API_KEY"
-CLOUD_LLM_TIMEOUT_S = 20.0
+
+# 10 s, and the constraint is the user's patience, not the provider's.
+# The cloud call sits on top of a chain that already costs 4-6 s (Tagalog
+# STT ~2-3 s, local NLU ~1-2 s, Piper ~1 s), so by the time this timeout
+# expires the user has been holding a cane on a street corner for fifteen
+# seconds with nothing but the "thinking" cue. Failing into "I couldn't
+# get an answer" at 10 s respects them more than succeeding at 20 s.
+#
+# Two things matter more than this value for actual latency:
+#   - cap the provider's max output tokens (~100). Generation time scales
+#     with output length, so this is the largest single lever — and it
+#     keeps answers short enough to speak, which is wanted anyway.
+#   - reuse the HTTP connection. A cold TLS handshake is ~3 round trips
+#     before the request is even sent; against an EU-hosted provider from
+#     the Philippines that is roughly 0.75 s of pure setup. A persistent
+#     session inside the driver removes it from every call after the first.
+CLOUD_LLM_TIMEOUT_S = 10.0
 CLOUD_MAX_RESPONSE_CHARS = 500
 
 OLLAMA_URL = "http://127.0.0.1:11434"

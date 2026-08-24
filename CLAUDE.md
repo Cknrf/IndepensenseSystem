@@ -75,7 +75,7 @@ Domains: `sensors`, `vision`, `voice`, `intents`, `navigation`, `routing`, `feed
 
 Outside `src/`:
 
-- `prompts/nlu_system.md` — the LLM intent-classification system prompt. **Prompt changes go here, not into Python.** Loaded via `config.NLU_PROMPT_PATH`. After editing it, re-run the probe: `llm_probe` exercises 49 prompts including adversarial unknowns.
+- `prompts/nlu_system.md` — the LLM intent-classification system prompt. **Prompt changes go here, not into Python.** Loaded via `config.NLU_PROMPT_PATH`. After editing it, re-run the probe: `llm_probe` exercises 66 prompts across English, Tagalog and adversarial groups, reported per group — a blended score would hide a model that aces English and fails Tagalog.
 - `docs/` — hardware wiring, voice pipeline, GraphHopper, Photon, SIM7600.
 - `deploy/systemd/` — unit files for `indepensense`, `graphhopper`, `photon`, `ollama-warmup`.
 
