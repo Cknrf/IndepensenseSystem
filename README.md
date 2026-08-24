@@ -151,7 +151,8 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `feedback/` | Buzzer, vibration motors, PTT + SOS buttons |
 | `safety/` | Fall detection via accelerometer thresholds |
 | `power/` | Waveshare UPS HAT driver, low-battery alerts |
-| `telemetry/` | Buffered heartbeat + alert sender to the backend |
+| `telemetry/` | Buffered heartbeat + alert sender to the backend, guardian contact cache, SMS fan-out on alerts |
+| `messaging/` | Outbound SMS via ModemManager (`mmcli`) — the fallback notification path when data is unavailable |
 | `tools/` | Utility scripts (e.g., live system-performance monitor) |
 | `app.py` | Main synchronous polling loop that wires everything together |
 | `app_mock.py` | Development-only subclass of `App` with every device mocked — runs the full runtime on a Mac. Never deployed |
@@ -203,6 +204,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | QMC5883L magnetometer | `python -m indepensense.sensors.tests.manual.single_magnetometer_test` | Prints calibrated field, magnitude, and heading |
 | Magnetometer calibration | `python -m indepensense.sensors.tests.manual.magnetometer_calibrate` | 30 s sweep producing hard-iron offsets + soft-iron scales |
 | GPS (SIM7600) | `python -m indepensense.sensors.tests.manual.single_gps_test` | Prints NMEA fixes as they arrive |
+| GPS site survey | `python -m indepensense.sensors.tests.manual.gps_survey --label kitchen` | Samples one spot for 2 min, appends to `gps_survey.csv`, reports fix rate, HDOP, positional scatter in metres, and flags a frozen (stale) fix |
 
 ### Feedback
 
@@ -248,6 +250,16 @@ After wiring a component (or after any hardware change), run its test to confirm
 |---|---|
 | Send one alert to the backend | `python -m indepensense.telemetry.tests.manual.send_alert_test` |
 | Send one heartbeat to the backend | `python -m indepensense.telemetry.tests.manual.send_heartbeat_test` |
+
+### Messaging (SMS)
+
+| Component | Command |
+|---|---|
+| Send one real SMS | `python -m indepensense.messaging.tests.manual.send_sms_test --number +639171234567` |
+| Preview the emergency SMS wording | `python -m indepensense.messaging.tests.manual.send_sms_test --number +639171234567 --emergency-preview` |
+
+Both send a real message and cost money. Requires ModemManager running and
+a SIM whose plan permits SMS — a data-only plan fails at the send step.
 
 ### Routing & Intents (require GraphHopper, Photon, and Ollama running)
 

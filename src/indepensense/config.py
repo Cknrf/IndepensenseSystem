@@ -287,3 +287,41 @@ BACKEND_URL = "http://100.104.82.110:3000"
 DEVICE_ID = "00000000-0000-0000-0000-000000000001"
 HEARTBEAT_INTERVAL_S = 30
 TELEMETRY_TIMEOUT_S = 5.0
+
+# Guardian contact list, used for emergency SMS.
+#
+# Fetched once at startup from the backend and written to disk. The cache
+# is what makes SMS work at all: the device needs these numbers precisely
+# when it has no data connection, which is also when it cannot fetch
+# them. A boot with no network falls back to the last known list.
+#
+# Consequence to be aware of: a guardian added while the device is
+# running is not known to it until the next restart. Accepted — guardian
+# lists change on human timescales, and re-fetching on a timer would
+# spend metered cellular data to re-transmit an almost always identical
+# list.
+GUARDIAN_CACHE_PATH = PROJECT_ROOT / "var" / "guardians.json"
+GUARDIAN_FETCH_TIMEOUT_S = 10.0
+
+# Emergency SMS via the SIM7600's cellular connection.
+#
+# SMS is sent on every alert below regardless of whether the data
+# connection is up. That redundancy is deliberate: SMS traverses the
+# control channel and gets through in marginal-signal conditions that
+# defeat an HTTP POST, and a duplicate notification costs a guardian
+# nothing while a missed one could cost much more. It is not conditional
+# on a signal-strength reading — a heuristic that mis-fires in the one
+# situation the feature exists for is worse than always sending.
+#
+# CONNECTIVITY is excluded: it fires on network transitions, which is
+# both frequent and precisely the condition under which an SMS about
+# connectivity tells the guardian nothing they can act on.
+SMS_ENABLED = True
+SMS_ALERT_EVENT_TYPES = ("Emergency Alert", "Fall Detection", "Low Battery")
+SMS_SEND_TIMEOUT_S = 30.0
+# Modem index for `mmcli -m N`. None auto-discovers via `mmcli -L`, which
+# is what you want unless more than one modem is attached.
+SMS_MODEM_INDEX = None
+# Country calling code used to expand local numbers (0917... -> +63917...).
+# The backend stores whatever the guardian typed into the web form.
+SMS_DEFAULT_COUNTRY_CODE = "63"

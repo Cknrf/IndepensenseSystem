@@ -30,6 +30,11 @@ htmlcov/
 *.log
 data/
 
+# Runtime state written by the device (guardian contact cache, GPS surveys).
+# Machine-local and regenerated — never committed.
+var/
+gps_survey.csv
+
 # ML model weights (large binaries, downloaded on first run)
 models/
 *.pt

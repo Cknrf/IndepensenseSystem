@@ -75,6 +75,7 @@ from indepensense.config import (
 )
 from indepensense.feedback.mock import MockButton, MockBuzzer, MockVibrationMotor
 from indepensense.intents.mock import MockIntentParser
+from indepensense.messaging.mock import MockSMSSender
 from indepensense.power.mock import MockBatteryReader
 from indepensense.routing.mock import MockGeocoder, MockRouter
 from indepensense.sensors.mock import (
@@ -144,6 +145,13 @@ class MockApp(App):
         in the real `BufferedTelemetryClient`, so retry and buffering
         behaviour is exercised for real."""
         return MockTelemetryClient()
+
+    def _try_open_sms(self) -> MockSMSSender:
+        """Records messages instead of sending them. `start()` still wraps
+        this in the real `SMSAlertNotifier`, so the fan-out, number
+        normalisation and per-recipient failure handling all run for
+        real — inspect `app.sms.sent` after firing an alert."""
+        return MockSMSSender()
 
     # --- feedback --------------------------------------------------------
 

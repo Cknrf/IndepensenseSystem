@@ -99,6 +99,8 @@ from indepensense.config import (
     DYP_A22_TOP_PORT,
     EMERGENCY_BUTTON_GPIO,
     GRAPHHOPPER_URL,
+    GUARDIAN_CACHE_PATH,
+    GUARDIAN_FETCH_TIMEOUT_S,
     HEADING_CHECK_INTERVAL_S,
     HEARTBEAT_INTERVAL_S,
     INTERNET_PROBE_TIMEOUT_S,
@@ -129,6 +131,11 @@ from indepensense.config import (
     PTT_MAX_RECORDING_S,
     REPEAT_BUTTON_GPIO,
     SIM7600_GPS_PORT,
+    SMS_ALERT_EVENT_TYPES,
+    SMS_DEFAULT_COUNTRY_CODE,
+    SMS_ENABLED,
+    SMS_MODEM_INDEX,
+    SMS_SEND_TIMEOUT_S,
     SYSTEM_LANGUAGE,
     TELEMETRY_TIMEOUT_S,
     UPS_HAT_I2C_BUS,
@@ -150,6 +157,7 @@ from indepensense.feedback.gpio_vibration import GPIOVibrationMotor
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
+from indepensense.messaging.mmcli_sms import MMCLISMSSender
 from indepensense.navigation.monitor import NavigationCue, NavigationMonitor
 from indepensense.power.waveshare_ups_e import WaveshareUPSHatE
 from indepensense.routing.base import Coordinate
@@ -162,8 +170,10 @@ from indepensense.sensors.mpu6050 import MPU6050
 from indepensense.sensors.qmc5883l import QMC5883L
 from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.telemetry.buffered import BufferedTelemetryClient
+from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.heartbeat import PeriodicHeartbeatSender
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
+from indepensense.telemetry.sms_alerts import SMSAlertNotifier
 from indepensense.vision.detector import YOLOv8Detector
 from indepensense.vision.ocr import TesseractOCR
 from indepensense.vision.picamera import PiCamera
@@ -261,6 +271,13 @@ class App:
         self.tts: PiperTTS | None = None
         self.parser: OllamaIntentParser | None = None
         self.buffered: BufferedTelemetryClient | None = None
+        # `alert_sink` is what every alert path posts to. It is either
+        # `buffered` or `buffered` wrapped in an `SMSAlertNotifier` — the
+        # wrapper adds guardian SMS to all three alert paths at once.
+        # Heartbeats deliberately keep using `buffered` directly.
+        self.alert_sink = None
+        self.guardians: GuardianDirectory | None = None
+        self.sms: MMCLISMSSender | None = None
         self.heartbeat_sender: PeriodicHeartbeatSender | None = None
         self.executor: IntentExecutor | None = None
         self.ptt_button: GPIOButton | None = None
@@ -349,6 +366,34 @@ class App:
         print(f"  Building buffered telemetry to {BACKEND_URL}...", flush=True)
         self.buffered = BufferedTelemetryClient(self._open_telemetry_client())
 
+        # Guardian numbers + emergency SMS. The notifier decorates the
+        # telemetry client, so every alert path — fall detection, low
+        # battery, and the emergency intent inside the executor — gets
+        # SMS without any of them knowing about it. Heartbeats pass
+        # straight through. See `telemetry/sms_alerts.py`.
+        print("  Fetching guardian contacts...", flush=True)
+        self.guardians = GuardianDirectory(
+            base_url=BACKEND_URL,
+            device_id=DEVICE_ID,
+            cache_path=GUARDIAN_CACHE_PATH,
+            timeout_s=GUARDIAN_FETCH_TIMEOUT_S,
+            default_country_code=SMS_DEFAULT_COUNTRY_CODE,
+        )
+        self.guardians.refresh()
+
+        alert_sink = self.buffered
+        if SMS_ENABLED:
+            print("  Opening SMS sender (mmcli)...", flush=True)
+            self.sms = self._try_open_sms()
+            if self.sms is not None:
+                alert_sink = SMSAlertNotifier(
+                    inner=self.buffered,
+                    sms=self.sms,
+                    guardians=self.guardians,
+                    event_type_values=SMS_ALERT_EVENT_TYPES,
+                )
+        self.alert_sink = alert_sink
+
         # NB: battery isn't opened yet — wire it after this block. Store
         # the executor construction here anyway so the button handlers
         # can be registered right after. We patch the battery in later.
@@ -356,7 +401,7 @@ class App:
             router=router,
             geocoder=geocoder,
             gps=cached_gps,
-            telemetry=self.buffered,
+            telemetry=self.alert_sink,
             device_id=DEVICE_ID,
             monitor=self.nav_monitor,
             system_language=SYSTEM_LANGUAGE,
@@ -516,6 +561,7 @@ class App:
             ("Magnetometer", self.magnetometer),
             ("Camera", self.camera),
             ("OCR", self.ocr),
+            ("SMS", self.sms),
             ("PTT button", self.ptt_button),
             ("Emergency button", self.emergency_button),
             ("Repeat button", self.repeat_button),
@@ -557,8 +603,8 @@ class App:
             longitude=lon,
             occurred_at=datetime.now(timezone.utc),
         )
-        if self.buffered is not None:
-            self.buffered.send_alert(alert)
+        if self.alert_sink is not None:
+            self.alert_sink.send_alert(alert)
 
     # ---------------------------------------------------------------- battery
 
@@ -664,8 +710,8 @@ class App:
             longitude=lon,
             occurred_at=datetime.now(timezone.utc),
         )
-        if self.buffered is not None:
-            self.buffered.send_alert(alert)
+        if self.alert_sink is not None:
+            self.alert_sink.send_alert(alert)
 
     # ---------------------------------------------------------------- navigation
 
@@ -1145,6 +1191,24 @@ class App:
 
     def _open_geocoder(self) -> PhotonGeocoder:
         return PhotonGeocoder(base_url=PHOTON_URL)
+
+    def _try_open_sms(self) -> MMCLISMSSender | None:
+        """Open the SMS sender. Tolerant: the device still works without
+        it, HTTP alerts still reach the backend, and refusing to boot
+        because SMS is unavailable would be a worse outcome than losing
+        the redundant notification path."""
+        try:
+            return MMCLISMSSender(
+                modem_index=SMS_MODEM_INDEX,
+                timeout_s=SMS_SEND_TIMEOUT_S,
+            )
+        except Exception as exc:
+            print(
+                f"  SMS unavailable ({exc}). Guardians will only be "
+                f"notified over the data connection.",
+                flush=True,
+            )
+            return None
 
     def _open_telemetry_client(self) -> NestJSTelemetryClient:
         """The raw backend client. `start()` wraps whatever this returns in
