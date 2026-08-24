@@ -30,6 +30,12 @@ How Claude collaborates on this thesis project.
 
 2. **Hardware abstraction.** Every device has a `Protocol` interface in its module's `base.py`, a real driver (e.g. `dyp_a22.py`), and a mock (`mock.py`). Application code depends on the protocol, never the concrete driver.
 
+   In `app.py` this is enforced by a single rule: **every device is constructed in an `_open_*` / `_try_open_*` factory method and nowhere else.** `start()` calls the factories but never a driver constructor. That is what lets `app_mock.py` subclass `App`, override only the factories, and run the whole runtime on a Mac with the loop, threads and decision logic inherited untouched. Add a device, add a factory — an inline constructor in `start()` silently drops it out of mock coverage.
+
+   `_open_*` means the runtime cannot function without it and failure aborts startup (IMU, STT, TTS, NLU parser). `_try_open_*` means degraded operation is acceptable — it logs, returns `None`, and every caller handles `None`.
+
+   `app_mock.py` is development-only and never imported by production: `deploy/systemd/indepensense.service` starts `indepensense.app`. The separation is structural, not a runtime flag, so a misconfigured flag can never substitute a fake sensor on the real device.
+
 3. **Pi-only libraries are imported lazily, inside the function that needs them.** `serial`, `smbus2`, `gpiozero`, `picamera2`, `ultralytics`, `pytesseract`, `faster_whisper`, `piper` — never at module top level. This is what lets the real drivers be imported, introspected, and unit-tested on a Mac where those packages don't exist. Follow the existing comment style:
    ```python
    import serial  # lazy: only resolvable on the Pi
@@ -39,11 +45,21 @@ How Claude collaborates on this thesis project.
 
 5. **`config.py` owns what varies; drivers own what's fixed.** Ports, pins, I²C addresses, thresholds, intervals, model paths → `config.py`. Constants dictated by the chip itself (frame layout, header byte, checksum formula) stay in the driver — those are the chip's contract, not configuration.
 
-6. **Tests nested per module:**
+6. **No user-facing text in Python.** Every spoken response lives in `intents/messages.py`, keyed by message then language; the executor only calls `messages.get(key, language)`. The active language is runtime state (`language.py`), shared by reference so a switch is visible to everything immediately — not a constant, and not a value copied at construction.
+
+   Adding a response means adding every language's version. Unit tests enforce full coverage and matching placeholders, so a missing translation is a test failure rather than the wearable saying the wrong thing to the one user who speaks that language.
+
+   Sentence *structure* may differ per language, not just wording — Tagalog does not inflect nouns for number, so scene description branches per language rather than sharing a pluraliser. Put that kind of grammar in `messages.py`, not in the handler.
+
+7. **Tests nested per module:**
    - `src/indepensense/<module>/tests/unit/` — pytest, no hardware, must pass on a Mac
    - `src/indepensense/<module>/tests/manual/` — human-run scripts that need real hardware
 
+   Runtime-wide code that belongs to no single domain (`app.py`, `language.py`, `net.py`) is tested in `src/indepensense/tests/unit/`.
+
    A new hardware component isn't done until it has a manual test, and that test is listed in the README's Manual Verification Tests table. The fabricator uses those commands to verify wiring without writing Python.
+
+   **Unit tests never touch the network.** Modules whose code makes HTTP calls stub `requests` with an autouse fixture — otherwise the suite passes or fails depending on whether the dev machine is online, and stalls for the timeout when it isn't.
 
 ## Where things live
 

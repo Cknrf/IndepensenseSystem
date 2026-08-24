@@ -157,6 +157,8 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `app.py` | Main synchronous polling loop that wires everything together |
 | `app_mock.py` | Development-only subclass of `App` with every device mocked — runs the full runtime on a Mac. Never deployed |
 | `config.py` | All tunable parameters (thresholds, pins, addresses, model paths) |
+| `language.py` | Active language as runtime state, persisted across reboots |
+| `net.py` | Shared connectivity probe |
 
 **Design conventions** worth knowing before touching code (see also `CLAUDE.md`):
 
