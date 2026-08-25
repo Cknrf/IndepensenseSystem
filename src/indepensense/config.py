@@ -463,12 +463,18 @@ INTERNET_PROBE_TIMEOUT_S = 2.0
 
 # Guardian-dashboard backend (NestJS + MySQL, see ../IndepenSense).
 #
+# Production. No port: https implies 443.
+#
 # MUST be https. Every `/raspberry/*` request carries the device
 # credential as a bearer token, and over plaintext that is readable by
 # every hop in between — so `net.require_https` refuses at startup rather
 # than leaking it quietly. Only `http://localhost` is exempt, because that
 # traffic never reaches a network.
-BACKEND_URL = "https://100.104.82.110:3000"
+#
+# For local backend work, point this at `http://localhost:3000` rather
+# than a LAN or Tailscale address — loopback is the only plaintext form
+# that will start.
+BACKEND_URL = "https://indepensense-api.maendou.com"
 HEARTBEAT_INTERVAL_S = 30
 TELEMETRY_TIMEOUT_S = 5.0
 
