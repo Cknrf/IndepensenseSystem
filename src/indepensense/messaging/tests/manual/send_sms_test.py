@@ -35,7 +35,6 @@ import argparse
 from datetime import datetime, timezone
 
 from indepensense.config import (
-    DEVICE_ID,
     SMS_MODEM_INDEX,
     SMS_SEND_TIMEOUT_S,
 )
@@ -63,7 +62,7 @@ def main():
     if args.emergency_preview:
         text = compose_alert_sms(
             AlertEvent(
-                device_id=DEVICE_ID,
+                device_id="preview",   # local only; never sent
                 event_type=EventType.EMERGENCY_ALERT,
                 latitude=_PREVIEW_LAT,
                 longitude=_PREVIEW_LON,

@@ -42,7 +42,7 @@ from datetime import datetime
 
 from indepensense.config import (
     BACKEND_URL,
-    DEVICE_ID,
+    DEVICE_KEY_PATH,
     EMERGENCY_BUTTON_GPIO,
     GRAPHHOPPER_URL,
     NLU_MODEL,
@@ -66,6 +66,7 @@ from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
 from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.photon import PhotonGeocoder
+from indepensense.credential import load_device_credential
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
 from indepensense.voice.audio import (
     play,
@@ -141,7 +142,12 @@ def main():
     print("  Opening Emergency button...")
     emergency_button = _try_open_emergency_button()
     print(f"  Connecting telemetry to {BACKEND_URL}...")
+    credential = load_device_credential(DEVICE_KEY_PATH)
+    if credential is None:
+        print(f"No usable credential at {DEVICE_KEY_PATH} — see stderr above.")
+        raise SystemExit(1)
     telemetry = NestJSTelemetryClient(
+        credential=credential,
         base_url=BACKEND_URL, timeout_s=TELEMETRY_TIMEOUT_S
     )
 
@@ -150,7 +156,7 @@ def main():
         geocoder=geocoder,
         gps=gps,
         telemetry=telemetry,
-        device_id=DEVICE_ID,
+        device_id=credential.device_id,
     )
 
     # Shared cancel flag: emergency callback sets it to signal any

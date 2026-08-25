@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 
 from indepensense.config import (
     BACKEND_URL,
-    DEVICE_ID,
+    DEVICE_KEY_PATH,
     MPU6050_ADDRESS,
     MPU6050_I2C_BUS,
     SIM7600_GPS_PORT,
@@ -33,6 +33,7 @@ from indepensense.safety.base import DetectorState, FallEvent
 from indepensense.safety.fall_detector import ThresholdFallDetector, magnitude_g
 from indepensense.sensors.mpu6050 import MPU6050
 from indepensense.telemetry.base import AlertEvent, EventType
+from indepensense.credential import load_device_credential
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
 
 SAMPLE_INTERVAL_S = 0.01   # 100 Hz — catches brief impact spikes better than 50 Hz
@@ -69,7 +70,7 @@ def _send_fall_alert(
             pass   # keep 0.0/0.0 fallback on any GPS read glitch
 
     alert = AlertEvent(
-        device_id=DEVICE_ID,
+        device_id=credential.device_id,
         event_type=EventType.FALL_DETECTION,
         latitude=lat,
         longitude=lon,
@@ -84,12 +85,18 @@ def _send_fall_alert(
 def main():
     imu = MPU6050(bus_number=MPU6050_I2C_BUS, address=MPU6050_ADDRESS)
     detector = ThresholdFallDetector()
-    telemetry = NestJSTelemetryClient(base_url=BACKEND_URL, timeout_s=TELEMETRY_TIMEOUT_S)
+    credential = load_device_credential(DEVICE_KEY_PATH)
+    if credential is None:
+        print(f"No usable credential at {DEVICE_KEY_PATH} — see stderr above.")
+        raise SystemExit(1)
+    telemetry = NestJSTelemetryClient(
+        base_url=BACKEND_URL, credential=credential, timeout_s=TELEMETRY_TIMEOUT_S,
+    )
     print("  Opening GPS...")
     gps = _try_open_gps()
 
     print("Fall detector running at 100 Hz. Ctrl-C to stop.")
-    print(f"Fall alerts POST to {BACKEND_URL}/raspberry/alert as device {DEVICE_ID}.")
+    print(f"Fall alerts POST to {BACKEND_URL}/raspberry/alert as device {credential.device_id}.")
     print("Prints state transitions with the triggering magnitude, plus a")
     print("running peak magnitude every second so you can gauge drops.")
 

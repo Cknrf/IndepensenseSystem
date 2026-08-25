@@ -32,6 +32,14 @@ Retry schedule: uniform `retry_interval_s` (default 10 s). Simple and
 easy to reason about. A production build would use exponential backoff;
 that's a defensible thesis "future work" bullet.
 
+**One exception.** A `DeviceCredentialRejected` (backend 401) cannot be
+fixed by retrying — the credential is wrong or revoked and a human has to
+re-provision the unit. Retrying that every 10 s would hammer the backend
+forever with a request that can never succeed, so it switches to
+`auth_retry_interval_s` (default 15 min) and sets `credential_rejected`
+so the fault is distinguishable from "no network". Items stay queued
+throughout: if the unit is un-revoked, the backlog delivers.
+
 Shutdown semantics: `close()` signals the worker to stop after draining
 what it can within the timeout. Anything still queued when the timeout
 expires is lost (data on RAM only; not persisted to disk). For a wearable
@@ -43,7 +51,12 @@ import threading
 from collections import deque
 from typing import Union
 
-from indepensense.telemetry.base import AlertEvent, IntervalInformation, TelemetryClient
+from indepensense.telemetry.base import (
+    AlertEvent,
+    DeviceCredentialRejected,
+    IntervalInformation,
+    TelemetryClient,
+)
 
 
 # Internal queue item: either ("alert", AlertEvent) or ("heartbeat", IntervalInformation)
@@ -56,12 +69,14 @@ class BufferedTelemetryClient:
         inner: TelemetryClient,
         max_queue_size: int = 500,
         retry_interval_s: float = 10.0,
+        auth_retry_interval_s: float = 900.0,
     ):
         if max_queue_size < 1:
             raise ValueError("max_queue_size must be >= 1")
         self._inner = inner
         self._max_queue_size = max_queue_size
         self._retry_interval_s = retry_interval_s
+        self._auth_retry_interval_s = auth_retry_interval_s
 
         self._queue: deque[_QueueItem] = deque()
         self._lock = threading.Lock()
@@ -72,6 +87,12 @@ class BufferedTelemetryClient:
         self.dropped_heartbeats = 0
         self.delivered_heartbeats = 0
         self.delivered_alerts = 0
+
+        # True once the backend has rejected our credential. A persistent
+        # provisioning fault, not a connectivity one — `device.status` and
+        # the startup log distinguish them so nobody spends an afternoon
+        # debugging the cellular link over a revoked key.
+        self.credential_rejected = False
 
         self._worker = threading.Thread(target=self._run, name="telemetry-worker", daemon=True)
         self._worker.start()
@@ -141,11 +162,26 @@ class BufferedTelemetryClient:
                 continue
 
             kind, payload = item
+            retry_after = self._retry_interval_s
             try:
                 if kind == "alert":
                     success = self._inner.send_alert(payload)
                 else:
                     success = self._inner.send_heartbeat(payload)
+            except DeviceCredentialRejected as exc:
+                # Permanent until a human intervenes. Keep the item queued
+                # so a re-provisioned unit delivers its backlog, but stop
+                # asking every 10 seconds.
+                if not self.credential_rejected:
+                    print(
+                        f"[telemetry-worker] {exc}. Backing off to "
+                        f"{self._auth_retry_interval_s:.0f}s — this needs "
+                        f"re-provisioning, not a retry.",
+                        file=sys.stderr,
+                    )
+                self.credential_rejected = True
+                success = False
+                retry_after = self._auth_retry_interval_s
             except Exception as exc:
                 # A raising inner client is a bug, but we still want the
                 # queue to keep making progress instead of crashing the worker.
@@ -153,6 +189,12 @@ class BufferedTelemetryClient:
                 success = False
 
             if success:
+                # A success after a rejection means the unit was
+                # un-revoked or re-provisioned. Clear the latch so the
+                # normal retry interval resumes.
+                if self.credential_rejected:
+                    print("[telemetry-worker] credential accepted again.", flush=True)
+                    self.credential_rejected = False
                 if kind == "alert":
                     self.delivered_alerts += 1
                 else:
@@ -172,7 +214,7 @@ class BufferedTelemetryClient:
             # exit as soon as the caller's drain timeout hits.
             if self._shutdown:
                 return
-            self._wakeup.wait(timeout=self._retry_interval_s)
+            self._wakeup.wait(timeout=retry_after)
             self._wakeup.clear()
 
     # ------- helpers -------------------------------------------------------

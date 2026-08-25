@@ -26,12 +26,10 @@ def test_heartbeat_payload_matches_backend_contract():
     )
     payload = heartbeat_payload(info)
     assert payload == {
-        "deviceID": _TEST_DEVICE_ID,
         "batteryHealth": 78,
         "internetStatus": True,
         "latitude": 60.1699,
         "longitude": 24.9384,
-        "createdAt": "2026-07-25T10:30:00+00:00",
     }
 
 
@@ -70,7 +68,6 @@ def test_alert_payload_matches_backend_contract():
     )
     payload = alert_payload(event)
     assert payload == {
-        "deviceID": _TEST_DEVICE_ID,
         "eventType": "Fall Detection",
         "latitude": 60.1720,
         "longitude": 24.9450,
@@ -78,9 +75,49 @@ def test_alert_payload_matches_backend_contract():
     }
 
 
+def test_no_payload_carries_a_device_id():
+    """Identity comes from the bearer token now. Sending `deviceID` was
+    the whole vulnerability — it let any caller claim to be any device —
+    so its absence is the thing worth pinning, not its format."""
+    info = IntervalInformation(
+        device_id=_TEST_DEVICE_ID, battery_health=50, internet_status=True,
+        latitude=0.0, longitude=0.0, created_at=_TEST_TIMESTAMP,
+    )
+    event = AlertEvent(
+        device_id=_TEST_DEVICE_ID, event_type=EventType.FALL_DETECTION,
+        latitude=0.0, longitude=0.0, occurred_at=_TEST_TIMESTAMP,
+    )
+    for payload in (heartbeat_payload(info), alert_payload(event)):
+        assert "deviceID" not in payload
+        assert _TEST_DEVICE_ID not in str(payload)
+
+
+def test_heartbeat_does_not_send_a_timestamp():
+    """The server timestamps this row itself. The Pi has no RTC, so its
+    clock is wrong between boot and NTP settling — sending it would put
+    heartbeats in the dashboard at times they did not happen."""
+    info = IntervalInformation(
+        device_id=_TEST_DEVICE_ID, battery_health=50, internet_status=True,
+        latitude=0.0, longitude=0.0, created_at=_TEST_TIMESTAMP,
+    )
+    assert "createdAt" not in heartbeat_payload(info)
+
+
+def test_alert_still_sends_when_it_happened():
+    """Unlike heartbeats, an alert's timestamp matters: it can sit in the
+    retry queue for hours while offline, so delivery time is not event
+    time."""
+    event = AlertEvent(
+        device_id=_TEST_DEVICE_ID, event_type=EventType.EMERGENCY_ALERT,
+        latitude=0.0, longitude=0.0, occurred_at=_TEST_TIMESTAMP,
+    )
+    assert alert_payload(event)["occuredAt"] == "2026-07-25T10:30:00+00:00"
+
+
 def test_all_event_types_serialise_to_backend_strings():
-    """The backend's whitelist requires these exact strings. If any of
-    these change, the alert will be rejected with 400."""
+    """The backend's whitelist requires these exact strings. It is a DB
+    enum, so an unrecognised value currently causes a 500 rather than a
+    400 — a malformed alert looks like a backend outage."""
     assert EventType.EMERGENCY_ALERT.value == "Emergency Alert"
     assert EventType.FALL_DETECTION.value == "Fall Detection"
     assert EventType.LOW_BATTERY.value == "Low Battery"

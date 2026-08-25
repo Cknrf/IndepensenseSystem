@@ -13,6 +13,22 @@ from enum import Enum
 from typing import Protocol
 
 
+class DeviceCredentialRejected(Exception):
+    """The backend returned 401 — our credential is not accepted.
+
+    Distinct from a `False` return, which means "this request did not get
+    through, try again". This will not fix itself: the credential is
+    missing, malformed, wrong, or the device has been revoked
+    server-side, and a human has to re-provision or un-revoke the unit.
+
+    It is an exception rather than another boolean because the retry
+    policy is categorically different. Everything else in this layer
+    retries every 10 seconds; doing that against a 401 would hammer the
+    backend forever with a request that can never succeed. `buffered.py`
+    catches this and backs off hard.
+    """
+
+
 class EventType(Enum):
     """Alert categories accepted by the backend.
 

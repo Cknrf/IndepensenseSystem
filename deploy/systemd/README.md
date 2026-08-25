@@ -76,28 +76,87 @@ sudo systemctl start graphhopper
 
 ## Secrets
 
-The runtime reads its API keys from a `.env` at the project root, loaded by
-`config.py` on import. **No `EnvironmentFile=` is needed in the unit** —
-`config.py` resolves the path from its own location, so it works the same
-under systemd as it does when you run a manual test over SSH.
+Two separate things, both read at startup and never logged.
+
+### 1. Device credential — `/etc/indepensense/device.key`
+
+Authenticates this unit to the backend. Every `/raspberry/*` request sends
+it as `Authorization: Bearer <uuid>.<secret>`, and the backend derives
+which device is calling from it. One line, no trailing content:
+
+```
+08b7e9b6-d601-446a-b708-7dafc65e4cc2.wpBVy5n_tMgSiW_WQ0yZTl1DAgCOvl-sQjRo8AYx5Qo
+```
+
+**Permissions — read this before copying the provisioning instructions.**
+The credential is documented as root-owned mode 0600, but the service runs
+as `User=cknrf`. A root-owned 0600 file is readable by root *only*, so the
+service cannot read it and every request becomes a 401. Give the file to
+the account the service actually runs as:
+
+```bash
+sudo install -d -m 0755 /etc/indepensense
+sudo chown cknrf:cknrf /etc/indepensense/device.key
+sudo chmod 0600 /etc/indepensense/device.key
+```
+
+Still 0600 — readable only by its owner — but the owner is now the service
+user. Verify:
+
+```bash
+sudo -u cknrf cat /etc/indepensense/device.key >/dev/null && echo readable
+```
+
+A missing, unreadable or malformed credential is **not fatal**. The
+wearable logs why and runs without the dashboard: fall detection, obstacle
+warnings, navigation, voice and emergency SMS all still work. Only
+heartbeats and HTTP alerts are lost, and SMS is the channel that matters
+when data is unavailable anyway.
+
+### 2. Cloud LLM key — `.env` at the project root
 
 ```bash
 cd /home/cknrf/Desktop/thesis/IndepensenseSystem
 cp .env.example .env
 nano .env                      # paste INDEPENSENSE_CLOUD_API_KEY
-chmod 600 .env                 # readable only by the service user
+chmod 600 .env
 sudo systemctl restart indepensense
 ```
+
+**No `EnvironmentFile=` is needed in the unit** — `config.py` resolves the
+path from its own location, so it works the same under systemd as it does
+in a manual test over SSH.
 
 `.env` is gitignored and must stay that way. A missing or empty key is a
 supported configuration: the wearable answers unknown utterances locally
 and logs that the cloud fallback is unconfigured once at startup.
 
-Verify the key was picked up:
+### Verify both
 
 ```bash
-python -m indepensense.intents.tests.manual.cloud_probe
+python -m indepensense.intents.tests.manual.cloud_probe      # LLM key
+python -m indepensense.telemetry.tests.manual.send_alert_test  # device credential
 ```
+
+Or straight against the backend:
+
+```bash
+curl -s https://<host>/raspberry/guardians \
+  -H "Authorization: Bearer $(cat /etc/indepensense/device.key)"
+```
+
+401 means a credential problem, and it will not fix itself — the unit
+needs re-provisioning or un-revoking. The runtime treats 401 as a
+persistent fault and backs off to 15-minute retries rather than hammering
+the backend; look for `credential_rejected` in the logs.
+
+### HTTPS is required
+
+`BACKEND_URL` must be `https://`. The credential is a password travelling
+in a header on every request, and over plaintext every hop in between can
+read it — so the runtime refuses to start rather than leaking it quietly.
+Only `http://localhost` is exempt, because that traffic never reaches a
+network. Private and VPN addresses are **not** exempt.
 
 ## Assumptions
 

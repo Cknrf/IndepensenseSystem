@@ -22,6 +22,7 @@ from indepensense.safety.base import FallEvent
 from indepensense.sensors.mock import MockMagnetometer
 from indepensense.sensors.base import GPSFix
 from indepensense.telemetry.base import EventType
+from indepensense.conftest import TEST_BACKEND_URL, make_credential
 from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.mock import MockTelemetryClient
 from indepensense.telemetry.sms_alerts import SMSAlertNotifier
@@ -146,7 +147,7 @@ def test_a_fall_texts_the_guardians(tmp_path, app):
         inner=MockTelemetryClient(),
         sms=sms,
         guardians=GuardianDirectory(
-            base_url="http://backend.test", device_id="dev-1", cache_path=cache,
+            base_url=TEST_BACKEND_URL, credential=make_credential(), cache_path=cache,
         ),
         event_type_values=SMS_EVENT_TYPES,
     )

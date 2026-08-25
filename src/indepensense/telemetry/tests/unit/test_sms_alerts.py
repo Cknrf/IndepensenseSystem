@@ -12,6 +12,7 @@ import requests
 
 from indepensense.messaging.mock import MockSMSSender
 from indepensense.telemetry.base import AlertEvent, EventType
+from indepensense.conftest import TEST_BACKEND_URL, make_credential
 from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.mock import MockTelemetryClient
 from indepensense.telemetry.sms_alerts import SMSAlertNotifier, compose_alert_sms
@@ -41,8 +42,8 @@ def _directory(tmp_path, *numbers: str) -> GuardianDirectory:
         ]
     }))
     return GuardianDirectory(
-        base_url="http://backend.test",
-        device_id="dev-1",
+        base_url=TEST_BACKEND_URL,
+        credential=make_credential(),
         cache_path=cache,
     )
 

@@ -1,7 +1,8 @@
 """The guardian contact list, fetched from the backend and cached to disk.
 
-Emergency SMS needs phone numbers, and the device only knows its own
-`DEVICE_ID`. The backend resolves that to the people who should be told:
+Emergency SMS needs phone numbers, and the device knows only its own
+credential. The backend derives the device from the bearer token and
+resolves it to the people who should be told:
 
     Device --OneToOne--> AssistedUser <--ManyToMany--> Guardian
 
@@ -26,28 +27,31 @@ invisible to it until restart. See `config.GUARDIAN_CACHE_PATH`.
 Backend contract
 ----------------
 
-This module consumes an endpoint that does not exist yet — the backend
-is a separate repository and out of scope here. What it must provide:
-
-    GET /raspberry/guardians/<deviceID>
+    GET /raspberry/guardians
+    Authorization: Bearer <uuid>.<secret>
 
     200 -> {"guardians": [
               {"name": "Maria Cruz",
                "contactNumber": "+639171234567",
                "role": "parent"}
             ]}
-    400 -> unknown or unlinked device
+    400 -> authenticated, but no assisted user linked to this device yet.
+           Normal on a freshly provisioned unit; retry later.
+    401 -> credential missing, wrong or revoked. Will not fix itself.
 
-Placed under `/raspberry/*` to match the existing device endpoints, which
-are unauthenticated and identify the caller by `deviceID` — same trust
-model as `POST /raspberry/alert` already uses. camelCase keys, matching
-`nestjs_client.py`.
+There is no device id in the path. It used to be
+`/raspberry/guardians/<deviceID>`, which meant any caller could ask for
+any device's guardian phone numbers by guessing a UUID. Identity now
+comes from the token, and the path carries nothing.
 """
 import json
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from indepensense.credential import DeviceCredential
+from indepensense.net import require_https
 
 _GUARDIANS_PATH = "/raspberry/guardians"
 
@@ -117,13 +121,23 @@ class GuardianDirectory:
     def __init__(
         self,
         base_url: str,
-        device_id: str,
+        credential: DeviceCredential | None,
         cache_path: Path,
         timeout_s: float = 10.0,
         default_country_code: str = "63",
     ):
+        """`credential` may be None — an unprovisioned unit still loads any
+        cached list from disk, so SMS keeps working on numbers fetched
+        before the credential became invalid. `refresh()` then always
+        fails, which is honest.
+
+        Raises if `base_url` is not https and a credential is present, for
+        the same reason as `NestJSTelemetryClient`.
+        """
+        if credential is not None:
+            require_https(base_url, "BACKEND_URL")
         self._base_url = base_url.rstrip("/")
-        self._device_id = device_id
+        self._credential = credential
         self._cache_path = cache_path
         self._timeout_s = timeout_s
         self._default_country_code = default_country_code
@@ -181,14 +195,41 @@ class GuardianDirectory:
     # -------------------------------------------------------------- internals
 
     def _fetch(self) -> list[GuardianContact] | None:
-        """GET the list. None on any failure. Mirrors `nestjs_client._post`."""
+        """GET the list. None on any failure. Mirrors `nestjs_client._post`.
+
+        Unlike the telemetry client this does not raise on 401. There is
+        no retry queue behind it — `refresh()` is called once at startup —
+        so there is no loop to protect from hammering. A distinct log line
+        is enough.
+        """
         import requests  # lazy: keeps the module importable off-device
 
-        url = f"{self._base_url}{_GUARDIANS_PATH}/{self._device_id}"
+        if self._credential is None:
+            print(
+                "[guardians] no device credential — cannot fetch. Using "
+                "whatever is cached on disk.",
+                file=sys.stderr,
+            )
+            return None
+
+        url = f"{self._base_url}{_GUARDIANS_PATH}"
         try:
-            response = requests.get(url, timeout=self._timeout_s)
+            response = requests.get(
+                url,
+                headers={"Authorization": self._credential.authorization_header()},
+                timeout=self._timeout_s,
+            )
         except requests.RequestException as exc:
             print(f"[guardians] GET network error: {exc}", file=sys.stderr)
+            return None
+
+        if response.status_code == 401:
+            print(
+                f"[guardians] backend rejected the device credential "
+                f"(device {self._credential.device_id}). This will not fix "
+                f"itself — the unit needs re-provisioning or un-revoking.",
+                file=sys.stderr,
+            )
             return None
 
         if not response.ok:

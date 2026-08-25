@@ -462,15 +462,31 @@ INTERNET_PROBE_URL = "http://1.1.1.1"
 INTERNET_PROBE_TIMEOUT_S = 2.0
 
 # Guardian-dashboard backend (NestJS + MySQL, see ../IndepenSense).
-# The dev seed provisions DEVICE_ID with an assisted user + linked guardian.
-# Every deployed wearable gets its own unique UUID here.
 #
-# Currently pointed at the dev laptop's Tailscale IP because the backend
-# runs there during development, not on the Pi itself.
-BACKEND_URL = "http://100.104.82.110:3000"
-DEVICE_ID = "00000000-0000-0000-0000-000000000001"
+# MUST be https. Every `/raspberry/*` request carries the device
+# credential as a bearer token, and over plaintext that is readable by
+# every hop in between — so `net.require_https` refuses at startup rather
+# than leaking it quietly. Only `http://localhost` is exempt, because that
+# traffic never reaches a network.
+BACKEND_URL = "https://100.104.82.110:3000"
 HEARTBEAT_INTERVAL_S = 30
 TELEMETRY_TIMEOUT_S = 5.0
+
+# Per-device credential, written by provisioning as one line:
+#
+#     <device-uuid>.<secret>
+#
+# There is deliberately no `DEVICE_ID` constant any more. It used to be
+# hardcoded here and sent in every request body, which meant two problems:
+# the backend trusted an identifier the caller simply asserted, and the
+# value had to be hand-edited per unit — so a cloned SD card silently
+# reported as the wrong device. The UUID now comes out of this file, so
+# identity and authority are the same fact and cannot drift apart.
+#
+# The file must be readable by the account the service runs as (`User=` in
+# deploy/systemd/indepensense.service). Root-owned mode 0600 is NOT
+# readable by that account — see deploy/systemd/README.md.
+DEVICE_KEY_PATH = Path("/etc/indepensense/device.key")
 
 # Guardian contact list, used for emergency SMS.
 #

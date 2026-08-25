@@ -7,6 +7,37 @@ while the voice pipeline says otherwise would be a confusing thing to
 debug from a spoken response.
 """
 import sys
+from urllib.parse import urlparse
+
+# Hosts where plaintext HTTP never leaves the machine, so there is no hop
+# that could read the bearer token. Same carve-out browsers make when they
+# treat localhost as a secure context.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+def require_https(url: str, what: str) -> None:
+    """Raise unless `url` is safe to send a bearer token over.
+
+    The device credential goes in an `Authorization` header on every
+    request. Over plaintext HTTP that header is readable by every hop
+    between the wearable and the backend, and it is the device's password
+    — so this refuses at startup rather than leaking quietly for weeks.
+
+    Loopback is exempt because the traffic never reaches a network.
+    Nothing else is: a private or VPN address still traverses hops this
+    code cannot verify, and "it's on our network" is how plaintext
+    credentials usually get justified.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and parsed.hostname in _LOOPBACK_HOSTS:
+        return
+    raise ValueError(
+        f"{what} must use https:// — got {url!r}. The device credential is "
+        f"sent as a bearer token on every request and would be readable in "
+        f"transit. Only http://localhost is exempt."
+    )
 
 
 def probe_internet(url: str, timeout_s: float = 2.0) -> bool:

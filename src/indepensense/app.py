@@ -102,7 +102,7 @@ from indepensense.config import (
     CLOUD_LLM_URL,
     CLOUD_MAX_RESPONSE_CHARS,
     DEFAULT_LANGUAGE,
-    DEVICE_ID,
+    DEVICE_KEY_PATH,
     DYP_A22_BAUDRATE,
     DYP_A22_BOTTOM_PORT,
     DYP_A22_TOP_PORT,
@@ -170,6 +170,7 @@ from indepensense.feedback.gpio_vibration import GPIOVibrationMotor
 from indepensense.intents import messages
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.cloud import OfflineGuard
+from indepensense.credential import load_device_credential
 from indepensense.intents.mistral import MistralAnswerer
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
@@ -190,6 +191,7 @@ from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.heartbeat import PeriodicHeartbeatSender
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
+from indepensense.telemetry.null import NullTelemetryClient
 from indepensense.telemetry.sms_alerts import SMSAlertNotifier
 from indepensense.vision.detector import YOLOv8Detector
 from indepensense.vision.ocr import TesseractOCR
@@ -304,6 +306,9 @@ class App:
         # Heartbeats deliberately keep using `buffered` directly.
         self.alert_sink = None
         self.guardians: GuardianDirectory | None = None
+        # Loaded in start(). None means this unit is not provisioned: the
+        # backend will reject it, so no telemetry client is built at all.
+        self.credential = None
         self.sms: MMCLISMSSender | None = None
         # None means "no cloud fallback": unknown utterances get the
         # local "I didn't catch that" instead of being forwarded.
@@ -399,6 +404,11 @@ class App:
         router = self._open_router()
         geocoder = self._open_geocoder()
 
+        print("  Loading device credential...", flush=True)
+        self.credential = self._load_credential()
+        if self.credential is not None:
+            print(f"  Device {self.credential.device_id}", flush=True)
+
         print(f"  Building buffered telemetry to {BACKEND_URL}...", flush=True)
         self.buffered = BufferedTelemetryClient(self._open_telemetry_client())
 
@@ -410,7 +420,7 @@ class App:
         print("  Fetching guardian contacts...", flush=True)
         self.guardians = GuardianDirectory(
             base_url=BACKEND_URL,
-            device_id=DEVICE_ID,
+            credential=self.credential,
             cache_path=GUARDIAN_CACHE_PATH,
             timeout_s=GUARDIAN_FETCH_TIMEOUT_S,
             default_country_code=SMS_DEFAULT_COUNTRY_CODE,
@@ -438,7 +448,7 @@ class App:
             geocoder=geocoder,
             gps=cached_gps,
             telemetry=self.alert_sink,
-            device_id=DEVICE_ID,
+            device_id=self.device_id(),
             monitor=self.nav_monitor,
             language=self.language,
             cloud=self.cloud,
@@ -494,7 +504,7 @@ class App:
         self.heartbeat_sender = PeriodicHeartbeatSender(
             telemetry=self.buffered,
             gps=cached_gps,
-            device_id=DEVICE_ID,
+            device_id=self.device_id(),
             interval_s=HEARTBEAT_INTERVAL_S,
             battery=self.battery,
             internet_probe_url=INTERNET_PROBE_URL,
@@ -641,7 +651,7 @@ class App:
                 lat, lon = fix.lat, fix.lon
 
         alert = AlertEvent(
-            device_id=DEVICE_ID,
+            device_id=self.device_id(),
             event_type=EventType.FALL_DETECTION,
             latitude=lat,
             longitude=lon,
@@ -779,7 +789,7 @@ class App:
             if fix is not None:
                 lat, lon = fix.lat, fix.lon
         alert = AlertEvent(
-            device_id=DEVICE_ID,
+            device_id=self.device_id(),
             event_type=EventType.LOW_BATTERY,
             latitude=lat,
             longitude=lon,
@@ -1379,13 +1389,51 @@ class App:
             )
             return None
 
-    def _open_telemetry_client(self) -> NestJSTelemetryClient:
-        """The raw backend client. `start()` wraps whatever this returns in
-        a `BufferedTelemetryClient`, so the buffering/retry behaviour is
-        exercised identically under mocks."""
+    def _load_credential(self):
+        """Read the per-device credential, or None if this unit has none.
+
+        Not fatal. An unprovisioned unit still does everything that does
+        not involve the dashboard: fall detection, obstacle warnings,
+        navigation, voice, and — importantly — emergency SMS, which is the
+        channel that works when data does not.
+        """
+        return load_device_credential(DEVICE_KEY_PATH)
+
+    def _open_telemetry_client(self):
+        """The raw backend client, or a discarding one when unprovisioned.
+
+        `start()` wraps whatever this returns in a
+        `BufferedTelemetryClient`, so buffering and retry behaviour is
+        exercised identically in every mode.
+
+        Returns `NullTelemetryClient` rather than raising when there is no
+        credential: `NestJSTelemetryClient` requires one, and building a
+        client whose every request is a guaranteed 401 would fill the
+        retry queue with sends that can never succeed.
+        """
+        if self.credential is None:
+            print(
+                "  No device credential — backend telemetry disabled. "
+                "SMS alerts still work.",
+                flush=True,
+            )
+            return NullTelemetryClient()
         return NestJSTelemetryClient(
-            base_url=BACKEND_URL, timeout_s=TELEMETRY_TIMEOUT_S,
+            base_url=BACKEND_URL,
+            credential=self.credential,
+            timeout_s=TELEMETRY_TIMEOUT_S,
         )
+
+    def device_id(self) -> str:
+        """This unit's UUID, from the credential.
+
+        `"unprovisioned"` when there is none. Only used locally — in logs
+        and in the `AlertEvent`/`IntervalInformation` dataclasses — since
+        the wire format no longer carries a device id at all.
+        """
+        if self.credential is None:
+            return "unprovisioned"
+        return self.credential.device_id
 
     # ---------------------------------------------------------------- helpers
 

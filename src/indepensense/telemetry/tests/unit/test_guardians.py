@@ -8,6 +8,7 @@ import json
 import pytest
 import requests
 
+from indepensense.conftest import TEST_BACKEND_URL, make_credential
 from indepensense.telemetry.guardians import (
     GuardianContact,
     GuardianDirectory,
@@ -65,8 +66,8 @@ def _payload(*numbers: str) -> dict:
 
 def _directory(tmp_path, **kwargs) -> GuardianDirectory:
     return GuardianDirectory(
-        base_url="http://backend.test",
-        device_id="dev-1",
+        base_url=TEST_BACKEND_URL,
+        credential=make_credential(),
         cache_path=tmp_path / "guardians.json",
         **kwargs,
     )
