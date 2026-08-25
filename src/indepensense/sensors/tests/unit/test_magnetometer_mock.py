@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from indepensense.sensors.base import heading_from_field
+from indepensense.sensors.base import axis_component, heading_from_field
 from indepensense.sensors.mock import MockMagnetometer
 
 
@@ -114,3 +114,65 @@ def test_heading_from_field_is_magnitude_independent():
     """Only direction matters — a weak field and a strong one pointing the
     same way must give the same heading."""
     assert heading_from_field(1.0, 1.0) == pytest.approx(heading_from_field(500.0, 500.0))
+
+
+# --- mount orientation: axis selection ------------------------------------
+
+
+_FIELD = (10.0, 20.0, 30.0)
+
+
+@pytest.mark.parametrize(
+    "spec, expected",
+    [
+        ("x", 10.0), ("+x", 10.0), ("-x", -10.0),
+        ("y", 20.0), ("+y", 20.0), ("-y", -20.0),
+        ("z", 30.0), ("+z", 30.0), ("-z", -30.0),
+        ("X", 10.0), ("-Z", -30.0),      # case-insensitive
+    ],
+)
+def test_axis_component_selects_and_signs(spec, expected):
+    assert axis_component(_FIELD, spec) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("spec", ["", "w", "xx", "+", "-", "xy", "0", "+w", "--x"])
+def test_axis_component_rejects_bad_specs(spec):
+    """A typo in config.py must fail loudly. Silently defaulting to an axis
+    would mirror or rotate every heading the wearable ever reports."""
+    with pytest.raises(ValueError):
+        axis_component(_FIELD, spec)
+
+
+def test_flat_mount_reproduces_the_original_convention():
+    """Board flat: x forward, y left — the hard-coded behaviour this replaced.
+    Field pointing along +x is north."""
+    field = (50.0, 0.0, 0.0)
+    heading = heading_from_field(
+        axis_component(field, "+x"), axis_component(field, "+y")
+    )
+    assert heading == pytest.approx(0.0)
+
+
+def test_upright_mount_uses_z_and_x():
+    """Board upright on a vest back: z is horizontal (front/back), y is
+    vertical and must not reach the heading at all. Here the field points
+    along +z, i.e. straight ahead, so heading is north despite a large
+    vertical component on y."""
+    field = (0.0, 999.0, 50.0)
+    heading = heading_from_field(
+        axis_component(field, "+z"), axis_component(field, "-x")
+    )
+    assert heading == pytest.approx(0.0)
+
+
+def test_a_flipped_sign_mirrors_the_heading():
+    """Why the sign is configurable and not inferred: getting it wrong is not
+    a rotation, it is a reflection, so no heading offset can repair it."""
+    field = (30.0, 40.0, 0.0)
+    correct = heading_from_field(
+        axis_component(field, "+x"), axis_component(field, "+y")
+    )
+    flipped = heading_from_field(
+        axis_component(field, "+x"), axis_component(field, "-y")
+    )
+    assert flipped == pytest.approx((360.0 - correct) % 360.0)

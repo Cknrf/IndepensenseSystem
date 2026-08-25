@@ -92,14 +92,18 @@ class MagnetometerReading:
       180° = south
       270° = west
 
-    The heading assumes the X-axis of the sensor points TOWARD the
-    front of the cane. Rotate the module 90° at mount time if your
-    physical layout puts a different axis forward, or apply a rotation
-    offset in the config.
+    Heading uses the two axes that end up HORIZONTAL once the sensor is
+    physically mounted, which depends on the mount and is therefore
+    configuration, not a constant. `MAG_FORWARD_AXIS` and
+    `MAG_LEFT_AXIS` in `config.py` name them; `axis_component` below
+    resolves them. A board lying flat has x/y horizontal and z vertical;
+    stand the same board upright and z becomes horizontal while one of
+    x/y becomes vertical.
 
-    No tilt compensation is applied — if the cane is significantly
-    off-vertical, the heading degrades. Adding tilt compensation using
-    the accelerometer is future work.
+    No tilt compensation is applied — the heading degrades as the
+    mounting surface leaves horizontal, because the vertical component
+    of Earth's field then leaks into the horizontal axes. Adding tilt
+    compensation using the accelerometer is future work.
     """
     magnetic_x: float
     magnetic_y: float
@@ -108,15 +112,53 @@ class MagnetometerReading:
     timestamp: float
 
 
-def heading_from_field(magnetic_x: float, magnetic_y: float) -> float:
-    """Compass heading in degrees (0-360) from horizontal field components.
+_AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
+def axis_component(
+    field: tuple[float, float, float], axis_spec: str,
+) -> float:
+    """Pick one signed component out of a field vector by name.
+
+    `axis_spec` is an axis letter with an optional sign: `"x"`, `"+y"`,
+    `"-z"`. The sign exists because mounting a board the other way round
+    flips an axis without changing which axis it is — no amount of
+    rotation converts +z into -z.
+
+    Raises ValueError on anything else. Callers resolve axis specs once at
+    construction, so a typo in `config.py` fails at startup rather than
+    silently producing a mirrored heading.
+    """
+    sign = 1.0
+    name = axis_spec
+    if axis_spec[:1] in ("+", "-"):
+        sign = -1.0 if axis_spec[0] == "-" else 1.0
+        name = axis_spec[1:]
+    # Deliberately strict: exactly one sign character at most. Stripping signs
+    # loosely would quietly accept "--x" as "-x".
+    if name.lower() not in _AXIS_INDEX:
+        raise ValueError(
+            f"axis spec {axis_spec!r} is not one of x, y, z "
+            f"(optionally signed, e.g. '-z')"
+        )
+    return sign * field[_AXIS_INDEX[name.lower()]]
+
+
+def heading_from_field(forward: float, left: float) -> float:
+    """Compass heading in degrees (0-360) from two horizontal field components.
+
+    `forward` is the field along the direction the wearer faces, `left` the
+    field 90° to their left. Those two form a right-handed frame with "up",
+    which is what makes 0°=north, 90°=east come out: facing east puts
+    magnetic north on your left, so `left` carries the whole field and
+    `atan2(left, forward)` returns +90°.
 
     Lives here, beside the `MagnetometerReading` docstring that defines the
     convention, so the driver and the mock cannot drift apart on the sign or
-    the axis order — a flipped `atan2` argument produces a heading that looks
+    the argument order — a flipped `atan2` produces a heading that looks
     plausible while being mirrored, which is close to invisible in testing.
     """
-    return math.degrees(math.atan2(magnetic_y, magnetic_x)) % 360.0
+    return math.degrees(math.atan2(left, forward)) % 360.0
 
 
 class Magnetometer(Protocol):

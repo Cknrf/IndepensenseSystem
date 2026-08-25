@@ -77,6 +77,29 @@ MAG_SCALE_X = 1.0
 MAG_SCALE_Y = 1.0
 MAG_SCALE_Z = 1.0
 
+# Mount orientation: which sensor axis ends up pointing where on the
+# assembled wearable. Heading is computed from the two axes that are
+# HORIZONTAL once mounted, so these change with the mount, not with the
+# chip — which is why they live here and not in the driver.
+#
+# Each is an axis letter with an optional sign: "x", "+y", "-z". The sign
+# matters because flipping the board over reverses an axis without
+# changing which axis it is.
+#
+#   Board lying FLAT (bench testing): x and y are horizontal, z is
+#   vertical. Forward is whichever of x/y points away from you.
+#
+#   Board mounted UPRIGHT on the back of the vest: the board normal (z)
+#   becomes horizontal — front/back — while y becomes vertical. Heading
+#   then comes from z and x, e.g. MAG_FORWARD_AXIS = "-z" if +z points at
+#   the wearer's back, with MAG_LEFT_AXIS following from it.
+#
+# Determine the signs empirically on the assembled unit — see the
+# procedure in docs/hardware.md. Getting a sign wrong mirrors the
+# heading, which reads plausibly while sending the user the wrong way.
+MAG_FORWARD_AXIS = "+x"
+MAG_LEFT_AXIS = "+y"
+
 # Waveshare UPS HAT (E) — battery + power management, also on I2C1 bus.
 # The HAT mounts under the Pi via pogo pins (no GPIO header conflict).
 # I²C address `0x2D` — do NOT confuse with a generic INA219 at 0x43.

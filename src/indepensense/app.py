@@ -118,7 +118,9 @@ from indepensense.config import (
     LOW_BATTERY_RECOVERY_PERCENT,
     LOW_BATTERY_STATE_PATH,
     MAG_ADDRESS,
+    MAG_FORWARD_AXIS,
     MAG_I2C_BUS,
+    MAG_LEFT_AXIS,
     MAG_OFFSET_X,
     MAG_OFFSET_Y,
     MAG_OFFSET_Z,
@@ -1439,6 +1441,8 @@ class App:
                 scale_x=MAG_SCALE_X,
                 scale_y=MAG_SCALE_Y,
                 scale_z=MAG_SCALE_Z,
+                forward_axis=MAG_FORWARD_AXIS,
+                left_axis=MAG_LEFT_AXIS,
             )
         except Exception as exc:
             print(

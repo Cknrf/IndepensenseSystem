@@ -22,7 +22,9 @@ import time
 
 from indepensense.config import (
     MAG_ADDRESS,
+    MAG_FORWARD_AXIS,
     MAG_I2C_BUS,
+    MAG_LEFT_AXIS,
     MAG_OFFSET_X,
     MAG_OFFSET_Y,
     MAG_OFFSET_Z,
@@ -31,6 +33,20 @@ from indepensense.config import (
     MAG_SCALE_Z,
 )
 from indepensense.sensors.qmc5883p import QMC5883P
+
+
+_CARDINALS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+
+def _cardinal(heading_deg: float) -> str:
+    """Nearest 8-point compass label for a heading.
+
+    Purely a reading aid for the human running this test — the runtime never
+    speaks directions this way, so it does not belong in `intents/messages.py`.
+    Each label covers a 45° sector centred on its bearing, so the +22.5°
+    before the floor division shifts the sector boundaries off the cardinals.
+    """
+    return _CARDINALS[int((heading_deg + 22.5) % 360 // 45)]
 
 
 def main():
@@ -43,12 +59,18 @@ def main():
         scale_x=MAG_SCALE_X,
         scale_y=MAG_SCALE_Y,
         scale_z=MAG_SCALE_Z,
+        forward_axis=MAG_FORWARD_AXIS,
+        left_axis=MAG_LEFT_AXIS,
     )
     if (MAG_OFFSET_X, MAG_OFFSET_Y, MAG_OFFSET_Z) == (0.0, 0.0, 0.0):
         print("NOTE: calibration offsets are all zero — headings will be biased.")
         print("      Run `magnetometer_calibrate` and paste the values into config.py.")
         print()
+    print(f"Mount: forward={MAG_FORWARD_AXIS}, left={MAG_LEFT_AXIS} "
+          f"(from config.py — heading uses only these two axes)")
     print("Live magnetometer. Rotate slowly through 0-360 degrees. Ctrl-C to stop.")
+    print("The N/E/S/W label is only as trustworthy as the calibration —")
+    print("cross-check it against a phone compass or a known street bearing.")
     warned_about_magnitude = False
     try:
         while True:
@@ -79,7 +101,8 @@ def main():
                         f"  Do not calibrate until this is resolved.\n"
                     )
                 print(
-                    f"heading={reading.heading_deg:6.1f}°  "
+                    f"heading={reading.heading_deg:6.1f}° "
+                    f"{_cardinal(reading.heading_deg):<2} "
                     f"| x={reading.magnetic_x:+7.1f} "
                     f"y={reading.magnetic_y:+7.1f} "
                     f"z={reading.magnetic_z:+7.1f} μT "

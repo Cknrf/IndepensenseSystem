@@ -157,9 +157,42 @@ adding this module — dropped reads, `i2cdetect` showing addresses
 intermittently — remove the two pull-up resistors on the compass breakout
 rather than the Pi's (which are not adjustable).
 
-Mount the board with its **X-axis pointing toward the front of the cane** and
-Z vertical. `sensors/base.heading_from_field` computes heading as
-`atan2(y, x)`; a rotated mount yields a rotated heading.
+**Mount orientation is configuration, not a fixed assumption.** Heading uses
+the two field components that are horizontal once the board is fixed in
+place, and which axes those are depends on how it is mounted:
+
+| | Board lying flat (bench) | Board upright (vest back) |
+|---|---|---|
+| x | horizontal — left/right | horizontal — left/right |
+| y | horizontal — front/back | **vertical** — up/down |
+| z | **vertical** — up/down | horizontal — front/back |
+
+`MAG_FORWARD_AXIS` and `MAG_LEFT_AXIS` in `config.py` name them, as a letter
+with an optional sign (`"+x"`, `"-z"`). Defaults are `"+x"` / `"+y"`, correct
+for a board lying flat. The planned mount is **upright on the back of the
+vest**, which puts the board normal (z) front-to-back and makes y vertical —
+so heading will come from z and x, with the signs depending on which face
+points outward.
+
+Determine the signs on the assembled unit, away from metal:
+
+1. **Confirm which axis is the board normal.** Rotate the unit about the
+   vertical axis (as if the wearer were turning on the spot). Two axes trace a
+   circle; the third barely moves. The one that barely moves is vertical, and
+   it is the one heading must *exclude*.
+2. **Find forward.** Face the unit at magnetic north (phone compass is close
+   enough). Whichever remaining axis reads its largest positive value is
+   `+forward`; if the largest value is negative, it is `-forward`.
+3. **Find left.** Turn 90° to the right, so north is now on the unit's left.
+   The other horizontal axis now carries the field; its sign gives
+   `MAG_LEFT_AXIS`.
+4. **Verify.** Run `single_magnetometer_test`. Turning right must make the
+   heading *increase* (N→E→S→W = 0→90→180→270). If it decreases, one sign is
+   wrong — flip `MAG_LEFT_AXIS`.
+
+Step 4 is not optional. A flipped sign mirrors the heading rather than
+rotating it, so no offset can compensate, and a mirrored compass reads
+plausibly while sending the user the wrong way.
 
 Configurable via `MAG_I2C_BUS`, `MAG_ADDRESS` and `HEADING_CHECK_INTERVAL_S`
 in `indepensense.config`. The chip runs normal mode at ±8 G, 10 Hz, maximum

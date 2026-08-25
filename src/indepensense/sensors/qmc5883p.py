@@ -78,18 +78,28 @@ Paste the printed `MAG_OFFSET_*` and `MAG_SCALE_*` into `config.py`. The
 calibration is specific to one assembled wearable — re-run it whenever
 the physical layout changes.
 
-Coordinate assumption
----------------------
+Mount orientation
+-----------------
 
-Heading is `atan2(y, x)`, which assumes the sensor's X-axis points toward
-the FRONT of the cane with Z vertical. See `heading_from_field` in
-`sensors/base.py` for the convention. No tilt compensation and no
-magnetic declination: this is magnetic north, and it degrades when the
-cane is held well off-vertical.
+Heading needs the two field components that are horizontal once the board
+is physically mounted, and which axes those are depends on the mount: a
+board lying flat has x/y horizontal, a board stood upright has z
+horizontal instead. So the driver does not hard-code them — it takes
+`forward_axis` and `left_axis` (`MAG_FORWARD_AXIS` / `MAG_LEFT_AXIS` in
+`config.py`) and resolves them through `axis_component`. Both are
+validated at construction; see `heading_from_field` in `sensors/base.py`
+for the sign convention.
+
+No tilt compensation and no magnetic declination: this is magnetic north,
+and it degrades as the mounting surface leaves horizontal.
 """
 import time
 
-from indepensense.sensors.base import MagnetometerReading, heading_from_field
+from indepensense.sensors.base import (
+    MagnetometerReading,
+    axis_component,
+    heading_from_field,
+)
 
 QMC5883P_DEFAULT_ADDRESS = 0x2C
 
@@ -185,13 +195,28 @@ class QMC5883P:
         scale_x: float = 1.0,
         scale_y: float = 1.0,
         scale_z: float = 1.0,
+        forward_axis: str = "+x",
+        left_axis: str = "+y",
     ):
         from smbus2 import SMBus  # lazy: only resolvable on the Pi
 
-        self._bus = SMBus(bus_number)
-        self._address = address
         self._offsets = (offset_x, offset_y, offset_z)
         self._scales = (scale_x, scale_y, scale_z)
+        self._forward_axis = forward_axis
+        self._left_axis = left_axis
+        # Validate the mount configuration before touching the bus, so a
+        # typo in config.py surfaces as a config error rather than after a
+        # successful device open. axis_component raises on a bad spec.
+        probe = (1.0, 2.0, 3.0)
+        if axis_component(probe, forward_axis) == axis_component(probe, left_axis):
+            raise ValueError(
+                f"forward_axis {forward_axis!r} and left_axis {left_axis!r} "
+                f"resolve to the same component — heading needs two distinct "
+                f"horizontal axes"
+            )
+
+        self._bus = SMBus(bus_number)
+        self._address = address
 
         # Failure tallies, split by cause because they mean opposite things.
         # `read()` returns None either way — the Magnetometer protocol has no
@@ -223,16 +248,20 @@ class QMC5883P:
             self.overflows += 1
             return None
 
-        x, y, z = (
+        field = tuple(
             apply_calibration(v, off, sc)
             for v, off, sc in zip(parsed, self._offsets, self._scales)
         )
+        x, y, z = field
 
         return MagnetometerReading(
             magnetic_x=x,
             magnetic_y=y,
             magnetic_z=z,
-            heading_deg=heading_from_field(x, y),
+            heading_deg=heading_from_field(
+                axis_component(field, self._forward_axis),
+                axis_component(field, self._left_axis),
+            ),
             timestamp=time.time(),
         )
 
