@@ -6,14 +6,21 @@ and a live key:
   1. **The key works.** Reads it exactly the way the runtime does, so a
      wrong variable name or an unloaded `.env` fails here rather than
      during a demo.
-  2. **Real latency from where you actually are.** Reports cold vs warm
-     separately. Cold includes the TLS handshake — about three round
-     trips, which is ~0.75 s against an EU-hosted provider from the
-     Philippines. Warm reuses the socket. The gap between the two is the
-     value of connection reuse, measured rather than assumed.
-  3. **Answer quality, including Tagalog.** Tagalog is low-resource for
-     most providers and Mistral's quality there is unmeasured. Read the
-     answers, don't just check they arrived.
+  2. **Real latency from where you actually are.** Reported per language
+     and split cold vs warm. Cold includes the TLS handshake; warm reuses
+     the socket. Measured from Manila against Mistral, the handshake is
+     small enough (~0.2 s) to disappear into normal variation, so the
+     summary only claims a figure when it can actually isolate one — an
+     earlier version compared a cold English call against an average
+     including Tagalog and reported a negative handshake.
+  3. **Answer quality, including Tagalog.** Read the answers; do not just
+     check they arrived. Observed on 2026-08-25: Mistral gave Mount Apo's
+     height correctly in English (2,954 m) and incorrectly in Tagalog
+     (2,983 m), with identical confidence, and quoted a flat jeepney fare
+     in English against a route-dependent range in Tagalog. Refusals
+     worked in both languages. A confidently wrong answer is
+     indistinguishable from a correct one here, which is why this stays a
+     manual test with a human reading the output.
 
 Setup:
     cp .env.example .env
@@ -45,6 +52,14 @@ than the cap raising.
 
 **Markdown.** Any asterisk, bullet or numbered list in the output is a
 bug: Piper reads those aloud as literal characters. The probe flags them.
+
+**Correctness.** Nothing here can check it — that is the point of reading
+the answers. Hallucinations are not deterministic, so run this more than
+once; the same question can be answered differently, and differently per
+language. This is why the cloud fallback is scoped as a convenience for
+general questions and never as a source of truth: navigation, emergency
+and obstacle detection are all local, and `unknown` is the only route to
+the cloud.
 """
 import argparse
 import os
@@ -115,7 +130,10 @@ def main():
     )
 
     languages = ("en", "tl") if args.language == "both" else (args.language,)
-    timings: list[tuple[str, float]] = []
+    # (phase, language, seconds). Language matters for the summary: answer
+    # length differs systematically between them, and generation time
+    # tracks length.
+    timings: list[tuple[str, str, float]] = []
     failures = 0
 
     try:
@@ -133,7 +151,7 @@ def main():
                 # The very first call of the whole run pays the TLS
                 # handshake; everything after reuses the socket.
                 phase = "cold" if not timings else "warm"
-                timings.append((phase, elapsed))
+                timings.append((phase, language, elapsed))
 
                 print()
                 print(f"  Q: {question}")
@@ -170,32 +188,61 @@ def _summarise(timings, failures: int) -> None:
         print("  No calls completed.")
         return
 
-    cold = [t for phase, t in timings if phase == "cold"]
-    warm = [t for phase, t in timings if phase == "warm"]
+    print(f"  calls: {len(timings)}  ({failures} failed)")
 
-    print(f"  calls    : {len(timings)}  ({failures} failed)")
+    # Per language, because answer length differs systematically between
+    # them and generation time tracks length. A blended average hides
+    # that Tagalog is consistently the slower path.
+    print()
+    for language in ("en", "tl"):
+        warm = [t for phase, lang, t in timings if phase == "warm" and lang == language]
+        if not warm:
+            continue
+        print(f"  {language} warm: min {min(warm):.2f}s  "
+              f"avg {sum(warm) / len(warm):.2f}s  max {max(warm):.2f}s  "
+              f"({len(warm)} calls)")
+
+    cold = [(lang, t) for phase, lang, t in timings if phase == "cold"]
     if cold:
-        print(f"  cold call: {cold[0]:.2f}s  (includes TLS handshake)")
-    if warm:
-        print(f"  warm     : min {min(warm):.2f}s  "
-              f"avg {sum(warm) / len(warm):.2f}s  max {max(warm):.2f}s")
-    if cold and warm:
-        saved = cold[0] - (sum(warm) / len(warm))
-        print(f"  handshake: ~{saved:.2f}s, paid once per process thanks to "
-              f"connection reuse")
+        cold_language, cold_seconds = cold[0]
+        print(f"  cold call: {cold_seconds:.2f}s [{cold_language}] "
+              f"— includes the TLS handshake")
 
-    if warm:
-        typical = sum(warm) / len(warm)
+        # Compare against warm calls in the SAME language only. Comparing
+        # a cold English call against an average that includes Tagalog
+        # measures the difference in answer length, not the handshake, and
+        # can come out negative — which it did before this was fixed.
+        same = [
+            t for phase, lang, t in timings
+            if phase == "warm" and lang == cold_language
+        ]
+        if same:
+            overhead = cold_seconds - min(same)
+            if overhead > 0.05:
+                print(f"  handshake: ~{overhead:.2f}s, paid once per process "
+                      f"thanks to connection reuse")
+            else:
+                print("  handshake: too small to separate from normal "
+                      "variation in this run")
+
+    warm_all = [t for phase, _, t in timings if phase == "warm"]
+    if warm_all:
+        typical = sum(warm_all) / len(warm_all)
         print()
         print(f"  Press-to-answer for the user is roughly {typical + 5:.0f}s: "
-              f"{typical:.1f}s here")
-        print("  plus ~4-6s for Tagalog STT, local NLU and Piper. The "
-              "'thinking' cue covers it.")
+              f"{typical:.1f}s here plus")
+        print("  ~4-6s for Tagalog STT, local NLU and Piper. The 'thinking' "
+              "cue covers it.")
         if typical > 3.0:
             print()
             print("  Warm calls are slow. Lower CLOUD_LLM_MAX_TOKENS before")
             print("  considering another provider — output length drives this")
             print("  far more than geography does.")
+
+    print()
+    print("  Read the answers, do not just count them. A confidently wrong")
+    print("  answer looks identical to a correct one here, and the same")
+    print("  question can get different answers in each language.")
 
     if failures:
         raise SystemExit(1)
