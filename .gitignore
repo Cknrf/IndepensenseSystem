@@ -7,6 +7,10 @@ __pycache__/
 build/
 dist/
 
+# Secrets — API keys live here, loaded by config.py on import.
+# NEVER commit this. `.env.example` is the committed template.
+.env
+
 # Virtual environments
 .venv/
 venv/

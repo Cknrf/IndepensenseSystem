@@ -304,17 +304,50 @@ voice.
 ### Provider: Mistral
 
 `intents/mistral.py` implements `CloudAnswerer` against Mistral's
-OpenAI-shaped chat API. It is **off by default** — set `CLOUD_LLM_ENABLED`
-to `True` and export the key:
+OpenAI-shaped chat API. `CLOUD_LLM_ENABLED` is `True`; all it needs is a
+key.
+
+### Where the key lives
+
+In a `.env` at the project root, which `config.py` loads into the
+environment on import:
 
 ```bash
-export INDEPENSENSE_CLOUD_API_KEY=...        # add to the systemd unit for deploy
+cp .env.example .env
+nano .env                 # paste INDEPENSENSE_CLOUD_API_KEY
+chmod 600 .env
 ```
 
-Without the key the wearable answers unknown utterances exactly as it did
-before, and says so once at startup. The env var is deliberately
-provider-neutral: the driver is one implementation of a protocol, and
-swapping it should not mean renaming a secret.
+A file rather than `export` in a shell, because neither of the two ways
+this code runs inherits your login environment: systemd starts the
+service with its own, and you run manual tests in fresh SSH sessions. A
+file works for both and survives a reboot. **No `EnvironmentFile=` is
+needed in the systemd unit** — `config.py` resolves the path from its own
+location, so it behaves identically either way.
+
+A variable already set in the real environment takes precedence over the
+file, so a one-off override still works without editing anything:
+
+```bash
+INDEPENSENSE_CLOUD_API_KEY=other-key python -m indepensense.app
+```
+
+`.env` is gitignored; `.env.example` is the committed template. A missing
+or empty key is a supported configuration — the wearable answers unknown
+utterances locally and logs that the fallback is unconfigured once at
+startup. The variable name is deliberately provider-neutral: the driver is
+one implementation of a protocol, and swapping it should not mean renaming
+a secret.
+
+### Verifying it works
+
+```bash
+python -m indepensense.intents.tests.manual.cloud_probe
+```
+
+Makes real calls in both languages and reports cold vs warm latency,
+answer length, and whether any markdown leaked into the output. Read the
+Tagalog answers rather than just checking they arrived.
 
 ### Latency, and why the EU hop is not the problem
 

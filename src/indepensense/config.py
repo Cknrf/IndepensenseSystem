@@ -7,10 +7,71 @@ mock sensor behaviour during off-device development).
 Hardware **protocol** constants that are fixed by the chip itself (frame
 layout, header byte, checksum formula) stay inside their driver module — they
 are not configuration, they are part of the chip's contract.
+
+Secrets (API keys) are NOT in this file — it is committed. They live in a
+`.env` at the project root, which `.gitignore` excludes and which is
+loaded into the environment on import. See `ENV_FILE` below.
 """
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Secrets, loaded into `os.environ` when this module is imported.
+#
+# Why a file rather than `export` in a shell: the wearable runs under
+# systemd, which does not inherit your login shell's environment, and you
+# also run manual tests over SSH in fresh shells. An exported variable
+# would work for exactly one of those. A file on disk works for both, and
+# survives a reboot.
+#
+# Precedence: a variable already present in the real environment WINS over
+# the file, so a one-off `INDEPENSENSE_CLOUD_API_KEY=... python -m ...`
+# still overrides for a single run without editing anything.
+#
+# Format is one `KEY=value` per line; `#` comments and blank lines are
+# ignored, and surrounding quotes are stripped. Deliberately not a real
+# dotenv parser — no interpolation, no multi-line values, no export
+# keyword. Fewer behaviours means fewer ways for a key to be silently
+# mangled, and this file holds a handful of secrets, not a config language.
+#
+# Create it with:
+#     cp .env.example .env      # then paste your key
+ENV_FILE = PROJECT_ROOT / ".env"
+
+
+def _load_env_file(path: Path) -> None:
+    """Merge `KEY=value` lines from `path` into `os.environ`.
+
+    Missing file is not an error — the system runs without a cloud key,
+    it just answers unknown utterances locally. A malformed line is
+    skipped with a warning rather than raising: a typo in a secrets file
+    must not stop a safety device from booting.
+    """
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        print(f"[config] could not read {path}: {exc}")
+        return
+
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or not key.strip():
+            print(f"[config] {path}:{number}: expected KEY=value, skipping")
+            continue
+        key = key.strip()
+        # Real environment wins — see the precedence note above.
+        if key in os.environ:
+            continue
+        os.environ[key] = value.strip().strip("'\"")
+
+
+_load_env_file(ENV_FILE)
 
 # DYP-A22 ultrasonic sensors — UART wiring on the Raspberry Pi 5.
 # The wearable is cane-mounted with both sensors facing forward:
@@ -347,7 +408,7 @@ FALL_STILLNESS_DURATION_S = 2.0
 # a 90-second monologue; the driver's prompt should ask for brevity and
 # this catches the times it doesn't. Same reasoning and same size as
 # OCR_MAX_CHARS above.
-CLOUD_LLM_ENABLED = False
+CLOUD_LLM_ENABLED = True
 CLOUD_LLM_API_KEY_ENV = "INDEPENSENSE_CLOUD_API_KEY"
 
 # Mistral. The env var above is provider-neutral on purpose — the driver

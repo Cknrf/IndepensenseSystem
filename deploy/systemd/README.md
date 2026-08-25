@@ -74,6 +74,31 @@ sudo systemctl daemon-reload
 sudo systemctl start graphhopper
 ```
 
+## Secrets
+
+The runtime reads its API keys from a `.env` at the project root, loaded by
+`config.py` on import. **No `EnvironmentFile=` is needed in the unit** —
+`config.py` resolves the path from its own location, so it works the same
+under systemd as it does when you run a manual test over SSH.
+
+```bash
+cd /home/cknrf/Desktop/thesis/IndepensenseSystem
+cp .env.example .env
+nano .env                      # paste INDEPENSENSE_CLOUD_API_KEY
+chmod 600 .env                 # readable only by the service user
+sudo systemctl restart indepensense
+```
+
+`.env` is gitignored and must stay that way. A missing or empty key is a
+supported configuration: the wearable answers unknown utterances locally
+and logs that the cloud fallback is unconfigured once at startup.
+
+Verify the key was picked up:
+
+```bash
+python -m indepensense.intents.tests.manual.cloud_probe
+```
+
 ## Assumptions
 
 The unit files assume:
@@ -86,6 +111,8 @@ The unit files assume:
   (`photon-1.2.0.jar`) — update the JAR filenames if you upgrade.
 - Both services can run concurrently on the same Pi 5 (~4 GB combined
   heap on an 8 GB machine).
+- `indepensense.service` runs as the same user that owns `.env`, or it
+  cannot read the key.
 
 ## Uninstall
 
