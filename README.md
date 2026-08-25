@@ -205,6 +205,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | MPU6050 IMU | `python -m indepensense.sensors.tests.manual.single_mpu6050_test` | Prints accel + gyro readings |
 | QMC5883P magnetometer | `python -m indepensense.sensors.tests.manual.single_magnetometer_test` | Prints calibrated field, magnitude, and heading |
 | Magnetometer calibration | `python -m indepensense.sensors.tests.manual.magnetometer_calibrate` | 30 s sweep producing hard-iron offsets + soft-iron scales |
+| Magnetometer range probe | `python -m indepensense.sensors.tests.manual.magnetometer_range_probe` | Diagnostic: checks whether the field-range register takes effect, and which sensitivity is real |
 | GPS (SIM7600) | `python -m indepensense.sensors.tests.manual.single_gps_test` | Prints NMEA fixes as they arrive |
 | GPS site survey | `python -m indepensense.sensors.tests.manual.gps_survey --label kitchen` | Samples one spot for 2 min, appends to `gps_survey.csv`, reports fix rate, HDOP, positional scatter in metres, and flags a frozen (stale) fix |
 
