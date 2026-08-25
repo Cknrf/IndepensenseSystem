@@ -30,8 +30,8 @@ Register map (QMC5883P datasheet Rev C, §9)
 There is no temperature register on this part (the QMC5883L had one).
 Nothing consumed it anyway.
 
-Configuration choice: normal mode, ±8 G, 10 Hz ODR, OSR1=8, OSR2=8
-(CONTROL_1 = 0xC1, CONTROL_2 = 0x08).
+Configuration choice: normal mode, ±8 G, 10 Hz ODR, OSR1=8, OSR2=1
+(CONTROL_1 = 0x01, CONTROL_2 = 0x08).
 
   * **Normal mode, not continuous.** Both sample periodically; continuous
     never sleeps, which is how the part reaches its 1500 Hz maximum ODR
@@ -45,10 +45,16 @@ Configuration choice: normal mode, ±8 G, 10 Hz ODR, OSR1=8, OSR2=8
     pack, and at ±2 G a nearby magnet saturates the sensor, which sets
     OVFL and blanks the heading. ±12 G and ±30 G exist but spend
     resolution on field strengths nothing on a white cane produces.
-  * **OSR1=8, OSR2=8** — the maximum of both internal filters, the
-    lowest-noise setting the part offers. At 10 Hz there is ample time
-    budget, and this mirrors the datasheet's own §7.1 example (0xCD),
-    which differs from ours only in ODR.
+  * **OSR1=8 but OSR2=1.** OSR1 is an oversampling ratio — it averages
+    within a measurement, costing power but not freshness, so we take
+    the maximum for the lowest noise floor. OSR2 is a *down-sampling*
+    rate, and at its maximum of 8 it divides the 10 Hz output down to
+    ~1.25 Hz. That was measured on the bench: consecutive reads returned
+    byte-identical values because the chip had nothing new, leaving the
+    heading up to 800 ms stale and starving the calibration sweep of
+    distinct samples. OSR2=1 restores a true 10 Hz. The datasheet's §7.1
+    example uses OSR2=8, which is fine for its 200 Hz ODR and wrong for
+    ours.
   * **SET/RESET mode = set and reset on.** The other options skip the
     internal degauss cycle, which is what removes the sensor's own offset
     drift between samples. Skipping it saves power we don't need to save.
@@ -106,9 +112,9 @@ _CTRL2_SOFT_RST = 0x80
 # RNG=0b10 (±8 G) | SET/RESET=0b00 (set and reset on).
 _CTRL2_8G_SET_RESET_ON = 0x08
 
-# CONTROL_1: OSR2=0b11 (down-sample 8) | OSR1=0b00 (oversample 8)
+# CONTROL_1: OSR2=0b00 (down-sample 1) | OSR1=0b00 (oversample 8)
 # | ODR=0b00 (10 Hz) | MODE=0b01 (normal). See the module docstring.
-_CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE = 0xC1
+_CTRL1_NORMAL_10HZ_OVERSAMPLE_8 = 0x01
 
 # Register 0x29 does not appear in the datasheet's register map (§9.1), but
 # every setup example in §7 opens by writing 0x06 to it, described only as
@@ -187,6 +193,15 @@ class QMC5883P:
         self._offsets = (offset_x, offset_y, offset_z)
         self._scales = (scale_x, scale_y, scale_z)
 
+        # Failure tallies, split by cause because they mean opposite things.
+        # `read()` returns None either way — the Magnetometer protocol has no
+        # channel for a reason — but a bring-up test needs to tell them apart:
+        # bus errors point at wiring (loose jumper, marginal pull-ups), while
+        # overflows point at a magnet close enough to saturate ±8 G, i.e. a
+        # mounting problem. Plain public ints; nothing acts on them.
+        self.bus_errors = 0
+        self.overflows = 0
+
         self._reset()
         self._verify_chip_id()
         self._configure()
@@ -200,10 +215,12 @@ class QMC5883P:
                 self._address, _XOUT_LSB, _DATA_BLOCK_LENGTH
             )
         except OSError:
+            self.bus_errors += 1
             return None
 
         parsed = parse_qmc5883p_block(bytes(raw), status)
         if parsed is None:
+            self.overflows += 1
             return None
 
         x, y, z = (
@@ -276,10 +293,10 @@ class QMC5883P:
         `magnetometer_range_probe`:
 
             written                       0x0A reads  0x0B reads
-            CONTROL_2 then CONTROL_1      0xC1        0x00   <- range lost
+            CONTROL_2 then CONTROL_1      set         0x00   <- range lost
             CONTROL_1 then CONTROL_2      0x00        0x00   <- both lost
             both in one block write       0x00        0x00   <- both lost
-            the pair, repeated            0xC1        0x08   <- correct
+            the pair, repeated            set         0x08   <- correct
 
         Writing the pair a second time is what makes both survive: the first
         pass takes the part out of suspend, and it is the suspend-to-normal
@@ -298,7 +315,7 @@ class QMC5883P:
                 self._address, _CONTROL_2, _CTRL2_8G_SET_RESET_ON
             )
             self._bus.write_byte_data(
-                self._address, _CONTROL_1, _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE
+                self._address, _CONTROL_1, _CTRL1_NORMAL_10HZ_OVERSAMPLE_8
             )
             time.sleep(0.02)
             if self._configuration_holds():
@@ -310,7 +327,7 @@ class QMC5883P:
         """True when both control registers read back what we wrote."""
         return (
             self._bus.read_byte_data(self._address, _CONTROL_1)
-            == _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE
+            == _CTRL1_NORMAL_10HZ_OVERSAMPLE_8
             and self._bus.read_byte_data(self._address, _CONTROL_2)
             == _CTRL2_8G_SET_RESET_ON
         )
@@ -336,7 +353,7 @@ class QMC5883P:
         raise RuntimeError(
             f"control registers did not stick after {_CONFIG_ATTEMPTS} "
             f"attempts: 0x0A reads 0x{ctrl1:02X} (wrote "
-            f"0x{_CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE:02X}), 0x0B reads "
+            f"0x{_CTRL1_NORMAL_10HZ_OVERSAMPLE_8:02X}), 0x0B reads "
             f"0x{ctrl2:02X} (wrote 0x{_CTRL2_8G_SET_RESET_ON:02X}). Field "
             f"range and output rate are not what this driver's unit "
             f"conversion assumes, so headings would be scaled wrongly. Run "

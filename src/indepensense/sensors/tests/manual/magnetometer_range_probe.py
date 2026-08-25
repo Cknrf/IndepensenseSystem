@@ -11,7 +11,7 @@ the datasheet does not mention.
 
   * The driver writes CONTROL_2 (0x0B, range) then CONTROL_1 (0x0A, mode),
     which is the order the datasheet's §7.1 example uses. Result: CONTROL_1
-    held 0xC1, CONTROL_2 read back 0x00, and measurements flowed — but
+    held its value, CONTROL_2 read back 0x00, and measurements flowed — but
     scaled as if the range were the ±30 G reset default rather than the
     ±8 G we asked for.
   * An earlier version of this probe wrote CONTROL_1 first, then CONTROL_2.
@@ -52,7 +52,7 @@ _AXIS_SIGN = 0x29
 
 _STATUS_OVFL = 0x02
 
-_CTRL1 = 0xC1          # OSR2=8, OSR1=8, ODR=10 Hz, MODE=normal
+_CTRL1 = 0x01          # OSR2=1, OSR1=8, ODR=10 Hz, MODE=normal
 _CTRL2 = 0x08          # RNG=±8 G, SET/RESET on
 _AXIS_SIGN_VALUE = 0x06
 

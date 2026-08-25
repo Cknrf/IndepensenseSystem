@@ -89,6 +89,17 @@ def main():
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        print(f"Bus errors: {mag.bus_errors}   Overflows: {mag.overflows}")
+        if mag.bus_errors:
+            print("  Bus errors are I2C read failures, not magnetic ones — "
+                  "loose jumpers, a")
+            print("  flexing breadboard connection, or the shared-bus pull-up "
+                  "problem in")
+            print("  docs/hardware.md. Secure the wiring before mounting.")
+        if mag.overflows:
+            print("  Overflows mean an axis passed 800 uT — 20x Earth's field. "
+                  "Something")
+            print("  strongly magnetic is touching-distance close.")
         mag.close()
 
 
