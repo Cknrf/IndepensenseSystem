@@ -1,4 +1,4 @@
-"""Bring-up diagnostic: does the QMC5883P honour its field-range register?
+"""Bring-up diagnostic: how do you get both QMC5883P control registers to stick?
 
 Run:
     python -m indepensense.sensors.tests.manual.magnetometer_range_probe
@@ -6,42 +6,38 @@ Run:
 Why this exists
 ---------------
 
-`QMC5883P._verify_configuration` found that CONTROL_2 (0x0B) reads back
-0x00 after being written 0x08 (±8 G). Two mutually exclusive causes, and
-they need opposite fixes:
+Two runs against this part disagreed, and together they point at something
+the datasheet does not mention.
 
-  A. The write is ignored. The part stays at its ±30 G reset default, so
-     the driver must divide by 1000 LSB/G, not 3750.
-  B. The write works but the register reads as zero on this silicon —
-     undocumented but not unheard of. Then the range really is ±8 G,
-     3750 LSB/G is correct, and the weak field readings have some other
-     cause.
+  * The driver writes CONTROL_2 (0x0B, range) then CONTROL_1 (0x0A, mode),
+    which is the order the datasheet's §7.1 example uses. Result: CONTROL_1
+    held 0xC1, CONTROL_2 read back 0x00, and measurements flowed — but
+    scaled as if the range were the ±30 G reset default rather than the
+    ±8 G we asked for.
+  * An earlier version of this probe wrote CONTROL_1 first, then CONTROL_2.
+    Result: the mirror image. CONTROL_2 held every value written to it,
+    and every measurement came back as exactly zero — which is what a part
+    parked in suspend mode (MODE=00) reports.
 
-Read-back alone cannot distinguish them. Field strength can: the four
-ranges have sensitivities differing by up to 15×, so writing each range
-in turn while the sensor sits still must change the raw counts by a known
-ratio *if* the writes take effect. If the counts do not budge, they don't.
+One explanation fits both: writing either control register clears the
+other. Whichever was written last survives. So there may be no single-byte
+ordering that leaves both correct, and the fix has to come from somewhere
+else — a block write that lands both in one transaction, a retry loop, or
+accepting the range the part will actually hold.
 
-Expected raw-count ratios relative to ±30 G, per datasheet §2.1:
+This probe tries each strategy in turn against a freshly reset chip and
+reports, for each: what both control registers read back, whether data
+flowed, and what field strength the readings imply *at whatever range
+CONTROL_2 actually reports*. That last column is the real prize — Earth's
+field is 25-65 μT, so the strategy whose implied |B| lands in that band
+has both a working mode and an honest sensitivity constant.
 
-    ±30 G   1000 LSB/G    1.00×
-    ±12 G   2500 LSB/G    2.50×
-    ± 8 G   3750 LSB/G    3.75×
-    ± 2 G  15000 LSB/G   15.00×
+Hold the sensor still throughout so the rows stay comparable.
 
-So: hold the sensor absolutely still, and read the "raw |counts|" column.
-
-  * Counts scale by roughly those ratios  -> writes work (cause B). The
-    implied |B| column will read the same in every row.
-  * Counts identical in all four rows     -> writes ignored (cause A).
-    The implied |B| column will then only be right on the ±30 G row, and
-    whichever row shows a plausible 25-65 μT names the real range.
-
-This probe talks to the chip directly rather than through the driver, on
-purpose: its whole job is to question the assumption the driver's unit
-conversion is built on. The register constants below therefore mirror
-`sensors/qmc5883p.py` instead of importing its privates — if you change
-them there, change them here.
+This talks to the chip directly rather than through the driver, on purpose:
+its job is to question the assumptions the driver is built on. The register
+constants below therefore mirror `sensors/qmc5883p.py` rather than importing
+its privates — if you change them there, change them here.
 """
 import time
 
@@ -56,24 +52,82 @@ _AXIS_SIGN = 0x29
 
 _STATUS_OVFL = 0x02
 
-_CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE = 0xC1
+_CTRL1 = 0xC1          # OSR2=8, OSR1=8, ODR=10 Hz, MODE=normal
+_CTRL2 = 0x08          # RNG=±8 G, SET/RESET on
 _AXIS_SIGN_VALUE = 0x06
 
-_SAMPLES_PER_RANGE = 20
+_SAMPLES = 15
 
-# (label, RNG bits, nominal LSB per Gauss)
-_RANGES = [
-    ("+/-30 G", 0b00, 1000.0),
-    ("+/-12 G", 0b01, 2500.0),
-    ("+/- 8 G", 0b10, 3750.0),
-    ("+/- 2 G", 0b11, 15000.0),
+# RNG bits (CONTROL_2 bits 3:2) -> nominal LSB/Gauss, datasheet §2.1.
+_LSB_PER_GAUSS = {0b00: 1000.0, 0b01: 2500.0, 0b10: 3750.0, 0b11: 15000.0}
+_RANGE_LABEL = {0b00: "30G", 0b01: "12G", 0b10: "8G", 0b11: "2G"}
+
+
+def _reset(bus):
+    """Soft reset and wait generously — the datasheet gives no reset time."""
+    bus.write_byte_data(MAG_ADDRESS, _CONTROL_2, 0x80)
+    time.sleep(0.3)
+
+
+def _strategy_datasheet_order(bus):
+    """§7.1 order, exactly what the driver does today."""
+    bus.write_byte_data(MAG_ADDRESS, _AXIS_SIGN, _AXIS_SIGN_VALUE)
+    bus.write_byte_data(MAG_ADDRESS, _CONTROL_2, _CTRL2)
+    bus.write_byte_data(MAG_ADDRESS, _CONTROL_1, _CTRL1)
+
+
+def _strategy_reverse_order(bus):
+    """Mode first, range second."""
+    bus.write_byte_data(MAG_ADDRESS, _AXIS_SIGN, _AXIS_SIGN_VALUE)
+    bus.write_byte_data(MAG_ADDRESS, _CONTROL_1, _CTRL1)
+    bus.write_byte_data(MAG_ADDRESS, _CONTROL_2, _CTRL2)
+
+
+def _strategy_block_write(bus):
+    """Both control registers in ONE auto-incrementing write from 0x0A.
+
+    If the clobbering is an artefact of two separate write transactions,
+    this is the fix: the part sees one transaction covering both registers.
+    """
+    bus.write_byte_data(MAG_ADDRESS, _AXIS_SIGN, _AXIS_SIGN_VALUE)
+    bus.write_i2c_block_data(MAG_ADDRESS, _CONTROL_1, [_CTRL1, _CTRL2])
+
+
+def _strategy_spaced_writes(bus):
+    """Datasheet order with 50 ms of settling between every write."""
+    bus.write_byte_data(MAG_ADDRESS, _AXIS_SIGN, _AXIS_SIGN_VALUE)
+    time.sleep(0.05)
+    bus.write_byte_data(MAG_ADDRESS, _CONTROL_2, _CTRL2)
+    time.sleep(0.05)
+    bus.write_byte_data(MAG_ADDRESS, _CONTROL_1, _CTRL1)
+    time.sleep(0.05)
+
+
+def _strategy_retry_until_both_stick(bus):
+    """Alternate the two writes, re-reading, until both registers agree."""
+    bus.write_byte_data(MAG_ADDRESS, _AXIS_SIGN, _AXIS_SIGN_VALUE)
+    for _ in range(10):
+        bus.write_byte_data(MAG_ADDRESS, _CONTROL_2, _CTRL2)
+        bus.write_byte_data(MAG_ADDRESS, _CONTROL_1, _CTRL1)
+        time.sleep(0.02)
+        if (bus.read_byte_data(MAG_ADDRESS, _CONTROL_1) == _CTRL1
+                and bus.read_byte_data(MAG_ADDRESS, _CONTROL_2) == _CTRL2):
+            return
+
+
+_STRATEGIES = [
+    ("datasheet order", _strategy_datasheet_order),
+    ("reverse order", _strategy_reverse_order),
+    ("block write", _strategy_block_write),
+    ("spaced writes", _strategy_spaced_writes),
+    ("retry loop", _strategy_retry_until_both_stick),
 ]
 
 
-def _read_axes(bus, address):
+def _sample(bus):
     """One sample as raw signed counts, or None if the chip flagged overflow."""
-    status = bus.read_byte_data(address, _STATUS)
-    raw = bytes(bus.read_i2c_block_data(address, _XOUT_LSB, 6))
+    status = bus.read_byte_data(MAG_ADDRESS, _STATUS)
+    raw = bytes(bus.read_i2c_block_data(MAG_ADDRESS, _XOUT_LSB, 6))
     if status & _STATUS_OVFL:
         return None
     return tuple(
@@ -89,92 +143,81 @@ def main():
         chip_id = bus.read_byte_data(MAG_ADDRESS, _CHIP_ID)
         print(f"Chip ID at 0x{MAG_ADDRESS:02X}: 0x{chip_id:02X} "
               f"(expect 0x80 for QMC5883P)")
+        print(f"Target config: CONTROL_1=0x{_CTRL1:02X} (normal, 10 Hz), "
+              f"CONTROL_2=0x{_CTRL2:02X} (±8 G)")
         print()
-        print("KEEP THE SENSOR PERFECTLY STILL for the next ~10 seconds.")
-        print("Any movement invalidates the comparison.")
+        print("KEEP THE SENSOR PERFECTLY STILL for the next ~15 seconds.")
         print()
         time.sleep(2)
 
-        # Soft reset, then the datasheet's setup order minus the range, which
-        # is what we are about to vary.
-        bus.write_byte_data(MAG_ADDRESS, _CONTROL_2, 0x80)
-        time.sleep(0.05)
-        bus.write_byte_data(MAG_ADDRESS, _AXIS_SIGN, _AXIS_SIGN_VALUE)
-        bus.write_byte_data(
-            MAG_ADDRESS, _CONTROL_1, _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE
-        )
-        time.sleep(0.1)
+        print(f"{'strategy':18} {'0x0A':>6} {'0x0B':>6} {'range':>6} "
+              f"{'raw x':>7} {'raw y':>7} {'raw z':>7} "
+              f"{'counts':>7} {'implied |B|':>12}")
+        print("-" * 86)
 
-        print(f"{'range':8} {'wrote':>6} {'reads':>6} "
-              f"{'raw x':>8} {'raw y':>8} {'raw z':>8} "
-              f"{'raw |B|':>9} {'implied':>9}  ovfl")
-        print("-" * 78)
+        results = []
+        for name, apply_strategy in _STRATEGIES:
+            _reset(bus)
+            apply_strategy(bus)
+            time.sleep(0.15)
 
-        baseline = None
-        rows = []
-        for label, rng_bits, lsb_per_gauss in _RANGES:
-            wrote = rng_bits << 2          # SET/RESET mode 00 = set and reset on
-            bus.write_byte_data(MAG_ADDRESS, _CONTROL_2, wrote)
-            time.sleep(0.2)
-            reads = bus.read_byte_data(MAG_ADDRESS, _CONTROL_2)
+            ctrl1 = bus.read_byte_data(MAG_ADDRESS, _CONTROL_1)
+            ctrl2 = bus.read_byte_data(MAG_ADDRESS, _CONTROL_2)
+            rng_bits = (ctrl2 >> 2) & 0b11
+            lsb_per_gauss = _LSB_PER_GAUSS[rng_bits]
 
             sums = [0.0, 0.0, 0.0]
             good = 0
-            overflows = 0
-            for _ in range(_SAMPLES_PER_RANGE):
-                sample = _read_axes(bus, MAG_ADDRESS)
-                if sample is None:
-                    overflows += 1
-                else:
+            for _ in range(_SAMPLES):
+                s = _sample(bus)
+                if s is not None:
                     good += 1
                     for i in range(3):
-                        sums[i] += sample[i]
+                        sums[i] += s[i]
                 time.sleep(0.02)
 
             if good == 0:
-                print(f"{label:8} 0x{wrote:02X}   0x{reads:02X}   "
-                      f"{'all samples overflowed':>46}  {overflows:4}")
+                print(f"{name:18} 0x{ctrl1:02X}   0x{ctrl2:02X}   "
+                      f"{_RANGE_LABEL[rng_bits]:>6} "
+                      f"{'(every sample overflowed)':>44}")
                 continue
 
-            x, y, z = (s / good for s in sums)
+            x, y, z = (v / good for v in sums)
             counts = (x * x + y * y + z * z) ** 0.5
-            # 1 Gauss = 100 μT.
-            implied_ut = counts * 100.0 / lsb_per_gauss
-            if baseline is None:
-                baseline = counts
-            rows.append((label, counts, implied_ut))
+            implied_ut = counts * 100.0 / lsb_per_gauss   # 1 Gauss = 100 μT
+            plausible = 25.0 <= implied_ut <= 65.0
+            results.append((name, ctrl1, ctrl2, implied_ut, counts, plausible))
 
-            print(f"{label:8} 0x{wrote:02X}   0x{reads:02X}   "
-                  f"{x:8.0f} {y:8.0f} {z:8.0f} "
-                  f"{counts:9.0f} {implied_ut:7.1f}uT  {overflows:4}")
+            print(f"{name:18} 0x{ctrl1:02X}   0x{ctrl2:02X}   "
+                  f"{_RANGE_LABEL[rng_bits]:>6} "
+                  f"{x:7.0f} {y:7.0f} {z:7.0f} {counts:7.0f} "
+                  f"{implied_ut:8.1f} uT{'  <-- plausible' if plausible else ''}")
 
         print()
-        if len(rows) < 2 or baseline in (None, 0.0):
-            print("Not enough usable rows to draw a conclusion.")
-            return
+        both_stuck = [r for r in results if r[1] == _CTRL1 and r[2] == _CTRL2]
+        measuring = [r for r in results if r[4] > 0.0]
 
-        ratios = [counts / baseline for _label, counts, _ut in rows]
-        print("Raw-count ratios vs the first row: "
-              + "  ".join(f"{r:.2f}x" for r in ratios))
-        spread = max(ratios) / min(ratios)
-        print()
-        if spread < 1.2:
-            print("VERDICT: the counts barely moved, so writes to the RNG "
-                  "field are being ignored.")
-            print("The part is stuck at one range. Whichever row above shows "
-                  "an implied |B| of")
-            print("25-65 uT identifies it — that row's LSB/G is what the "
-                  "driver must divide by.")
+        if both_stuck:
+            print("VERDICT: these strategies set BOTH registers correctly — "
+                  "use the first one:")
+            for name, _c1, _c2, ut, _counts, ok in both_stuck:
+                print(f"  {name}: implied |B| = {ut:.1f} uT"
+                      f"{' (plausible)' if ok else ' (NOT plausible — recheck)'}")
+        elif measuring:
+            print("VERDICT: no strategy holds both registers, so the part "
+                  "cannot be configured to")
+            print("±8 G while also measuring. The rows above that produced "
+                  "data show which range")
+            print("it will actually hold; the one with a plausible implied "
+                  "|B| is the range the")
+            print("driver should be built around — set its LSB/G as the "
+                  "sensitivity constant and")
+            print("stop trying to write the range at all.")
         else:
-            print("VERDICT: the counts scaled with the range, so the RNG "
-                  "writes DO take effect")
-            print("and CONTROL_2 simply reads back as zero on this part. "
-                  "+/-8 G and 3750 LSB/G")
-            print("are correct; drop the CONTROL_2 read-back check and look "
-                  "elsewhere for the")
-            print("weak field (local shielding, or a genuinely quiet site).")
+            print("VERDICT: nothing measured under any strategy. That is a "
+                  "wiring or power fault,")
+            print("not a configuration one — recheck 3.3 V and SDA/SCL.")
     finally:
-        # Park the chip in suspend so it stops sampling.
         try:
             bus.write_byte_data(MAG_ADDRESS, _CONTROL_1, 0x00)
         except OSError:
