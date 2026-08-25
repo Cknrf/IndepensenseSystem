@@ -117,6 +117,10 @@ _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE = 0xC1
 # blind, exactly as the vendor specifies.
 _AXIS_SIGN_VALUE = 0x06
 
+# How many times to re-write the control-register pair before giving up. Two
+# passes is what the bench needed; five leaves margin without hanging startup.
+_CONFIG_ATTEMPTS = 5
+
 # Sensitivity at ±8 G is 3750 LSB/Gauss (datasheet §2.1). 1 Gauss = 100 μT,
 # so one count is 100/3750 μT.
 _UT_PER_LSB = 100.0 / 3750.0
@@ -265,21 +269,51 @@ class QMC5883P:
             )
 
     def _configure(self) -> None:
-        """Define the axis signs, set range + degauss mode, start sampling.
+        """Define the axis signs, then write both control registers until they stick.
 
-        Order is the datasheet's own (§7.1): 0x29, then CONTROL_2, then
-        CONTROL_1 — mode last, so the part only starts measuring once the
-        range and set/reset behaviour are already in place.
+        The datasheet's §7.1 sequence — 0x29, CONTROL_2, CONTROL_1, once each —
+        does not work on this part. Measured on the bench with
+        `magnetometer_range_probe`:
+
+            written                       0x0A reads  0x0B reads
+            CONTROL_2 then CONTROL_1      0xC1        0x00   <- range lost
+            CONTROL_1 then CONTROL_2      0x00        0x00   <- both lost
+            both in one block write       0x00        0x00   <- both lost
+            the pair, repeated            0xC1        0x08   <- correct
+
+        Writing the pair a second time is what makes both survive: the first
+        pass takes the part out of suspend, and it is the suspend-to-normal
+        transition that clears CONTROL_2. Once the part is already in normal
+        mode, re-writing the same pair changes no mode and nothing is cleared.
+        That mechanism is inferred, not documented, so the loop verifies
+        rather than assuming a fixed number of passes.
+
+        The cost of getting this wrong is invisible: the range silently falls
+        back to its ±30 G default, headings still look reasonable, and every
+        field value is 3.75× too small.
         """
         self._bus.write_byte_data(self._address, _AXIS_SIGN, _AXIS_SIGN_VALUE)
-        self._bus.write_byte_data(
-            self._address, _CONTROL_2, _CTRL2_8G_SET_RESET_ON
-        )
-        self._bus.write_byte_data(
-            self._address, _CONTROL_1, _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE
-        )
+        for _ in range(_CONFIG_ATTEMPTS):
+            self._bus.write_byte_data(
+                self._address, _CONTROL_2, _CTRL2_8G_SET_RESET_ON
+            )
+            self._bus.write_byte_data(
+                self._address, _CONTROL_1, _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE
+            )
+            time.sleep(0.02)
+            if self._configuration_holds():
+                break
         # One ODR period (100 ms at 10 Hz) so the first read has real data.
         time.sleep(0.1)
+
+    def _configuration_holds(self) -> bool:
+        """True when both control registers read back what we wrote."""
+        return (
+            self._bus.read_byte_data(self._address, _CONTROL_1)
+            == _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE
+            and self._bus.read_byte_data(self._address, _CONTROL_2)
+            == _CTRL2_8G_SET_RESET_ON
+        )
 
     def _verify_configuration(self) -> None:
         """Read both control registers back and confirm they hold what we wrote.
@@ -295,16 +329,16 @@ class QMC5883P:
         from it. Failing at construction costs nothing — `app.py` treats an
         unopenable magnetometer as "no compass" and keeps running.
         """
-        expected = {
-            _CONTROL_1: _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE,
-            _CONTROL_2: _CTRL2_8G_SET_RESET_ON,
-        }
-        for register, want in expected.items():
-            got = self._bus.read_byte_data(self._address, register)
-            if got != want:
-                raise RuntimeError(
-                    f"register 0x{register:02X} reads back 0x{got:02X}, wrote "
-                    f"0x{want:02X} — configuration did not stick. Field range "
-                    f"and output rate are not what this driver's unit "
-                    f"conversion assumes, so headings would be scaled wrongly."
-                )
+        if self._configuration_holds():
+            return
+        ctrl1 = self._bus.read_byte_data(self._address, _CONTROL_1)
+        ctrl2 = self._bus.read_byte_data(self._address, _CONTROL_2)
+        raise RuntimeError(
+            f"control registers did not stick after {_CONFIG_ATTEMPTS} "
+            f"attempts: 0x0A reads 0x{ctrl1:02X} (wrote "
+            f"0x{_CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE:02X}), 0x0B reads "
+            f"0x{ctrl2:02X} (wrote 0x{_CTRL2_8G_SET_RESET_ON:02X}). Field "
+            f"range and output rate are not what this driver's unit "
+            f"conversion assumes, so headings would be scaled wrongly. Run "
+            f"magnetometer_range_probe to see which strategy this part accepts."
+        )
