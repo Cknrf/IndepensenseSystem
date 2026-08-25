@@ -186,6 +186,7 @@ class QMC5883P:
         self._reset()
         self._verify_chip_id()
         self._configure()
+        self._verify_configuration()
 
     def read(self) -> MagnetometerReading | None:
         # Datasheet §7.5 measurement sequence: status first, then data.
@@ -234,9 +235,16 @@ class QMC5883P:
         Restores every register to its default and lands in suspend mode
         (datasheet §7.6, §6.2.4). Without this, re-running a manual test would
         inherit whatever configuration the previous run left behind.
+
+        The datasheet gives no reset duration, so the 50 ms wait is empirical
+        and deliberately generous. It matters: a reset still in flight when
+        `_configure` writes CONTROL_2 silently reverts the field range to its
+        ±30 G default while the later CONTROL_1 write survives, which yields
+        correct-looking headings scaled 3.75× too small. `_verify_configuration`
+        is what catches that if this wait ever proves too short again.
         """
         self._bus.write_byte_data(self._address, _CONTROL_2, _CTRL2_SOFT_RST)
-        time.sleep(0.01)
+        time.sleep(0.05)
 
     def _verify_chip_id(self) -> None:
         """Fail loudly if the part at this address is not a QMC5883P.
@@ -272,3 +280,31 @@ class QMC5883P:
         )
         # One ODR period (100 ms at 10 Hz) so the first read has real data.
         time.sleep(0.1)
+
+    def _verify_configuration(self) -> None:
+        """Read both control registers back and confirm they hold what we wrote.
+
+        Both are documented Read/Write (datasheet §9.1), so a mismatch means
+        the write did not stick — a reset still settling, a marginal bus, or a
+        clone that ignores a field.
+
+        This check exists because the failure it catches is invisible without
+        it. A wrong RNG value does not produce an error or an obviously broken
+        heading; it produces a *plausible* heading at the wrong scale, which
+        then quietly corrupts the hard-iron and soft-iron calibration derived
+        from it. Failing at construction costs nothing — `app.py` treats an
+        unopenable magnetometer as "no compass" and keeps running.
+        """
+        expected = {
+            _CONTROL_1: _CTRL1_NORMAL_10HZ_MAX_OVERSAMPLE,
+            _CONTROL_2: _CTRL2_8G_SET_RESET_ON,
+        }
+        for register, want in expected.items():
+            got = self._bus.read_byte_data(self._address, register)
+            if got != want:
+                raise RuntimeError(
+                    f"register 0x{register:02X} reads back 0x{got:02X}, wrote "
+                    f"0x{want:02X} — configuration did not stick. Field range "
+                    f"and output rate are not what this driver's unit "
+                    f"conversion assumes, so headings would be scaled wrongly."
+                )

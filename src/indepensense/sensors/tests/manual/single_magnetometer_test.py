@@ -49,6 +49,7 @@ def main():
         print("      Run `magnetometer_calibrate` and paste the values into config.py.")
         print()
     print("Live magnetometer. Rotate slowly through 0-360 degrees. Ctrl-C to stop.")
+    warned_about_magnitude = False
     try:
         while True:
             reading = mag.read()
@@ -60,6 +61,23 @@ def main():
                     + reading.magnetic_y ** 2
                     + reading.magnetic_z ** 2
                 )
+                if not warned_about_magnitude and not 15.0 < magnitude < 90.0:
+                    # Earth's field is 25-65 μT; hard-iron bias widens that,
+                    # but not by this much. A magnitude far outside the band
+                    # means the unit conversion is wrong, not the calibration
+                    # — most likely the field range in CONTROL_2 differs from
+                    # the sensitivity the driver divides by. Warn once so a
+                    # 30 s calibration sweep isn't run on bad numbers.
+                    warned_about_magnitude = True
+                    print(
+                        f"\n  WARNING: |B| = {magnitude:.1f} μT is implausible "
+                        f"for Earth's field (25-65 μT).\n"
+                        f"  Ratio to a typical 45 μT: "
+                        f"{45.0 / magnitude:.2f}× — if that is close to 3.75, "
+                        f"4, or 15 the\n  sensor is running at a different "
+                        f"field range than the driver assumes.\n"
+                        f"  Do not calibrate until this is resolved.\n"
+                    )
                 print(
                     f"heading={reading.heading_deg:6.1f}°  "
                     f"| x={reading.magnetic_x:+7.1f} "
