@@ -83,6 +83,22 @@ def main():
                     + reading.magnetic_y ** 2
                     + reading.magnetic_z ** 2
                 )
+                if not warned_about_magnitude and 65.0 < magnitude <= 90.0:
+                    # Above Earth's 25-65 μT but not far enough out to be a
+                    # unit-conversion error. Hard-iron bias alone can push the
+                    # magnitude past 65, but only when something magnetic is
+                    # close — which is worth saying out loud, because every
+                    # measurement taken here describes that object rather than
+                    # the Earth.
+                    warned_about_magnitude = True
+                    print(
+                        f"\n  NOTE: |B| = {magnitude:.1f} μT is above Earth's "
+                        f"25-65 μT.\n"
+                        f"  Something magnetic is within a few cm — the UPS "
+                        f"HAT's 18650 cells and\n"
+                        f"  the Pi itself are the usual culprits. Move the "
+                        f"sensor further away.\n"
+                    )
                 if not warned_about_magnitude and not 15.0 < magnitude < 90.0:
                     # Earth's field is 25-65 μT; hard-iron bias widens that,
                     # but not by this much. A magnitude far outside the band
