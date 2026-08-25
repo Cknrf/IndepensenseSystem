@@ -47,7 +47,7 @@ class _FailingMagnetometer:
 
 
 class _NoneMagnetometer:
-    """Returns None on every read — simulates the QMC5883L overflow (STATUS.OVL) path."""
+    """Returns None on every read — simulates the QMC5883P overflow (STATUS.OVFL) path."""
 
     def read(self):
         return None

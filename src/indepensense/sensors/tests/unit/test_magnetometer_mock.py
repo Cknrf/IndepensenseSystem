@@ -4,7 +4,7 @@ Nothing here touches real hardware — the mock is deterministic. These
 tests lock down the compass-heading convention (0°=north, 90°=east)
 so future refactors can't silently flip the sign. The convention itself
 lives in `sensors/base.heading_from_field`, shared by the mock and the
-QMC5883L driver, so exercising it through the mock covers both.
+QMC5883P driver, so exercising it through the mock covers both.
 """
 import math
 

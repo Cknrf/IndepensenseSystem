@@ -182,7 +182,7 @@ from indepensense.safety.fall_detector import ThresholdFallDetector
 from indepensense.sensors.dyp_a22 import DYPA22
 from indepensense.sensors.gps import SIM7600GPS
 from indepensense.sensors.mpu6050 import MPU6050
-from indepensense.sensors.qmc5883l import QMC5883L
+from indepensense.sensors.qmc5883p import QMC5883P
 from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.guardians import GuardianDirectory
@@ -312,7 +312,7 @@ class App:
         self.emergency_button: GPIOButton | None = None
         self.repeat_button: GPIOButton | None = None
         self.battery: WaveshareUPSHatE | None = None
-        self.magnetometer: QMC5883L | None = None
+        self.magnetometer: QMC5883P | None = None
         self.camera: PiCamera | None = None
         # `object_detector` (YOLO) is deliberately named differently from
         # `self.detector` above — that one is the ThresholdFallDetector
@@ -468,7 +468,7 @@ class App:
         print("  Opening UPS HAT (battery)...", flush=True)
         self.battery = self._try_open_battery()
 
-        print("  Opening magnetometer (QMC5883L compass)...", flush=True)
+        print("  Opening magnetometer (QMC5883P compass)...", flush=True)
         self.magnetometer = self._try_open_magnetometer()
 
         print("  Opening camera + YOLO detector...", flush=True)
@@ -1428,9 +1428,9 @@ class App:
             )
             return None
 
-    def _try_open_magnetometer(self) -> QMC5883L | None:
+    def _try_open_magnetometer(self) -> QMC5883P | None:
         try:
-            return QMC5883L(
+            return QMC5883P(
                 bus_number=MAG_I2C_BUS,
                 address=MAG_ADDRESS,
                 offset_x=MAG_OFFSET_X,

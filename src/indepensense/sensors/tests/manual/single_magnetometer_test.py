@@ -1,6 +1,6 @@
-"""Manual hardware test: live QMC5883L readout.
+"""Manual hardware test: live QMC5883P readout.
 
-Run on a Raspberry Pi 5 with the QMC5883L wired to I²C1. Ctrl-C to stop.
+Run on a Raspberry Pi 5 with the QMC5883P wired to I²C1. Ctrl-C to stop.
 
     python -m indepensense.sensors.tests.manual.single_magnetometer_test
 
@@ -13,9 +13,9 @@ magnitude, and the computed heading. Rotate the cane slowly and check:
     signature of an uncalibrated sensor — run `magnetometer_calibrate`.
 
 If construction fails with a chip-ID error, the part at `MAG_ADDRESS` is
-not a QMC5883L. Check `sudo i2cdetect -y 1`: `0x0D` is the QMC5883L,
-`0x1E` would be a genuine Honeywell HMC5883L (different registers, not
-supported by this driver).
+not a QMC5883P. Check `sudo i2cdetect -y 1`: `0x2C` is the QMC5883P,
+`0x0D` a QMC5883L, `0x1E` a genuine Honeywell HMC5883L. None of the
+three share a register map, so only 0x2C works with this driver.
 """
 import math
 import time
@@ -30,11 +30,11 @@ from indepensense.config import (
     MAG_SCALE_Y,
     MAG_SCALE_Z,
 )
-from indepensense.sensors.qmc5883l import QMC5883L
+from indepensense.sensors.qmc5883p import QMC5883P
 
 
 def main():
-    mag = QMC5883L(
+    mag = QMC5883P(
         bus_number=MAG_I2C_BUS,
         address=MAG_ADDRESS,
         offset_x=MAG_OFFSET_X,

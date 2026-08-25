@@ -92,70 +92,77 @@ Manual test:
 python -m indepensense.sensors.tests.manual.single_mpu6050_test
 ```
 
-### QMC5883L magnetometer — STATUS: driver ready, awaiting wiring
+### QMC5883P magnetometer — STATUS: wired, driver awaiting bench test
 
-Standalone 3-axis compass on I2C1 at address `0x0D`. Independent of the IMU:
-it shares only the SDA/SCL wires, so it appears in `i2cdetect` immediately,
-with no host-side setup needed.
+Standalone 3-axis compass on I2C1 at address **`0x2C`**. Independent of the
+IMU: it shares only the SDA/SCL wires, so it appears in `i2cdetect`
+immediately, with no host-side setup needed.
 
-**Why a separate chip.** The plan was an MPU9250, whose package contains an
-AK8963 magnetometer beside the accel + gyro. The module that arrived is a
-relabelled MPU6500 with no magnetometer die at all — a common counterfeit.
-Its accel + gyro half still works as an MPU6050 (`0x68`, byte-compatible),
-but heading had to move to a dedicated part, and the AK8963 driver
-(`sensors/magnetometer.py`, which enabled MPU9250 bypass mode to reach
-`0x0C`) was deleted along with it.
+**The part is a QMC5883P, not the QMC5883L the listing claimed.** The board
+was bought as a "QMC5883L Electronic Compass Module"; `i2cdetect` answered at
+`0x2C`, which is the QMC5883P. QST ships at least three parts under this
+family name and they share nothing but the marketing:
 
-To check whether an "MPU9250" is genuine, read `WHO_AM_I` (`0x75`): `0x71` =
-MPU9250, `0x73` = MPU9255, `0x70` = MPU6500 (no compass), `0x68` = MPU6050.
+| Part | Addr | Chip ID | Data regs | Status | ±8 G sensitivity |
+|---|---|---|---|---|---|
+| QMC5883**P** (ours) | `0x2C` | `0x00` → `0x80` | `0x01`-`0x06` | `0x09` | 3750 LSB/G |
+| QMC5883**L** | `0x0D` | `0x0D` → `0xFF` | `0x00`-`0x05` | `0x06` | 3000 LSB/G |
+| HMC5883L (Honeywell) | `0x1E` | `0x0A` → `'H48'` | `0x03`-`0x08` | `0x09` | n/a |
+
+The address is what identifies the part — the silkscreen (GY-271, GY-273,
+"HMC5883L") does not. `sensors/qmc5883p.py` verifies chip ID `0x80` at
+construction and refuses to open otherwise; the app then runs without a
+compass and prints the reason, rather than reporting a heading that never
+moves.
+
+**Why a separate chip at all.** The plan was an MPU9250, whose package
+contains an AK8963 magnetometer beside the accel + gyro. The module that
+arrived is a relabelled MPU6500 with no magnetometer die — a common
+counterfeit. Its accel + gyro half still works as an MPU6050 (`0x68`,
+byte-compatible), but heading had to move to a dedicated part. To check
+whether an "MPU9250" is genuine, read `WHO_AM_I` (`0x75`): `0x71` = MPU9250,
+`0x73` = MPU9255, `0x70` = MPU6500 (no compass), `0x68` = MPU6050.
 
 **⚠️ Power it from 3.3 V, NOT Pin 2.** The MPU6050 row above uses Pin 2,
-which is 5 V — that board has a regulator, GY-271-style QMC5883L breakouts
+which is 5 V — that board has a regulator, GY-271-style compass breakouts
 often do not, and most pass SDA/SCL through **unshifted**. Copying the
 MPU6050 pin table verbatim is the most likely way to destroy this sensor.
-3.3 V is safe on either board variant: the bare chip runs at 2.16-3.6 V, and
-a board that does carry an LDO still passes 3.3 V through fine.
+3.3 V is safe on either board variant: the bare chip runs at 2.5-3.6 V, and a
+board that does carry an LDO still passes 3.3 V through fine.
 
-Four wires. Both are **taps onto rails that already exist**, not free header
+Four wires. Two are **taps onto rails that already exist**, not free header
 pins — the Pi's only two 3.3 V pins (1 and 17) are already taken by the two
 DYP-A22s, and the three push buttons already need 3.3 V, so the build has a
 distributed 3.3 V rail regardless. Splice into it; do the same for SDA/SCL,
 which the MPU6050 is already on.
 
 ```
-3.3 V rail          VCC     <-- NOT Pin 2 (5 V). Pins 1 and 17 are taken by
+3.3 V rail          VDD     <-- NOT Pin 2 (5 V). Pins 1 and 17 are taken by
                                 the DYP-A22s — tap the shared 3.3 V rail.
 Pin 14 (GND)        GND     <-- or any free GND: 20, 25, 34, 39
 Pin 3 (GPIO 2)      SDA     <-- shared with the MPU6050 and the UPS HAT
-Pin 5 (GPIO 3)      SCL     <-- shared
+Pin 5 (GPIO 3)      SCK     <-- shared. Labelled SCK on this part, = SCL
 DRDY                not connected
 ```
 
-No level shifter and no I²C address conflict: `0x0D` (compass), `0x68` (IMU)
-and `0x2D` (UPS HAT) are distinct, and everything on this bus is 3.3 V logic.
+No level shifter and no I²C address conflict: `0x2C` (compass), `0x68` (IMU)
+and `0x2D` (UPS HAT) are distinct — note `0x2C` and `0x2D` are adjacent but
+not colliding — and everything on this bus is 3.3 V logic.
 
 Pull-up caveat: the Pi has fixed 1.8 kΩ pull-ups on GPIO 2/3, and each
 breakout adds its own (typically 4.7 kΩ). Three devices in parallel pull the
-effective resistance to roughly 1 kΩ, near the point where an I²C device
-can't sink enough current to drive the line low. If the bus turns flaky after
+effective resistance to roughly 1 kΩ, near the point where a device can't
+sink enough current to drive the line low. If the bus turns flaky after
 adding this module — dropped reads, `i2cdetect` showing addresses
-intermittently — remove the two pull-up resistors on the QMC5883L breakout
-rather than lowering the Pi's (which is not adjustable).
-
-**Naming trap.** Modules sold as "HMC5883L" or "GY-271" almost always carry a
-QMC5883L, which is *not* register-compatible with Honeywell's original. The
-QMC5883L answers at `0x0D` with little-endian data; a real HMC5883L answers
-at `0x1E` with big-endian data and is not supported by this driver. The
-driver checks the chip-ID register (`0x0D`, expects `0xFF`) at construction
-and refuses to open on a mismatch — the app then runs without a compass and
-prints the reason, rather than reporting a heading that never moves.
+intermittently — remove the two pull-up resistors on the compass breakout
+rather than the Pi's (which are not adjustable).
 
 Mount the board with its **X-axis pointing toward the front of the cane** and
 Z vertical. `sensors/base.heading_from_field` computes heading as
 `atan2(y, x)`; a rotated mount yields a rotated heading.
 
 Configurable via `MAG_I2C_BUS`, `MAG_ADDRESS` and `HEADING_CHECK_INTERVAL_S`
-in `indepensense.config`. The chip runs continuous ±8 G, 10 Hz, 512×
+in `indepensense.config`. The chip runs normal mode at ±8 G, 10 Hz, maximum
 oversampling (set in the driver — see its docstring for the reasoning);
 `app.py` samples the cached heading at 2 Hz.
 

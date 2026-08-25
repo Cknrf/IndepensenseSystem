@@ -33,20 +33,25 @@ OBSTACLE_COOLDOWN_S = 2.0        # per sensor: don't fire the same tier again
 
 # MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus).
 # Accelerometer + gyroscope only; heading comes from the separate
-# QMC5883L below. (The MPU9250 bought as an upgrade turned out to be a
+# QMC5883P below. (The MPU9250 bought as an upgrade turned out to be a
 # relabelled MPU6500 with no magnetometer die, so there is no upgrade
 # path here — this is the IMU.)
 MPU6050_I2C_BUS = 1
 MPU6050_ADDRESS = 0x68
 
-# QMC5883L magnetometer — a standalone compass chip on the same I2C1
+# QMC5883P magnetometer — a standalone compass chip on the same I2C1
 # bus, at its own fixed address. Its own bus constant rather than
 # reusing MPU6050_I2C_BUS: this is an unrelated device that merely
 # shares the wires, and conflating them would hide that.
+#
+# 0x2C is the QMC5883P. The board was sold as a "QMC5883L", which would
+# be 0x0D — a different chip with an incompatible register map. Confirm
+# with `i2cdetect -y 1` before changing this; the address identifies the
+# part. See docs/hardware.md.
 MAG_I2C_BUS = 1
-MAG_ADDRESS = 0x0D
+MAG_ADDRESS = 0x2C
 
-# How often the main loop samples the compass. The QMC5883L is
+# How often the main loop samples the compass. The QMC5883P is
 # configured for a 10 Hz output rate (see the driver docstring), and no
 # consumer needs heading even that fast — it changes on human
 # timescales. 2 Hz keeps the shared I²C bus free for the things that

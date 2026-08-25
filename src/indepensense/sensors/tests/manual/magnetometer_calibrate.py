@@ -1,4 +1,4 @@
-"""Calibration helper for the QMC5883L magnetometer.
+"""Calibration helper for the QMC5883P magnetometer.
 
 Rotate the assembled wearable through all orientations for ~30 s while
 this script records the min and max field on each axis. From that one
@@ -38,13 +38,13 @@ calibration at all.
 import time
 
 from indepensense.config import MAG_ADDRESS, MAG_I2C_BUS
-from indepensense.sensors.qmc5883l import QMC5883L
+from indepensense.sensors.qmc5883p import QMC5883P
 
 DURATION_S = 30.0
 
 
 def main():
-    mag = QMC5883L(bus_number=MAG_I2C_BUS, address=MAG_ADDRESS)
+    mag = QMC5883P(bus_number=MAG_I2C_BUS, address=MAG_ADDRESS)
 
     print(f"Rotate the wearable through ALL orientations for the next "
           f"{DURATION_S:.0f} seconds:")

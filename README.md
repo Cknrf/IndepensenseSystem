@@ -99,7 +99,7 @@ This repository holds the **on-device runtime** — everything that runs on the 
 - Waveshare UPS HAT (E) — battery + power management
 - 2× DYP-A22 Ultrasonic Sensors — top and bottom obstacle sensing
 - MPU6050 IMU — accelerometer + gyroscope (fall detection)
-- QMC5883L magnetometer — 3-axis compass for heading (standalone; the MPU9250 bought for this turned out to be a relabelled MPU6500 with no magnetometer)
+- QMC5883P magnetometer — 3-axis compass for heading (standalone; sold as a QMC5883L but answers at 0x2C, and the MPU9250 bought before it was a relabelled MPU6500 with no magnetometer at all)
 - Raspberry Pi Camera Module — computer vision input
 - SIM7600 module — cellular data + GPS
 - 3× Vibration motors — front / left / right directional feedback
@@ -115,7 +115,7 @@ That file contains:
 
 - Full 40-pin GPIO header diagram
 - Per-component wiring for every sensor and actuator
-- Which pins are 3.3 V-only (critical — 5 V will damage some sensors) — particularly the QMC5883L
+- Which pins are 3.3 V-only (critical — 5 V will damage some sensors) — particularly the QMC5883P
 - Current wiring status ("working / not yet connected") per component
 
 **Please update `hardware.md` every time a wire changes.** It is the single source of truth for physical connections; if it disagrees with reality, reality is wrong and the doc gets fixed.
@@ -142,7 +142,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 
 | Module | Purpose |
 |---|---|
-| `sensors/` | Sensor drivers: DYP-A22 ultrasonic, MPU6050 IMU, QMC5883L magnetometer, GPS via SIM7600 |
+| `sensors/` | Sensor drivers: DYP-A22 ultrasonic, MPU6050 IMU, QMC5883P magnetometer, GPS via SIM7600 |
 | `vision/` | Camera capture, YOLOv8 object detection, Tesseract OCR |
 | `voice/` | Push-to-talk flow, Whisper STT, Piper TTS |
 | `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching), bilingual response catalogue, cloud LLM fallback |
@@ -203,7 +203,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | DYP-A22 top only | `python -m indepensense.sensors.tests.manual.single_dyp_test` | Prints live distance in cm |
 | DYP-A22 top + bottom | `python -m indepensense.sensors.tests.manual.dual_dyp_test` | Prints both distances side by side |
 | MPU6050 IMU | `python -m indepensense.sensors.tests.manual.single_mpu6050_test` | Prints accel + gyro readings |
-| QMC5883L magnetometer | `python -m indepensense.sensors.tests.manual.single_magnetometer_test` | Prints calibrated field, magnitude, and heading |
+| QMC5883P magnetometer | `python -m indepensense.sensors.tests.manual.single_magnetometer_test` | Prints calibrated field, magnitude, and heading |
 | Magnetometer calibration | `python -m indepensense.sensors.tests.manual.magnetometer_calibrate` | 30 s sweep producing hard-iron offsets + soft-iron scales |
 | GPS (SIM7600) | `python -m indepensense.sensors.tests.manual.single_gps_test` | Prints NMEA fixes as they arrive |
 | GPS site survey | `python -m indepensense.sensors.tests.manual.gps_survey --label kitchen` | Samples one spot for 2 min, appends to `gps_survey.csv`, reports fix rate, HDOP, positional scatter in metres, and flags a frozen (stale) fix |
@@ -290,7 +290,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
    ```bash
    i2cdetect -y 1
    ```
-   Expected: `0x2D` (UPS HAT), `0x68` (MPU6050), `0x0D` (QMC5883L magnetometer).
+   Expected: `0x2D` (UPS HAT), `0x68` (MPU6050), `0x2C` (QMC5883P magnetometer). If the compass shows at `0x0D` instead it is a QMC5883L, a different chip — see [`docs/hardware.md`](docs/hardware.md).
 3. **Confirm serial devices:**
    ```bash
    ls /dev/ttyUSB* /dev/ttyAMA*
