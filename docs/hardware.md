@@ -92,7 +92,14 @@ Manual test:
 python -m indepensense.sensors.tests.manual.single_mpu6050_test
 ```
 
-### QMC5883P magnetometer — STATUS: wired, driver awaiting bench test
+### QMC5883P magnetometer — STATUS: working on the bench; awaiting final mount + calibration
+
+Verified on the bench: chip ID `0x80`, both control registers holding, and a
+horizontal field of 41.7 μT measured from a flat rotation sweep against ~40 μT
+expected for Manila — which validates the ±8 G / 3750 LSB/G conversion
+independently of the datasheet. Still outstanding: the real
+`MAG_FORWARD_AXIS` / `MAG_LEFT_AXIS` values and the calibration sweep, both of
+which need the assembled vest.
 
 Standalone 3-axis compass on I2C1 at address **`0x2C`**. Independent of the
 IMU: it shares only the SDA/SCL wires, so it appears in `i2cdetect`
