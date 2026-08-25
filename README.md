@@ -190,7 +190,7 @@ External services (Ollama, GraphHopper, Photon) are installed and configured via
 
 - **All unit tests:** `pytest`
 - **Full wearable:** `python -m indepensense.app`
-- **Live performance monitor** (in a separate SSH session): `python -m indepensense.tools.system_performance --csv perf.csv`
+- **Live performance monitor** (in a separate SSH session): `python -m indepensense.tools.system_performance --csv`
 
 ## Manual Verification Tests
 
@@ -277,7 +277,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | Purpose | Command |
 |---|---|
 | Live CPU / memory / temperature | `python -m indepensense.tools.system_performance` |
-| Same, with CSV output for later analysis | `python -m indepensense.tools.system_performance --csv perf.csv` |
+| Same, with CSV output for later analysis | `python -m indepensense.tools.system_performance --csv` — writes a timestamped file to `data/performance/` |
 
 ## First-Boot Verification Checklist
 

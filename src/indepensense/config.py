@@ -146,6 +146,19 @@ CAMERA_HEIGHT = 720
 CAMERA_FPS = 15
 TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 
+# Where `tools/system_performance` writes its CSV logs.
+#
+# A fixed location rather than the current directory: `--csv perf.csv` used
+# to land wherever you happened to be standing when you ran it, which on
+# the Pi meant a stray CSV inside `src/indepensense/`. Profiling output is
+# thesis evaluation data, not source.
+#
+# Under `data/`, which `.gitignore` already covers — these are generated
+# measurements. Copy a run you want to keep somewhere tracked, with a note
+# on what the device was doing at the time; a CPU trace is much less
+# useful if you cannot say what was running.
+PERF_LOG_DIR = PROJECT_ROOT / "data" / "performance"
+
 # YOLOv8 object detection.
 #
 # The `-oiv7` suffix picks the variant trained on Open Images V7 (600

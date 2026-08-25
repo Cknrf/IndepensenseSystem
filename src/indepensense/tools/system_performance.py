@@ -10,7 +10,7 @@ Usage:
     python -m indepensense.tools.system_performance
 
     # Custom interval + CSV logging for thesis data
-    python -m indepensense.tools.system_performance --interval 1 --csv perf.csv
+    python -m indepensense.tools.system_performance --interval 1 --csv
 
     # Also track a specific process (e.g., app.py's PID from `pgrep`)
     python -m indepensense.tools.system_performance --pid 1234
@@ -20,11 +20,21 @@ Recommended workflow for thesis evaluation:
     python -m indepensense.app
 
     # Terminal 2 — start the monitor with CSV output
-    python -m indepensense.tools.system_performance --csv wearable_perf.csv
+    python -m indepensense.tools.system_performance --csv
 
     # Then perform typical operations: voice commands, walking test,
     # emergency press, etc. Stop with Ctrl-C when done. The CSV is
     # ready for plotting in the thesis evaluation section.
+
+Where the CSV goes:
+    Always `config.PERF_LOG_DIR` (data/performance/) unless you pass an
+    absolute path. Bare `--csv` gets a timestamped filename; `--csv NAME`
+    puts NAME in that directory.
+
+    The output location is fixed rather than relative to the current
+    directory. `--csv perf.csv` previously landed wherever you happened to
+    be standing, which on the Pi meant a stray CSV inside the source
+    tree.
 
 Output columns:
     time      — HH:MM:SS wall clock
@@ -47,6 +57,9 @@ import subprocess
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
+
+from indepensense.config import PERF_LOG_DIR
 
 
 def _read_soc_temp_c() -> float:
@@ -80,12 +93,37 @@ def _find_top_cpu_process(psutil_mod, exclude_names=("system_performance", "htop
     return best_name, best_cpu
 
 
+# Sentinel for a bare `--csv` with no filename.
+_TIMESTAMPED = object()
+
+
+def _resolve_csv_path(value) -> Path | None:
+    """Turn the `--csv` argument into a concrete path, or None if unset.
+
+    Relative names resolve against `PERF_LOG_DIR` rather than the current
+    directory, so where you run this from cannot decide where the data
+    lands. An absolute path is honoured as given — that is the escape
+    hatch for writing to a USB stick or somewhere outside the repo.
+    """
+    if value is None:
+        return None
+    if value is _TIMESTAMPED:
+        stamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
+        return PERF_LOG_DIR / f"{stamp}_perf.csv"
+    path = Path(value)
+    return path if path.is_absolute() else PERF_LOG_DIR / path
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pi 5 performance monitor")
     parser.add_argument("--interval", type=float, default=2.0,
                         help="sampling interval in seconds (default: 2.0)")
-    parser.add_argument("--csv", type=str, default=None,
-                        help="also log samples to a CSV file")
+    parser.add_argument("--csv", nargs="?", const=_TIMESTAMPED, default=None,
+                        metavar="NAME",
+                        help=f"also log samples to a CSV under {PERF_LOG_DIR}. "
+                             f"Bare --csv uses a timestamped filename; "
+                             f"--csv NAME uses NAME; an absolute path is "
+                             f"used as given.")
     parser.add_argument("--pid", type=int, default=None,
                         help="also track a specific process by PID")
     args = parser.parse_args()
@@ -105,8 +143,10 @@ def main():
 
     csv_writer = None
     csv_file = None
-    if args.csv:
-        csv_file = open(args.csv, "w", newline="")
+    csv_path = _resolve_csv_path(args.csv)
+    if csv_path is not None:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        csv_file = open(csv_path, "w", newline="")
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow([
             "timestamp_iso", "cpu_total_pct",
@@ -193,7 +233,7 @@ def main():
         print(f"Stopped after {sample_count} samples.")
         if csv_file:
             csv_file.close()
-            print(f"CSV saved: {args.csv}")
+            print(f"CSV saved: {csv_path}")
 
 
 if __name__ == "__main__":
