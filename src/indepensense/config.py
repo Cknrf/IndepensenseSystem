@@ -86,6 +86,16 @@ LOW_BATTERY_PERCENT = 15
 LOW_BATTERY_RECOVERY_PERCENT = 20
 BATTERY_CHECK_INTERVAL_S = 10.0
 
+# The latch is written here so it survives a restart.
+#
+# Without this it lives only in memory, and the systemd unit sets
+# `Restart=on-failure`. A Pi crash-looping on a low battery would then
+# re-alert on every boot — which, now that alerts fan out over SMS, texts
+# every guardian each time. Needs a crash loop and a low battery at once,
+# which is unlikely and exactly the kind of thing that happens during a
+# demo.
+LOW_BATTERY_STATE_PATH = PROJECT_ROOT / "var" / "low_battery_alerted"
+
 # SIM7600G-H — GPS serial port. ModemManager labels this as (gps) in
 # `mmcli -m <id>`. Enable GPS with `AT+CGPS=1` on /dev/ttyUSB2 first.
 SIM7600_GPS_PORT = "/dev/ttyUSB1"
@@ -298,6 +308,24 @@ FALL_STILLNESS_DURATION_S = 2.0
 # OCR_MAX_CHARS above.
 CLOUD_LLM_ENABLED = False
 CLOUD_LLM_API_KEY_ENV = "INDEPENSENSE_CLOUD_API_KEY"
+
+# Mistral. The env var above is provider-neutral on purpose — the driver
+# is one implementation of the `CloudAnswerer` protocol and swapping it
+# should not mean renaming a secret.
+#
+# `mistral-small-latest` over `mistral-large-latest`: the job here is a
+# one-or-two-sentence factual answer, not reasoning, and the small model
+# is markedly faster and cheaper for that. Revisit only if answer quality
+# proves inadequate — not for its own sake.
+#
+# 100 max tokens is a latency control first and a cost control second.
+# Generation time scales with output length, so this is the biggest lever
+# available; the system prompt also asks for at most 40 words, because
+# `max_tokens` truncates mid-sentence while an instruction yields a
+# complete short answer.
+CLOUD_LLM_URL = "https://api.mistral.ai/v1/chat/completions"
+CLOUD_LLM_MODEL = "mistral-small-latest"
+CLOUD_LLM_MAX_TOKENS = 100
 
 # 10 s, and the constraint is the user's patience, not the provider's.
 # The cloud call sits on top of a chain that already costs 4-6 s (Tagalog

@@ -95,3 +95,11 @@ class OfflineGuard:
             print("[cloud] offline — not sending the question", file=sys.stderr)
             return CloudAnswer(text=None, reason="offline")
         return self._inner.answer(question, language)
+
+    def close(self) -> None:
+        """Release the wrapped provider's resources — its HTTP session, in
+        Mistral's case. Tolerates a provider without `close`, since the
+        protocol's own `close` is optional."""
+        closer = getattr(self._inner, "close", None)
+        if closer is not None:
+            closer()

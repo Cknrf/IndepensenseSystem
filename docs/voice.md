@@ -301,14 +301,64 @@ party. The words a user spoke still leave the device, which belongs in the
 ethics chapter, but that is a materially smaller disclosure than their
 voice.
 
-### Status: no provider wired
+### Provider: Mistral
 
-`CLOUD_LLM_ENABLED` is `False` and no driver exists yet, so the wearable
-answers unknown utterances exactly as it did before. `intents/cloud.py`
-documents what a driver must implement; `MockCloudAnswerer` satisfies the
-same protocol, so every other part of the path is already built and
-tested. `OfflineGuard` lives outside any driver so every future provider
-inherits the offline behaviour.
+`intents/mistral.py` implements `CloudAnswerer` against Mistral's
+OpenAI-shaped chat API. It is **off by default** — set `CLOUD_LLM_ENABLED`
+to `True` and export the key:
+
+```bash
+export INDEPENSENSE_CLOUD_API_KEY=...        # add to the systemd unit for deploy
+```
+
+Without the key the wearable answers unknown utterances exactly as it did
+before, and says so once at startup. The env var is deliberately
+provider-neutral: the driver is one implementation of a protocol, and
+swapping it should not mean renaming a secret.
+
+### Latency, and why the EU hop is not the problem
+
+Mistral is EU-hosted, so round-trip from the Philippines is roughly
+250 ms versus ~40 ms to Singapore. That is not a reason to switch
+providers. Generation time dominates — a short answer takes 0.5–1 s to
+produce wherever you are — and this call already sits on top of a 4–6 s
+chain (Tagalog STT, local NLU, Piper). An extra 0.2 s of RTT is noise in
+that budget.
+
+Two things do matter, and both are handled in the driver:
+
+- **`max_tokens` is capped at 100.** Generation time scales with output
+  length, making this the largest single lever. The system prompt also
+  asks for at most 40 words, because `max_tokens` truncates mid-sentence
+  while an instruction produces a complete short answer.
+- **The HTTP connection is reused.** A cold TLS handshake is about three
+  round trips before the request is even sent — ~0.75 s at this distance.
+  A per-instance `Session` means only the first call after startup pays
+  it.
+
+Streaming is deliberately unused: Piper needs the complete text before it
+can synthesise, so there is nothing to overlap.
+
+`CLOUD_LLM_TIMEOUT_S` is 10 s. The constraint is the user's patience, not
+the provider's — by 20 s a blind user has been standing on a corner
+hearing only the thinking cue.
+
+### The system prompt is written for speech
+
+The answer goes straight to Piper, which drives every constraint in
+`_SYSTEM_PROMPT`: no markdown (asterisks and bullets get read aloud as
+literal characters), numbers written the way they should be said, and an
+explicit instruction to admit ignorance rather than invent. That last one
+matters more here than for a chat product — a user who cannot see cannot
+cross-check an invented answer.
+
+### Tagalog is unverified
+
+Tagalog is low-resource for most providers and Mistral's quality there has
+not been measured. Test it before trusting it. If answers come back poor,
+requesting English regardless is a defensible fallback: a correct English
+answer beats a garbled Tagalog one, and the wearable already speaks
+English well.
 
 ## Updating voices or models
 

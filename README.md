@@ -72,7 +72,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 
 **Voice Interaction**
 - Push-to-talk speech input (Whisper STT)
-- LLM-based intent classification (Qwen 3 1.7B via Ollama), with a cloud LLM fallback for questions no intent covers
+- LLM-based intent classification (Qwen 3 1.7B via Ollama), with a Mistral cloud fallback for questions no intent covers
 - Natural-language responses (Piper TTS)
 
 **Guardian System**

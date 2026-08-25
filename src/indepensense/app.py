@@ -96,6 +96,10 @@ from indepensense.config import (
     CAMERA_WIDTH,
     CLOUD_LLM_API_KEY_ENV,
     CLOUD_LLM_ENABLED,
+    CLOUD_LLM_MAX_TOKENS,
+    CLOUD_LLM_MODEL,
+    CLOUD_LLM_TIMEOUT_S,
+    CLOUD_LLM_URL,
     CLOUD_MAX_RESPONSE_CHARS,
     DEFAULT_LANGUAGE,
     DEVICE_ID,
@@ -112,6 +116,7 @@ from indepensense.config import (
     INTERNET_PROBE_URL,
     LOW_BATTERY_PERCENT,
     LOW_BATTERY_RECOVERY_PERCENT,
+    LOW_BATTERY_STATE_PATH,
     MAG_ADDRESS,
     MAG_I2C_BUS,
     MAG_OFFSET_X,
@@ -162,6 +167,8 @@ from indepensense.feedback.gpio_buzzer import GPIOBuzzer
 from indepensense.feedback.gpio_vibration import GPIOVibrationMotor
 from indepensense.intents import messages
 from indepensense.intents.base import Intent, IntentResult
+from indepensense.intents.cloud import OfflineGuard
+from indepensense.intents.mistral import MistralAnswerer
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.parser import OllamaIntentParser
 from indepensense.language import LanguageState
@@ -328,7 +335,10 @@ class App:
         # Low-battery alert state: latch true after firing so we don't
         # spam the alert on every check. Cleared when battery recovers
         # past the recovery threshold (hysteresis).
-        self._low_battery_alerted = False
+        #
+        # Restored from disk so it survives a restart — see
+        # `config.LOW_BATTERY_STATE_PATH` for why that matters.
+        self._low_battery_alerted = self._load_low_battery_latch()
         self._last_battery_check = 0.0
 
         # Latest compass heading, refreshed at HEADING_CHECK_INTERVAL_S.
@@ -593,6 +603,7 @@ class App:
             ("Camera", self.camera),
             ("OCR", self.ocr),
             ("SMS", self.sms),
+            ("Cloud LLM", self.cloud),
             ("PTT button", self.ptt_button),
             ("Emergency button", self.emergency_button),
             ("Repeat button", self.repeat_button),
@@ -675,7 +686,7 @@ class App:
                     f"[battery] recovered to {pct}% — LOW_BATTERY latch cleared",
                     flush=True,
                 )
-                self._low_battery_alerted = False
+                self._set_low_battery_latch(False)
         else:
             if pct < LOW_BATTERY_PERCENT and reading.is_discharging:
                 print(
@@ -683,7 +694,7 @@ class App:
                     flush=True,
                 )
                 self._fire_low_battery_alert(pct)
-                self._low_battery_alerted = True
+                self._set_low_battery_latch(True)
 
     def latest_heading(self) -> float | None:
         """Most recent compass heading in degrees, or None if unavailable.
@@ -726,6 +737,37 @@ class App:
             return
 
         self._last_heading_deg = reading.heading_deg
+
+    def _load_low_battery_latch(self) -> bool:
+        """Whether we had already alerted before this process started.
+
+        Any read problem is treated as "not alerted". The cost of getting
+        that wrong is one extra alert; the cost of the opposite would be a
+        low battery that never warns anyone.
+        """
+        try:
+            return LOW_BATTERY_STATE_PATH.exists()
+        except OSError as exc:
+            print(f"[battery] could not read latch: {exc}", file=sys.stderr, flush=True)
+            return False
+
+    def _set_low_battery_latch(self, alerted: bool) -> None:
+        """Set the latch and mirror it to disk.
+
+        Presence of the file is the state — no contents to parse, so a
+        truncated write cannot be misread. Persistence is best effort: if
+        the write fails the latch still holds for this session, it just
+        won't survive a restart.
+        """
+        self._low_battery_alerted = alerted
+        try:
+            if alerted:
+                LOW_BATTERY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+                LOW_BATTERY_STATE_PATH.touch()
+            else:
+                LOW_BATTERY_STATE_PATH.unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"[battery] could not persist latch: {exc}", file=sys.stderr, flush=True)
 
     def _fire_low_battery_alert(self, percentage: int) -> None:
         """POST a Low Battery alert to the guardian backend."""
@@ -1286,25 +1328,36 @@ class App:
         """
         if not CLOUD_LLM_ENABLED:
             return None
-        if not os.environ.get(CLOUD_LLM_API_KEY_ENV):
+
+        api_key = os.environ.get(CLOUD_LLM_API_KEY_ENV)
+        if not api_key:
             print(
                 f"  Cloud LLM enabled but {CLOUD_LLM_API_KEY_ENV} is not set. "
                 f"Unknown commands will not be forwarded.",
                 flush=True,
             )
             return None
-        # A concrete provider goes here, wrapped as:
-        #     return OfflineGuard(
-        #         SomeProviderAnswerer(...),
-        #         probe_url=INTERNET_PROBE_URL,
-        #         probe_timeout_s=INTERNET_PROBE_TIMEOUT_S,
-        #     )
-        print(
-            "  Cloud LLM is enabled but no provider driver is implemented yet "
-            "(see intents/cloud.py).",
-            flush=True,
+
+        try:
+            answerer = MistralAnswerer(
+                api_key=api_key,
+                model=CLOUD_LLM_MODEL,
+                url=CLOUD_LLM_URL,
+                timeout_s=CLOUD_LLM_TIMEOUT_S,
+                max_tokens=CLOUD_LLM_MAX_TOKENS,
+            )
+        except Exception as exc:
+            print(f"  Cloud LLM unavailable ({exc}).", flush=True)
+            return None
+
+        print(f"  Cloud LLM ready ({CLOUD_LLM_MODEL}).", flush=True)
+        # The guard wraps every provider rather than living inside one, so
+        # the offline path is identical whichever driver is in use.
+        return OfflineGuard(
+            answerer,
+            probe_url=INTERNET_PROBE_URL,
+            probe_timeout_s=INTERNET_PROBE_TIMEOUT_S,
         )
-        return None
 
     def _try_open_sms(self) -> MMCLISMSSender | None:
         """Open the SMS sender. Tolerant: the device still works without

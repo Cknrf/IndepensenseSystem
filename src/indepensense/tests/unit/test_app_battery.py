@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from indepensense import app as app_module
 from indepensense.app_mock import MockApp
 from indepensense.config import (
     BATTERY_CHECK_INTERVAL_S,
@@ -49,6 +50,18 @@ class _ScriptedBattery:
 
     def close(self):
         pass
+
+
+@pytest.fixture(autouse=True)
+def _latch_path(tmp_path, monkeypatch):
+    """Point the persisted latch at a temp file.
+
+    `app.py` imports the constant by value, so patching `config` would
+    have no effect — the module attribute is the one that matters.
+    """
+    monkeypatch.setattr(
+        app_module, "LOW_BATTERY_STATE_PATH", tmp_path / "low_battery_alerted",
+    )
 
 
 @pytest.fixture
@@ -138,26 +151,57 @@ def test_a_second_discharge_cycle_alerts_again(app):
     assert len(_low_battery_alerts(app)) == 2
 
 
-def test_the_latch_does_not_survive_a_restart():
-    """Documents a real limitation rather than asserting desired
-    behaviour. The latch is in-memory, so a Pi that crash-loops at 14%
-    re-alerts on every boot — and with SMS wired in, that texts every
-    guardian each time. `Restart=on-failure` in the systemd unit makes
-    this reachable. Persisting it alongside `var/language` would fix it.
-    """
+def test_the_latch_survives_a_restart():
+    """A Pi crash-looping on a low battery must not text every guardian on
+    each boot. `Restart=on-failure` in the systemd unit makes that
+    reachable, so the latch is mirrored to disk."""
     first = MockApp()
     first.battery = _ScriptedBattery(_reading(LOW_BATTERY_PERCENT - 1))
     first.alert_sink = MockTelemetryClient()
     _check_now(first)
     assert first._low_battery_alerted is True
 
-    # A fresh process, battery unchanged.
+    # A fresh process, battery unchanged: still latched, so silent.
+    second = MockApp()
+    second.battery = _ScriptedBattery(_reading(LOW_BATTERY_PERCENT - 1))
+    second.alert_sink = MockTelemetryClient()
+    assert second._low_battery_alerted is True
+    _check_now(second)
+    assert _low_battery_alerts(second) == []
+
+
+def test_recovery_clears_the_latch_across_a_restart():
+    """The mirror has to work in both directions, or a device that
+    recovered would stay permanently silent about future low batteries."""
+    first = MockApp()
+    first.battery = _ScriptedBattery(_reading(LOW_BATTERY_PERCENT - 1))
+    first.alert_sink = MockTelemetryClient()
+    _check_now(first)
+    first.battery.reading = _reading(LOW_BATTERY_RECOVERY_PERCENT + 5)
+    _check_now(first)
+
     second = MockApp()
     second.battery = _ScriptedBattery(_reading(LOW_BATTERY_PERCENT - 1))
     second.alert_sink = MockTelemetryClient()
     assert second._low_battery_alerted is False
     _check_now(second)
     assert len(_low_battery_alerts(second)) == 1
+
+
+def test_an_unwritable_latch_path_still_alerts(tmp_path, monkeypatch):
+    """Persistence is best effort. Losing it across a reboot is
+    acceptable; refusing to alert a guardian is not."""
+    blocked = tmp_path / "file-not-a-dir"
+    blocked.write_text("x")
+    monkeypatch.setattr(app_module, "LOW_BATTERY_STATE_PATH", blocked / "latch")
+
+    instance = MockApp()
+    instance.battery = _ScriptedBattery(_reading(LOW_BATTERY_PERCENT - 1))
+    instance.alert_sink = MockTelemetryClient()
+    _check_now(instance)
+
+    assert len(_low_battery_alerts(instance)) == 1
+    assert instance._low_battery_alerted is True
 
 
 # --- rate limiting -----------------------------------------------------------

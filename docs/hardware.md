@@ -109,19 +109,38 @@ but heading had to move to a dedicated part, and the AK8963 driver
 To check whether an "MPU9250" is genuine, read `WHO_AM_I` (`0x75`): `0x71` =
 MPU9250, `0x73` = MPU9255, `0x70` = MPU6500 (no compass), `0x68` = MPU6050.
 
-**⚠️ Power it from 3.3 V (Pin 1 or 17), NOT Pin 2.** The MPU6050 row above
-uses Pin 2, which is 5 V. GY-271-style QMC5883L breakouts are 3.3 V parts;
-some carry a regulator, many do not, and most pass SDA/SCL through
-**unshifted**. Copying the MPU6050 pin table verbatim is the most likely way
-to destroy this sensor.
+**⚠️ Power it from 3.3 V, NOT Pin 2.** The MPU6050 row above uses Pin 2,
+which is 5 V — that board has a regulator, GY-271-style QMC5883L breakouts
+often do not, and most pass SDA/SCL through **unshifted**. Copying the
+MPU6050 pin table verbatim is the most likely way to destroy this sensor.
+3.3 V is safe on either board variant: the bare chip runs at 2.16-3.6 V, and
+a board that does carry an LDO still passes 3.3 V through fine.
+
+Four wires. Both are **taps onto rails that already exist**, not free header
+pins — the Pi's only two 3.3 V pins (1 and 17) are already taken by the two
+DYP-A22s, and the three push buttons already need 3.3 V, so the build has a
+distributed 3.3 V rail regardless. Splice into it; do the same for SDA/SCL,
+which the MPU6050 is already on.
 
 ```
-Pin 1 (3V3)     VCC     <-- NOT Pin 2
-Pin 9 (GND)     GND
-Pin 3 (GPIO 2)  SDA
-Pin 5 (GPIO 3)  SCL
-DRDY            not connected
+3.3 V rail          VCC     <-- NOT Pin 2 (5 V). Pins 1 and 17 are taken by
+                                the DYP-A22s — tap the shared 3.3 V rail.
+Pin 14 (GND)        GND     <-- or any free GND: 20, 25, 34, 39
+Pin 3 (GPIO 2)      SDA     <-- shared with the MPU6050 and the UPS HAT
+Pin 5 (GPIO 3)      SCL     <-- shared
+DRDY                not connected
 ```
+
+No level shifter and no I²C address conflict: `0x0D` (compass), `0x68` (IMU)
+and `0x2D` (UPS HAT) are distinct, and everything on this bus is 3.3 V logic.
+
+Pull-up caveat: the Pi has fixed 1.8 kΩ pull-ups on GPIO 2/3, and each
+breakout adds its own (typically 4.7 kΩ). Three devices in parallel pull the
+effective resistance to roughly 1 kΩ, near the point where an I²C device
+can't sink enough current to drive the line low. If the bus turns flaky after
+adding this module — dropped reads, `i2cdetect` showing addresses
+intermittently — remove the two pull-up resistors on the QMC5883L breakout
+rather than lowering the Pi's (which is not adjustable).
 
 **Naming trap.** Modules sold as "HMC5883L" or "GY-271" almost always carry a
 QMC5883L, which is *not* register-compatible with Honeywell's original. The
