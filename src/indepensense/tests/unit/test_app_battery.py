@@ -26,6 +26,7 @@ def _reading(percentage: int, charging: bool = False) -> BatteryReading:
         voltage_mv=3700,
         current_ma=500 if charging else -500,
         percentage=percentage,
+        remaining_mah=30 * percentage,
         charging_state="charging" if charging else "discharging",
         cell_voltages_mv=(3700, 0, 0, 0),
         time_to_empty_min=0 if charging else 90,

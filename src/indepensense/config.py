@@ -220,6 +220,12 @@ TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 # useful if you cannot say what was running.
 PERF_LOG_DIR = PROJECT_ROOT / "data" / "performance"
 
+# Where the UPS manual test writes its CSV logs. Same reasoning as
+# `PERF_LOG_DIR` — a battery trace is evaluation data, not source, and a
+# charge cycle takes hours, so it must not matter which directory you
+# happened to launch the test from.
+BATTERY_LOG_DIR = PROJECT_ROOT / "data" / "battery"
+
 # YOLOv8 object detection.
 #
 # The `-oiv7` suffix picks the variant trained on Open Images V7 (600

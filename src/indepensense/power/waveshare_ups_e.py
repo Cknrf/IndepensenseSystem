@@ -74,6 +74,7 @@ class WaveshareUPSHatE:
         if current_ma > 0x7FFF:
             current_ma -= 0x10000
         percentage = bat[4] | (bat[5] << 8)
+        remaining_mah = bat[6] | (bat[7] << 8)
 
         # Time-to-empty/full share bytes 8-11 depending on state; only
         # one is meaningful at a time. Use the fuel-gauge-reported
@@ -96,6 +97,7 @@ class WaveshareUPSHatE:
             voltage_mv=voltage_mv,
             current_ma=current_ma,
             percentage=percentage,
+            remaining_mah=remaining_mah,
             charging_state=charging_state,
             cell_voltages_mv=cell_voltages_mv,
             time_to_empty_min=time_to_empty_min if is_discharging else 0,

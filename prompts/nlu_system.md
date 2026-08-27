@@ -61,7 +61,7 @@ intent.
 
 3. For `navigation.start`:
    - `location` must contain ONLY the place or destination name. Never
-     include any of these modifiers or navigation phrases in the value:
+     include any of these modifiers or navigation phrases in the valque:
        * Modifiers: `nearest`, `closest`, `pinakamalapit`, `pinakamalapit na`, `malapit na`
        * English phrases: `take me to`, `guide me to`, `navigate to`, `bring me to`, `go to`, `how do I get to`
        * Tagalog phrases: `dalhin mo ako sa`, `puntahan mo ang`, `gabayan mo ako sa`, `papuntang`

@@ -27,6 +27,14 @@ class BatteryReading:
     # two's-complement conversion.
     current_ma: int
     percentage: int                          # 0-100
+    # Charge the gauge believes is left, in mAh. Read alongside
+    # `percentage` because the two together say *how* the HAT estimates
+    # state of charge: if `remaining_mah / percentage` stays constant the
+    # gauge is scaling one fixed capacity (so `percentage` is really just
+    # a voltage reading in disguise); if the ratio drifts, it is counting
+    # coulombs against a learned capacity. We cannot see the MCU's
+    # firmware, so this ratio is the only evidence available.
+    remaining_mah: int
     charging_state: str                      # "idle" | "charging" | "fast_charging" | "discharging"
     cell_voltages_mv: tuple[int, int, int, int]
     time_to_empty_min: int                   # 0 when not discharging

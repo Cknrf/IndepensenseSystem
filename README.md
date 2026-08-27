@@ -240,6 +240,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | Component | Command |
 |---|---|
 | UPS HAT — voltage, current, percent | `python -m indepensense.power.tests.manual.single_ups_test` |
+| UPS HAT — fuel-gauge trace to CSV | `python -m indepensense.power.tests.manual.single_ups_test --csv --interval 10` |
 
 ### Safety
 
