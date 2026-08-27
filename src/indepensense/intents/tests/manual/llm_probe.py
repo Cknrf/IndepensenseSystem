@@ -36,6 +36,24 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 # Kept in sync with `config.NLU_MODEL`. Override on the command line to
 # benchmark other models — that is the point of this script.
 DEFAULT_MODEL = "qwen3:1.7b"
+
+# Two separate budgets, because the first query is not like the others.
+#
+# COLD: the first query must prefill the whole system prompt (~10.8 KB,
+# roughly 2,700 tokens) and may also load the weights off the SD card.
+# Prefill is CPU-bound and this is a CPU-only Pi, so it can run to
+# minutes. A hardcoded 60 s here used to abort the probe before it
+# produced a single data point — and it was stricter than the app itself,
+# which allows `NLU_WARMUP_TIMEOUT_S` (90 s). Generous on purpose: the
+# point of the cold measurement is to learn the real number, not to
+# enforce a limit.
+#
+# WARM: subsequent queries reuse Ollama's prefix cache for the system
+# prompt, so they only generate. Still well above `NLU_TIMEOUT_S` (30 s)
+# because a probe that truncates a slow query reports a wrong latency
+# instead of a slow one.
+COLD_QUERY_TIMEOUT_S = 300.0
+WARM_QUERY_TIMEOUT_S = 120.0
 MODEL = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
 
 # Qwen 3 is a hybrid reasoning model and emits a `<think>` block unless told
@@ -216,7 +234,10 @@ def free_ram_mb() -> int:
     return -1
 
 
-def query(text: str) -> tuple[float, dict | None, str]:
+def query(
+    text: str,
+    timeout_s: float = WARM_QUERY_TIMEOUT_S,
+) -> tuple[float, dict | None, str]:
     """Send one transcript to Ollama. Return (elapsed_s, parsed_json_or_None, raw_response).
 
     Sends `think: False` for reasoning models. If Ollama rejects the flag
@@ -238,7 +259,7 @@ def query(text: str) -> tuple[float, dict | None, str]:
         payload["think"] = False
 
     t0 = time.time()
-    response = requests.post(OLLAMA_URL, json=payload, timeout=60)
+    response = requests.post(OLLAMA_URL, json=payload, timeout=timeout_s)
     elapsed = time.time() - t0
 
     try:
@@ -251,7 +272,9 @@ def query(text: str) -> tuple[float, dict | None, str]:
         if _send_think and "think" in error.lower():
             _send_think = False
             print(f"  note: {MODEL} rejected `think` — disabling it for the rest of this run")
-            return query(text)
+            # Pass the budget through: a cold query that lands here must
+            # keep its longer allowance, not silently fall back to the warm one.
+            return query(text, timeout_s=timeout_s)
         return elapsed, None, f"HTTP {response.status_code}: {error[:150]}"
 
     raw = body.get("response", "")
@@ -311,9 +334,18 @@ def main():
     print(f"Free RAM before loading model: {free_ram_mb()} MB")
     print("Warming up with a throwaway query...")
 
-    cold_elapsed, _, _ = query("Hello")
+    cold_elapsed, _, _ = query("Hello", timeout_s=COLD_QUERY_TIMEOUT_S)
     print(f"Cold query took {cold_elapsed:.2f}s")
     print(f"Free RAM after model loaded: {free_ram_mb()} MB")
+    if cold_elapsed > 90:
+        # `config.NLU_WARMUP_TIMEOUT_S` is 90 s. A cold query slower than
+        # that means the app's own startup warmup gives up, so the first
+        # real voice command after boot pays this cost instead.
+        print(
+            f"  NOTE: this exceeds NLU_WARMUP_TIMEOUT_S (90s), so app.py's "
+            f"startup warmup would time out and the first voice command "
+            f"would pay the prefill."
+        )
     print()
 
     total_time = 0.0
