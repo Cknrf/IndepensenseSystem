@@ -55,6 +55,8 @@ from indepensense.config import (
     PTT_BUTTON_GPIO,
     SIM7600_GPS_PORT,
     DEFAULT_LANGUAGE,
+    LANGUAGE_STATE_PATH,
+    SUPPORTED_LANGUAGES,
     TELEMETRY_TIMEOUT_S,
     VOICE_TEST_DIR,
     WHISPER_INITIAL_PROMPTS,
@@ -67,6 +69,7 @@ from indepensense.intents.parser import OllamaIntentParser
 from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.photon import PhotonGeocoder
 from indepensense.credential import load_device_credential
+from indepensense.language import LanguageState
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
 from indepensense.voice.audio import (
     play,
@@ -151,12 +154,27 @@ def main():
         base_url=BACKEND_URL, timeout_s=TELEMETRY_TIMEOUT_S
     )
 
+    # Shared by reference with the executor, and read fresh at every STT
+    # and TTS call below — the same arrangement as `app.py`. Without this
+    # the executor built its own state defaulting to English while STT and
+    # TTS stayed pinned to DEFAULT_LANGUAGE, so `system.language` appeared
+    # to do nothing: the switch happened somewhere nothing else could see.
+    #
+    # Persists to the same file the app uses, so a switch made here is
+    # still in effect the next time the wearable boots.
+    language = LanguageState(
+        default=DEFAULT_LANGUAGE,
+        supported=SUPPORTED_LANGUAGES,
+        state_path=LANGUAGE_STATE_PATH,
+    )
+
     executor = IntentExecutor(
         router=router,
         geocoder=geocoder,
         gps=gps,
         telemetry=telemetry,
         device_id=credential.device_id,
+        language=language,
     )
 
     # Shared cancel flag: emergency callback sets it to signal any
@@ -178,7 +196,7 @@ def main():
             try:
                 response = executor.execute(IntentResult(intent=Intent.EMERGENCY_TRIGGER))
                 print(f"[EMERGENCY BUTTON] response: {response}", flush=True)
-                tts.synthesize(response, resp_path, language=DEFAULT_LANGUAGE)
+                tts.synthesize(response, resp_path, language=language.current)
                 play(resp_path)
             except Exception as exc:
                 print(f"[EMERGENCY BUTTON] handler error: {exc}", flush=True)
@@ -187,7 +205,7 @@ def main():
 
     trigger = "button" if button is not None else "keyboard"
     emerg = "wired" if emergency_button is not None else "not wired"
-    print(f"Ready. Active language: {DEFAULT_LANGUAGE}. PTT: {trigger}. Emergency button: {emerg}.\n")
+    print(f"Ready. Active language: {language.current}. PTT: {trigger}. Emergency button: {emerg}.\n")
 
     try:
         while True:
@@ -226,8 +244,8 @@ def main():
             t0 = time.time()
             transcript = stt.transcribe(
                 input_path,
-                language=DEFAULT_LANGUAGE,
-                initial_prompt=WHISPER_INITIAL_PROMPTS.get(DEFAULT_LANGUAGE) or None,
+                language=language.current,
+                initial_prompt=WHISPER_INITIAL_PROMPTS.get(language.current) or None,
             )
             print(f"  ({time.time() - t0:.1f}s) transcript: {transcript.text or '(silence)'}")
 
@@ -251,7 +269,7 @@ def main():
             # 5. Synthesise + play — check cancel one more time so we don't
             # step on the emergency's TTS output at the speaker.
             t0 = time.time()
-            tts.synthesize(response, response_path, language=DEFAULT_LANGUAGE)
+            tts.synthesize(response, response_path, language=language.current)
             print(f"  ({time.time() - t0:.1f}s) synthesised {response_path.name}")
 
             if cancel_recording.is_set():
