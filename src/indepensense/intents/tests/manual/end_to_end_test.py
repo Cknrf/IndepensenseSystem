@@ -34,8 +34,12 @@ Prerequisites (all must be running on the Pi):
 Run from repo root with:
     python -m indepensense.intents.tests.manual.end_to_end_test
 
+    # No buttons wired? Drive it from the keyboard instead:
+    python -m indepensense.intents.tests.manual.end_to_end_test --keyboard
+
 Ctrl-C exits the loop cleanly.
 """
+import argparse
 import threading
 import time
 from datetime import datetime
@@ -94,8 +98,15 @@ def _try_open_gps():
 def _try_open_button():
     """Try to open the PTT button on GPIO; return None if unavailable.
 
-    Falls back to None (keyboard mode) when gpiozero can't claim the pin —
-    which is what happens on a Mac, or on a Pi without the wiring in place.
+    Returns None only when gpiozero cannot claim the pin at all — which
+    happens on a Mac, but NOT on a Pi with nothing wired to the pin.
+    gpiozero constructs a `Button` on any valid GPIO regardless of what is
+    physically attached; an unconnected input simply never fires. A missing
+    button is indistinguishable from an unpressed one in software.
+
+    So on real hardware without the wiring this succeeds, the script
+    reports `PTT: button`, and then waits forever for a press that cannot
+    come. Use `--keyboard` to force the Enter path.
     """
     try:
         from indepensense.feedback.gpio_button import GPIOButton
@@ -120,7 +131,21 @@ def _try_open_emergency_button():
         return None
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--keyboard",
+        action="store_true",
+        help="ignore the GPIO buttons and drive everything from the keyboard: "
+             "Enter to start recording, Enter again to stop. Needed on a Pi "
+             "where the buttons are not wired yet, since a missing button "
+             "cannot be detected in software.",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = _parse_args()
     print("Initialising voice + intent stack...")
     print("  Loading Whisper models...")
     stt = FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
@@ -140,10 +165,15 @@ def main():
     geocoder = PhotonGeocoder(base_url=PHOTON_URL)
     print("  Opening GPS...")
     gps = _try_open_gps()
-    print("  Opening PTT button...")
-    button = _try_open_button()
-    print("  Opening Emergency button...")
-    emergency_button = _try_open_emergency_button()
+    if args.keyboard:
+        print("  Keyboard mode (--keyboard): skipping both GPIO buttons.")
+        button = None
+        emergency_button = None
+    else:
+        print("  Opening PTT button...")
+        button = _try_open_button()
+        print("  Opening Emergency button...")
+        emergency_button = _try_open_emergency_button()
     print(f"  Connecting telemetry to {BACKEND_URL}...")
     credential = load_device_credential(DEVICE_KEY_PATH)
     if credential is None:

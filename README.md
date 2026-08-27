@@ -270,7 +270,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | Purpose | Command |
 |---|---|
 | GraphHopper + Photon end-to-end lookup | `python -m indepensense.routing.tests.manual.end_to_end_test` |
-| Voice → intent → handler end-to-end | `python -m indepensense.intents.tests.manual.end_to_end_test` |
+| Voice → intent → handler end-to-end | `python -m indepensense.intents.tests.manual.end_to_end_test` — add `--keyboard` when the PTT/SOS buttons aren't wired |
 | LLM intent-classification probe (66 test prompts, scored per language group) | `python -m indepensense.intents.tests.manual.llm_probe` |
 | Cloud LLM probe — real Mistral calls, latency and answer quality | `python -m indepensense.intents.tests.manual.cloud_probe` |
 
