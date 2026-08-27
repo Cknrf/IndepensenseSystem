@@ -6,6 +6,24 @@ Requires=ollama.service
 
 [Service]
 Type=oneshot
+# `Type=oneshot` disables the start timeout by default, and the
+# ExecStartPre below is an unbounded `until` loop. Together that means a
+# model which never appears leaves this unit "starting" forever — and
+# `indepensense.service` is ordered `After=` this one, so the wearable
+# never starts either. Observed: a missing model held this unit for five
+# hours with no error, and only the fact that indepensense.service wasn't
+# installed yet hid the consequence.
+#
+# Past this, fail and let indepensense start anyway: a wearable that comes
+# up with a cold model is slow on its first voice command, which beats one
+# that never comes up at all.
+#
+# This budget covers the WHOLE unit start — the ExecStartPre wait plus the
+# ExecStart load — so it must exceed `--max-time` on ExecStart below or
+# systemd kills curl while curl still believes it has time, which reads as
+# a mysterious truncation rather than a timeout. 180 here, 120 there:
+# 60 s of headroom for Ollama to come up and catalogue the model.
+TimeoutStartSec=180
 # Wait until Ollama's HTTP endpoint is actually responding AND has our
 # specific model catalogued. `--fail` returns non-zero on any HTTP error
 # so the `until` loop keeps trying if Ollama returns 500 while still
@@ -16,11 +34,14 @@ ExecStartPre=/bin/bash -c 'until curl -sf http://127.0.0.1:11434/api/tags | grep
 # Flags:
 #   --fail-with-body : exit non-zero on HTTP 4xx/5xx and print body
 #   -S               : show errors even in silent mode
-#   --max-time 300   : allow up to 5 minutes for the model load
+#   --max-time 120   : cap the model load. Must stay BELOW the unit's
+#                      TimeoutStartSec above, which bounds the whole start
+#                      including the ExecStartPre wait. Loading 1.4 GB off
+#                      the SD card is tens of seconds, so this is generous.
 #
 # The response body is captured on failure so `journalctl -u ollama-warmup`
 # shows the real error (was previously silenced by `-s` + no `--fail`).
-ExecStart=/usr/bin/curl -sS --fail-with-body --max-time 300 -X POST http://127.0.0.1:11434/api/generate \
+ExecStart=/usr/bin/curl -sS --fail-with-body --max-time 120 -X POST http://127.0.0.1:11434/api/generate \
     -H 'Content-Type: application/json' \
     -d '{"model":"qwen3:1.7b","prompt":"ok","keep_alive":-1,"stream":false,"options":{"num_predict":4}}' \
     -o /dev/null
