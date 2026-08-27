@@ -1,6 +1,6 @@
 """Battery / power interfaces.
 
-Modeled on the Waveshare UPS HAT (E) — a 4S1P Li-ion pack (four 18650s
+Modeled on the Waveshare UPS HAT (E) — a 4S1P Li-ion pack (four 21700s
 in series) with an I²C fuel gauge that reports voltage, current, per-cell
 voltages, and a computed percentage. The dataclass here is deliberately
 richer than what a hobby project usually needs because the underlying

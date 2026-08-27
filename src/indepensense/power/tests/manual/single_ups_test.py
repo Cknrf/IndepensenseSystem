@@ -36,10 +36,13 @@ the lower half of a Li-ion discharge curve.
 
 CSVs land in `config.BATTERY_LOG_DIR`, not the current directory — a
 charge cycle runs for hours and the file should not depend on where the
-test was launched from.
+test was launched from. Every row is flushed and fsynced, because the
+discharge run is expected to end with the HAT cutting power to the Pi
+mid-sample.
 """
 import argparse
 import csv
+import os
 import sys
 import time
 from datetime import datetime
@@ -161,10 +164,16 @@ def main():
                         min_cell,
                         spread,
                     ])
-                    # Flush every row: this run ends by the pack dying or
-                    # by Ctrl-C, and an unflushed buffer loses the tail —
-                    # which is the part that matters.
+                    # Flush AND fsync every row. The discharge run ends
+                    # with the HAT cutting power mid-sample — no signal,
+                    # no unwinding, the Pi just stops. `flush()` alone
+                    # only moves bytes from Python's buffer into the OS
+                    # page cache, which a hard power cut discards; the
+                    # tail rows are exactly the ones worth having.
+                    # fsync forces them onto the SD card. At a 2-30 s
+                    # sampling interval the write cost is irrelevant.
                     csv_file.flush()
+                    os.fsync(csv_file.fileno())
 
             time.sleep(args.interval)
     except KeyboardInterrupt:

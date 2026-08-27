@@ -11,10 +11,11 @@ from indepensense.power.base import BatteryReading
 
 
 # Nominal pack capacity: the HAT is 4S1P, so pack mAh equals single-cell
-# mAh — four 3000 mAh 18650s in series store 4x the energy at 4x the
-# voltage, not 4x the charge. Only used to give the mock a plausible
-# default; the real value comes off the HAT.
-_NOMINAL_CAPACITY_MAH = 3000
+# mAh — four 21700s in series store 4x the energy at 4x the voltage, not
+# 4x the charge. Matches the ~4750 mAh divisor the real gauge was
+# measured using. Only used to give the mock a plausible default; the
+# real value comes off the HAT.
+_NOMINAL_CAPACITY_MAH = 4750
 
 
 def _make_reading(

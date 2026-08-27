@@ -228,9 +228,16 @@ python -m indepensense.sensors.tests.manual.magnetometer_calibrate
 
 ### Waveshare UPS HAT (E) — STATUS: working
 
-Battery power + fuel gauge for the wearable. Four 18650 Li-ion cells
+Battery power + fuel gauge for the wearable. Four 21700 Li-ion cells
 in a 4S1P configuration (nominal ~14.4 V, full charge ~16.8 V) via a
 proprietary I²C fuel gauge at address `0x2D`.
+
+In 1P the pack's charge capacity equals a *single* cell's — the series
+wiring multiplies voltage, not mAh. The gauge divides by a fixed
+capacity of ~4750 mAh to produce its `percentage`, so if the installed
+cells hold less than that, the reported percentage is optimistic by
+exactly that ratio. See the module docstring in
+`src/indepensense/power/tests/manual/single_ups_test.py`.
 
 **Mounts UNDER the Pi via pogo pins** — spring-loaded contacts on the
 HAT touch test points on the Pi's underside. No GPIO header pins are

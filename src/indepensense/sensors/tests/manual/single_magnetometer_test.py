@@ -95,7 +95,7 @@ def main():
                         f"\n  NOTE: |B| = {magnitude:.1f} μT is above Earth's "
                         f"25-65 μT.\n"
                         f"  Something magnetic is within a few cm — the UPS "
-                        f"HAT's 18650 cells and\n"
+                        f"HAT's 21700 cells and\n"
                         f"  the Pi itself are the usual culprits. Move the "
                         f"sensor further away.\n"
                     )
