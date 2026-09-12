@@ -6,8 +6,8 @@ by feeding synthetic GPS positions and asserting on the cues returned.
 from indepensense.navigation.monitor import (
     NavigationCue,
     NavigationMonitor,
-    round_speech_distance,
 )
+from indepensense.intents.messages import round_speech_distance
 from indepensense.routing.base import Coordinate, Route, RouteInstruction
 
 

@@ -133,3 +133,64 @@ def test_missing_placeholder_does_not_raise():
     """A caller that forgot a field gets the raw template, not a crash."""
     result = messages.get("nav.place_not_found", "en")
     assert "location" in result
+
+
+# --- distance rendering ------------------------------------------------------
+#
+# The wearable used to announce a cross-province geocode as "513600 meters",
+# which Piper reads out in full. Under a kilometre stays in metres because
+# that is the resolution a walking user acts on.
+
+def test_short_distances_stay_in_meters():
+    assert messages.speak_distance(412, "en") == "400 meters"
+    assert messages.speak_distance(87, "en") == "90 meters"
+
+
+def test_just_under_a_kilometre_is_still_meters():
+    assert messages.speak_distance(900, "en") == "900 meters"
+
+
+def test_a_kilometre_and_over_switches_unit():
+    assert messages.speak_distance(1500, "en") == "1.5 kilometers"
+    assert messages.speak_distance(8200, "en") == "8.2 kilometers"
+
+
+def test_rounding_up_across_the_boundary_switches_unit_too():
+    """950 m rounds to 1000 m, so the unit has to be chosen from the
+    rounded value or it would say "1000 meters"."""
+    assert messages.speak_distance(950, "en") == "1 kilometer"
+
+
+def test_exactly_one_kilometre_is_singular_in_english():
+    assert messages.speak_distance(1000, "en") == "1 kilometer"
+
+
+def test_whole_kilometres_drop_the_decimal():
+    """"2.0 kilometers" is not how anyone says it."""
+    assert messages.speak_distance(2000, "en") == "2 kilometers"
+
+
+def test_long_distances_drop_the_decimal_entirely():
+    """513.6 km is noise on a number whose only job is to say "too far"."""
+    assert messages.speak_distance(513_580, "en") == "514 kilometers"
+
+
+def test_tagalog_uses_its_own_unit_words():
+    assert messages.speak_distance(412, "tl") == "400 metro"
+    assert messages.speak_distance(8200, "tl") == "8.2 kilometro"
+
+
+def test_tagalog_does_not_inflect_the_singular():
+    """Tagalog nouns are not inflected for number, so one kilometre reads
+    the same as any other count — unlike English."""
+    assert messages.speak_distance(1000, "tl") == "1 kilometro"
+
+
+def test_every_language_renders_every_magnitude():
+    """A missing translation here would surface as the wearable speaking a
+    raw key mid-sentence."""
+    for language in messages.LANGUAGES:
+        for metres in (5, 87, 412, 900, 950, 1000, 1500, 8200, 513_580):
+            rendered = messages.speak_distance(metres, language)
+            assert "{" not in rendered, (language, metres, rendered)
+            assert "distance." not in rendered, (language, metres, rendered)

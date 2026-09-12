@@ -30,6 +30,7 @@ everything else falls through to English on purpose, not by omission.
 code path per language rather than a shared pluraliser — see
 `count_label`.
 """
+import math
 import sys
 
 # Languages this catalogue covers. Keep in step with `config.PIPER_VOICES`,
@@ -40,6 +41,29 @@ FALLBACK_LANGUAGE = "en"
 
 
 MESSAGES: dict[str, dict[str, str]] = {
+    # --- distances ----------------------------------------------------------
+    # The unit is its own message rather than part of every sentence that
+    # mentions a distance, because which unit applies depends on the value:
+    # `speak_distance` picks one of these three. Baking "meters" into the
+    # templates is what made the wearable announce a cross-province geocode
+    # as "five hundred thirteen thousand six hundred meters".
+    #
+    # English inflects the noun and Tagalog does not, so the one-kilometre
+    # case gets its own key rather than a shared "{value} kilometer(s)"
+    # template that would only be correct in one of the two languages.
+    "distance.meters": {
+        "en": "{value} meters",
+        "tl": "{value} metro",
+    },
+    "distance.kilometers": {
+        "en": "{value} kilometers",
+        "tl": "{value} kilometro",
+    },
+    "distance.one_kilometer": {
+        "en": "1 kilometer",
+        "tl": "1 kilometro",
+    },
+
     # --- hardware the user is told to touch ---------------------------------
     # Where the push-to-talk button physically sits on the enclosure, as a
     # word the wearer can act on. Separate from the sentences that use it so
@@ -85,8 +109,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Wala akong nakitang lugar na tumutugma sa '{location}'.",
     },
     "nav.started": {
-        "en": "Navigating to {destination}. Total distance {distance} meters. {first_action}",
-        "tl": "Papunta na tayo sa {destination}. Ang kabuuang distansya ay {distance} metro. {first_action}",
+        "en": "Navigating to {destination}. Total distance {distance}. {first_action}",
+        "tl": "Papunta na tayo sa {destination}. Ang kabuuang distansya ay {distance}. {first_action}",
     },
     "nav.none_active": {
         "en": "You don't have an active navigation.",
@@ -109,16 +133,16 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Nasa destinasyon ka na.",
     },
     "nav.walk_to_arrive": {
-        "en": "Walk {distance} meters to arrive at your destination.",
-        "tl": "Maglakad ng {distance} metro para makarating sa destinasyon.",
+        "en": "Walk {distance} to arrive at your destination.",
+        "tl": "Maglakad ng {distance} para makarating sa destinasyon.",
     },
     "nav.turn_immediately": {
         "en": "{instruction} immediately.",
         "tl": "{instruction} kaagad.",
     },
     "nav.turn_in_distance": {
-        "en": "In {distance} meters, {instruction}.",
-        "tl": "Sa {distance} metro, {instruction}.",
+        "en": "In {distance}, {instruction}.",
+        "tl": "Sa {distance}, {instruction}.",
     },
 
     # Destination confirmation. The geocoder returns the best *guess*, and a
@@ -130,12 +154,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     # the sentence, so a rebuilt enclosure is one edit in one place instead of
     # a hunt through every message that names a button.
     "nav.confirm_destination": {
-        "en": "{place}, {distance} meters away. Press the {button} button to "
+        "en": "{place}, {distance} away. Press the {button} button to "
               "confirm, or wait to cancel.",
         # "kaliwang pindutan", not "kaliwa na pindutan" — the ligature is
         # baked into the `button.ptt_position` value so the template stays a
         # plain substitution rather than growing per-language grammar glue.
-        "tl": "{place}, {distance} metro ang layo. Pindutin ang {button} "
+        "tl": "{place}, {distance} ang layo. Pindutin ang {button} "
               "pindutan para kumpirmahin, o maghintay para kanselahin.",
     },
     "nav.confirm_timed_out": {
@@ -394,6 +418,76 @@ def count_label(label: str, count: int, language: str) -> str:
             return f"isang {translated}"
         return f"{count} {translated}"
     return english_plural(label, count)
+
+
+def round_speech_distance(m: float) -> int:
+    """Round a distance in metres to a value pleasant for speech synthesis.
+
+    "In 87 meters, turn left" sounds robotic. "In 90 meters..." sounds
+    natural. Rounds to the nearest 10 m for distances under 100 m,
+    nearest 50 m up to 500 m, nearest 100 m beyond. Never returns 0.
+
+    Halves round up (25 -> 30, 650 -> 700). We deliberately avoid the
+    builtin `round()` here: it uses banker's rounding (round-half-to-
+    even), so `round(6.5)` is 6, not 7 — which would speak 650 m as
+    "600 meters". Overstating the remaining distance by a half-step is
+    also the safer error for a walking user: they arrive slightly
+    early rather than being told to turn after they have passed it.
+
+    Returns a bare number. `speak_distance` is what turns it into words.
+    """
+    if m < 100:
+        return max(10, _round_half_up(m, 10))
+    if m < 500:
+        return _round_half_up(m, 50)
+    return _round_half_up(m, 100)
+
+
+def _round_half_up(m: float, step: int) -> int:
+    """Round `m` to the nearest multiple of `step`, halves going up."""
+    return int(math.floor(m / step + 0.5)) * step
+
+
+# Above this many metres, speak kilometres instead. One kilometre is the
+# point where the metre count stops being something a walker can picture:
+# "eight hundred meters" is a distance you can feel, "eight thousand two
+# hundred meters" is arithmetic.
+_KILOMETRE_M = 1000
+
+# And above this, drop the decimal. "8.2 kilometers" is useful precision
+# for a walk; "513.6 kilometers" is noise on a number whose only job is to
+# tell the user this destination is absurd.
+_WHOLE_KILOMETRE_M = 10_000
+
+
+def speak_distance(metres: float, language: str) -> str:
+    """Render a distance as words, choosing the unit to suit the magnitude.
+
+    Under a kilometre it stays in metres, because that is the resolution a
+    walking user acts on. At or above, it switches to kilometres — the
+    wearable used to announce a cross-province geocode as "513600 meters",
+    which Piper reads out in full and nobody can parse.
+
+    The unit word comes from the catalogue above rather than being
+    concatenated here, so Tagalog is a translation rather than a special
+    case, and the one-kilometre singular stays correct in English.
+    """
+    rounded_m = round_speech_distance(metres)
+    if rounded_m < _KILOMETRE_M:
+        return get("distance.meters", language, value=rounded_m)
+
+    km = rounded_m / 1000.0
+    if rounded_m >= _WHOLE_KILOMETRE_M:
+        value: float | int = int(_round_half_up(km, 1))
+    else:
+        value = round(km, 1)
+        if value == int(value):
+            # 2.0 -> 2, so it is spoken "2 kilometers" not "2.0 kilometers".
+            value = int(value)
+
+    if value == 1:
+        return get("distance.one_kilometer", language)
+    return get("distance.kilometers", language, value=value)
 
 
 def join_items(items: list[str], language: str) -> str:

@@ -36,7 +36,7 @@ from indepensense.routing.base import (
     haversine_m,
 )
 from indepensense.routing.ranking import rank_candidates
-from indepensense.navigation.monitor import NavigationMonitor, round_speech_distance
+from indepensense.navigation.monitor import NavigationMonitor
 from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
@@ -130,7 +130,7 @@ def _first_action_description(route: Route, language: str) -> str:
                 return messages.get(
                     "nav.walk_to_arrive",
                     language,
-                    distance=round_speech_distance(distance_to_action),
+                    distance=messages.speak_distance(distance_to_action, language),
                 )
             # left or right
             if distance_to_action == 0.0:
@@ -140,7 +140,7 @@ def _first_action_description(route: Route, language: str) -> str:
             return messages.get(
                 "nav.turn_in_distance",
                 language,
-                distance=round_speech_distance(distance_to_action),
+                distance=messages.speak_distance(distance_to_action, language),
                 instruction=instr.text,
             )
         distance_to_action += instr.distance_m
@@ -345,7 +345,7 @@ class IntentExecutor:
             "nav.started",
             self._lang,
             destination=destination.name,
-            distance=f"{route.distance_m:.0f}",
+            distance=messages.speak_distance(route.distance_m, self._lang),
             first_action=_first_action_description(route, self._lang),
         )
 
@@ -676,8 +676,8 @@ class IntentExecutor:
             "nav.confirm_destination",
             self._lang,
             place=_describe_destination(destination),
-            distance=round_speech_distance(
-                haversine_m(origin, destination.coordinate)
+            distance=messages.speak_distance(
+                haversine_m(origin, destination.coordinate), self._lang,
             ),
             button=messages.get("button.ptt_position", self._lang),
         )

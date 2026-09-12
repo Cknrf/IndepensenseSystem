@@ -45,6 +45,7 @@ import math
 import time
 from dataclasses import dataclass
 
+from indepensense.intents.messages import round_speech_distance
 from indepensense.routing.base import Coordinate, Route, haversine_m
 
 
@@ -407,27 +408,3 @@ class NavigationMonitor:
         )
 
 
-def round_speech_distance(m: float) -> int:
-    """Round a distance to a value pleasant for speech synthesis.
-
-    "In 87 meters, turn left" sounds robotic. "In 90 meters..." sounds
-    natural. Rounds to the nearest 10 m for distances under 100 m,
-    nearest 50 m up to 500 m, nearest 100 m beyond. Never returns 0.
-
-    Halves round up (25 -> 30, 650 -> 700). We deliberately avoid the
-    builtin `round()` here: it uses banker's rounding (round-half-to-
-    even), so `round(6.5)` is 6, not 7 — which would speak 650 m as
-    "600 meters". Overstating the remaining distance by a half-step is
-    also the safer error for a walking user: they arrive slightly
-    early rather than being told to turn after they have passed it.
-    """
-    if m < 100:
-        return max(10, _round_half_up(m, 10))
-    if m < 500:
-        return _round_half_up(m, 50)
-    return _round_half_up(m, 100)
-
-
-def _round_half_up(m: float, step: int) -> int:
-    """Round `m` to the nearest multiple of `step`, halves going up."""
-    return int(math.floor(m / step + 0.5)) * step
