@@ -28,6 +28,7 @@ from indepensense.intents import messages
 from indepensense.intents.base import CloudAnswerer, Intent, IntentResult
 from indepensense.language import LanguageState
 from indepensense.routing.base import Coordinate, Geocoder, GeocodingResult, Route, Router
+from indepensense.routing.ranking import rank_candidates
 from indepensense.navigation.monitor import NavigationMonitor, round_speech_distance
 from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
@@ -199,6 +200,7 @@ class IntentExecutor:
         cloud: CloudAnswerer | None = None,
         ocr_max_chars: int = 500,
         cloud_max_chars: int = 500,
+        geocode_candidate_limit: int = 10,
     ):
         self._router = router
         self._geocoder = geocoder
@@ -218,6 +220,7 @@ class IntentExecutor:
         self._cloud = cloud
         self._ocr_max_chars = ocr_max_chars
         self._cloud_max_chars = cloud_max_chars
+        self._geocode_candidate_limit = geocode_candidate_limit
 
         self._current_route: Route | None = None
 
@@ -272,14 +275,24 @@ class IntentExecutor:
         if start is None:
             return messages.get("nav.no_gps_for_start", self._lang)
 
-        # Always pass the user's position as a proximity bias. For chain
-        # names ("Jollibee", "7-Eleven"), this returns the local branch
-        # instead of a random one across the country. For specific named
-        # places ("SM Manila"), Photon's text-match relevance still wins.
-        hits = self._geocoder.geocode(location, limit=1, near=start)
+        # Ask for several candidates and decide locally. Photon's own
+        # ordering blends text relevance with an opaque location bias, so
+        # taking its first result means accepting a choice we cannot
+        # inspect — which is how "Jollibee" resolved to a branch 700 km
+        # away. `near` still biases the search; ranking decides the answer.
+        hits = self._geocoder.geocode(
+            location, limit=self._geocode_candidate_limit, near=start,
+        )
         if not hits:
             return messages.get("nav.place_not_found", self._lang, location=location)
-        destination = hits[0]
+
+        ranked = rank_candidates(
+            hits,
+            origin=start,
+            query=location,
+            prefer_nearest=bool(result.parameters.get("nearest", False)),
+        )
+        destination = ranked[0]
 
         route = self._router.route(start, destination.coordinate, profile="foot")
         self._current_route = route

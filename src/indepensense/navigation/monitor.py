@@ -45,7 +45,7 @@ import math
 import time
 from dataclasses import dataclass
 
-from indepensense.routing.base import Coordinate, Route
+from indepensense.routing.base import Coordinate, Route, haversine_m
 
 
 # Thresholds — imported by app.py via config; also inlined here as
@@ -82,23 +82,6 @@ class NavigationCue:
     kind: str
     text: str | None = None
     direction: str | None = None
-
-
-def _haversine_m(a: Coordinate, b: Coordinate) -> float:
-    """Great-circle distance in metres between two lat/lon points.
-
-    Standard haversine formula. Accurate to <1 m at walking scales; the
-    Earth's ellipsoidal shape only matters for kilometre-scale routing
-    and we're operating at sub-100 m thresholds.
-    """
-    r_earth_m = 6_371_000.0
-    lat1 = math.radians(a.lat)
-    lat2 = math.radians(b.lat)
-    d_lat = math.radians(b.lat - a.lat)
-    d_lon = math.radians(b.lon - a.lon)
-    h = (math.sin(d_lat / 2) ** 2
-         + math.cos(lat1) * math.cos(lat2) * math.sin(d_lon / 2) ** 2)
-    return 2 * r_earth_m * math.asin(math.sqrt(h))
 
 
 def _distance_to_segment_m(p: Coordinate, a: Coordinate, b: Coordinate) -> float:
@@ -142,7 +125,7 @@ def _min_distance_to_polyline_m(pos: Coordinate, points: list[Coordinate]) -> fl
     if not points:
         return float("inf")
     if len(points) == 1:
-        return _haversine_m(pos, points[0])
+        return haversine_m(pos, points[0])
 
     best = float("inf")
     for i in range(len(points) - 1):
@@ -283,7 +266,7 @@ class NavigationMonitor:
                 # up to `announce_distance_m` (100 m) early.
                 break
 
-            distance = _haversine_m(position, instr.location)
+            distance = haversine_m(position, instr.location)
 
             # Announce (once) at the announce threshold.
             if (distance <= self._announce_distance_m
@@ -323,7 +306,7 @@ class NavigationMonitor:
         destination = self._destination_instruction()
         if destination is None or destination.location is None:
             return None
-        if _haversine_m(position, destination.location) > self._advance_distance_m:
+        if haversine_m(position, destination.location) > self._advance_distance_m:
             return None
         return NavigationCue(
             kind="arrive",

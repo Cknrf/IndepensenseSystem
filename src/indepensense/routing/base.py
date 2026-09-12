@@ -4,6 +4,7 @@
 uses (lat, lon). GeoJSON encodes coordinates as (lon, lat); drivers translate
 at the boundary so callers never see GeoJSON's order.
 """
+import math
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -12,6 +13,28 @@ from typing import Protocol
 class Coordinate:
     lat: float
     lon: float
+
+
+def haversine_m(a: Coordinate, b: Coordinate) -> float:
+    """Great-circle distance in metres between two coordinates.
+
+    Standard haversine formula. Accurate to <1 m at walking scales; the
+    Earth's ellipsoidal shape only matters for kilometre-scale routing and
+    every consumer here operates well below that.
+
+    Lives beside `Coordinate` rather than in either caller because both the
+    navigation monitor (distance to the next turn) and candidate ranking
+    (distance to each geocoder hit) need it, and neither domain should have
+    to import the other to measure a distance.
+    """
+    r_earth_m = 6_371_000.0
+    lat1 = math.radians(a.lat)
+    lat2 = math.radians(b.lat)
+    d_lat = math.radians(b.lat - a.lat)
+    d_lon = math.radians(b.lon - a.lon)
+    h = (math.sin(d_lat / 2) ** 2
+         + math.cos(lat1) * math.cos(lat2) * math.sin(d_lon / 2) ** 2)
+    return 2 * r_earth_m * math.asin(math.sqrt(h))
 
 
 @dataclass(frozen=True)
@@ -70,13 +93,17 @@ class Geocoder(Protocol):
         limit: int = 5,
         near: Coordinate | None = None,
     ) -> list[GeocodingResult]:
-        """Forward-geocode a place name into coordinates.
+        """Forward-geocode a place name into candidate coordinates.
 
-        When `near` is provided, the geocoder biases results toward that
-        location. Exact name matches for specific places (e.g. "SM
-        Manila") still win over proximity — the bias only breaks ties
-        between multiple matches with equivalent text relevance (e.g. the
-        five hundred Jollibees scattered across the country).
+        Returns up to `limit` candidates in the geocoder's own relevance
+        order, which blends text match against an opaque location bias.
+        `near` nudges that bias but does not control it.
+
+        Callers must NOT assume the first result is the one the user
+        meant. No geocoder here answers "which of these is nearest" —
+        that question is decided by `routing.ranking.rank_candidates`
+        over the full candidate list. Asking for a single result throws
+        away the information that decision needs.
         """
 
     def reverse(self, coordinate: Coordinate) -> GeocodingResult | None:

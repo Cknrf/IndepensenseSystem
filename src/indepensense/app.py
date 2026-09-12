@@ -107,6 +107,7 @@ from indepensense.config import (
     DYP_A22_BOTTOM_PORT,
     DYP_A22_TOP_PORT,
     EMERGENCY_BUTTON_GPIO,
+    GEOCODE_CANDIDATE_LIMIT,
     GRAPHHOPPER_URL,
     GUARDIAN_CACHE_PATH,
     GUARDIAN_FETCH_TIMEOUT_S,
@@ -454,6 +455,7 @@ class App:
             cloud=self.cloud,
             cloud_max_chars=CLOUD_MAX_RESPONSE_CHARS,
             ocr_max_chars=OCR_MAX_CHARS,
+            geocode_candidate_limit=GEOCODE_CANDIDATE_LIMIT,
         )
 
         print("  Opening buttons...", flush=True)

@@ -7,6 +7,7 @@ import time
 
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
+from indepensense.routing.base import Coordinate, GeocodingResult
 from indepensense.routing.mock import MockGeocoder, MockRouter
 from indepensense.sensors.base import GPSFix
 from indepensense.telemetry.base import EventType
@@ -228,3 +229,113 @@ def test_unknown_intent_asks_user_to_retry():
     executor = _make_executor()
     response = executor.execute(IntentResult(Intent.UNKNOWN))
     assert "didn't understand" in response.lower() or "try again" in response.lower()
+
+
+# --- candidate ranking reaches the geocoder ---------------------------------
+#
+# `routing/tests/unit/test_ranking.py` proves the ranking arithmetic. These
+# prove the executor actually feeds it — `nearest` was parsed, normalised
+# and documented for months while `_handle_navigation_start` never read it.
+
+class _RecordingGeocoder:
+    """Records how it was called and returns scripted candidates."""
+
+    def __init__(self, candidates):
+        self._candidates = candidates
+        self.calls: list[dict] = []
+
+    def geocode(self, query, limit=5, near=None):
+        self.calls.append({"query": query, "limit": limit, "near": near})
+        return list(self._candidates)
+
+    def reverse(self, coordinate):
+        return None
+
+
+def _candidate(name: str, lat: float, lon: float) -> GeocodingResult:
+    return GeocodingResult(
+        name=name,
+        coordinate=Coordinate(lat=lat, lon=lon),
+        country="Philippines",
+        city=None,
+        feature_type="restaurant",
+    )
+
+
+def test_navigation_start_requests_multiple_candidates():
+    """Asking for one result is the bug — you cannot re-rank a list of one."""
+    geocoder = _RecordingGeocoder([_candidate("Jollibee", 14.5824, 120.9760)])
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=geocoder, gps=_StaticGPS(),
+        geocode_candidate_limit=10,
+    )
+
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert geocoder.calls[0]["limit"] == 10
+
+
+def test_navigation_start_passes_the_user_position_as_bias():
+    geocoder = _RecordingGeocoder([_candidate("Jollibee", 14.5824, 120.9760)])
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=geocoder, gps=_StaticGPS(lat=14.5824, lon=120.9760),
+    )
+
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert geocoder.calls[0]["near"] == Coordinate(lat=14.5824, lon=120.9760)
+
+
+def test_navigation_start_picks_the_nearest_matching_candidate():
+    """The Jollibee regression, end to end through the executor."""
+    far = _candidate("Jollibee", 11.2444, 125.0048)       # Tacloban
+    near = _candidate("Jollibee Manila", 14.5830, 120.9770)
+    geocoder = _RecordingGeocoder([far, near])            # geocoder's order: far first
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=geocoder, gps=_StaticGPS(lat=14.5824, lon=120.9760),
+    )
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert "Jollibee Manila" in response
+
+
+def test_nearest_true_overrides_a_better_name_match():
+    """`nearest` must change the outcome, or it is still a dead parameter."""
+    exact_but_far = _candidate("Pharmacy", 11.2444, 125.0048)
+    unnamed_but_close = _candidate("Mercury Drug", 14.5830, 120.9770)
+    geocoder = _RecordingGeocoder([exact_but_far, unnamed_but_close])
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=geocoder, gps=_StaticGPS(lat=14.5824, lon=120.9760),
+    )
+
+    nearest = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Pharmacy", "nearest": True}
+    ))
+    specific = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Pharmacy", "nearest": False}
+    ))
+
+    assert "Mercury Drug" in nearest
+    assert "Pharmacy" in specific
+
+
+def test_a_missing_nearest_parameter_defaults_to_name_matching():
+    """The parser normalises `nearest` in, but a hand-built IntentResult
+    (or a future caller) may omit it — that must not raise."""
+    geocoder = _RecordingGeocoder([_candidate("Jollibee", 14.5830, 120.9770)])
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=geocoder, gps=_StaticGPS(),
+    )
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee"}
+    ))
+
+    assert "Jollibee" in response

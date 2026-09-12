@@ -284,6 +284,20 @@ OCR_MAX_CHARS = 500
 GRAPHHOPPER_URL = "http://127.0.0.1:8989"
 PHOTON_URL = "http://127.0.0.1:2322"
 
+# How many candidates to pull from Photon before deciding which one the
+# user meant (`routing/ranking.py`).
+#
+# This used to be 1, which is the bug that sent a user in Lipa toward a
+# Jollibee in Tacloban: Photon ranks by its own blend of text relevance and
+# an opaque location bias, and asking for a single result means accepting
+# that blend with no recourse. You cannot re-rank a list of one.
+#
+# 10 is "enough that the intended branch is almost certainly in the set,
+# small enough that the response stays tiny and the sort is free". Not a
+# magic number — raise it if a chain turns out to have more nearby
+# branches than this in one city.
+GEOCODE_CANDIDATE_LIMIT = 10
+
 # Voice — see docs/voice.md for model downloads.
 #
 # Piper does not yet ship a native Filipino/Tagalog voice. As a workaround the
