@@ -337,9 +337,10 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 
 | Doc | Contents |
 |---|---|
-| [`docs/hardware.md`](docs/hardware.md) | Full wiring, pin, and I²C-address reference |
+| [`docs/hardware.md`](docs/hardware.md) | Full wiring, pin, I²C-address, and enclosure-layout reference |
 | [`docs/voice.md`](docs/voice.md) | Voice-pipeline architecture (STT → intent → TTS) |
 | [`docs/graphhopper.md`](docs/graphhopper.md) | GraphHopper install, map data, systemd service |
 | [`docs/photon.md`](docs/photon.md) | Photon install, index data, systemd service |
 | [`docs/sim7600.md`](docs/sim7600.md) | SIM7600 module setup — cellular data and GPS |
+| [`docs/deferred.md`](docs/deferred.md) | Work consciously parked, and why — the source for Future Work |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreement and architecture decisions in force |

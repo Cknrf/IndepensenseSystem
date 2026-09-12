@@ -291,7 +291,7 @@ python -m indepensense.feedback.tests.manual.buzzer_test              # default 
 python -m indepensense.feedback.tests.manual.buzzer_test 21           # any pin
 ```
 
-### Push Buttons (KY-004 style) — STATUS: driver ready, awaiting wiring
+### Push Buttons (KY-004 style) — STATUS: wired on the prototype
 
 Three identical breakout-mounted buttons. Each module has an on-board
 10 kΩ pull-down resistor and drives OUT HIGH when pressed (active-high
@@ -302,14 +302,38 @@ active-high pull-down accordingly.
 Each button needs three wires: VCC to Pi 3.3V, GND to Pi GND, OUT to the
 GPIO pin listed below.
 
-| Function                     | Pi physical pin | Pi GPIO  |
-|------------------------------|-----------------|----------|
-| Push-to-talk (PTT)           | 16              | GPIO 23  |
-| Emergency                    | 18              | GPIO 24  |
-| Repeat last instruction      | 22              | GPIO 25  |
+| Function                     | Pi physical pin | Pi GPIO  | Position on enclosure |
+|------------------------------|-----------------|----------|-----------------------|
+| Push-to-talk (PTT)           | 16              | GPIO 23  | **left**              |
+| Emergency                    | 18              | GPIO 24  | *unrecorded*          |
+| Repeat last instruction      | 22              | GPIO 25  | *unrecorded*          |
 
 All three pins are configurable via `PTT_BUTTON_GPIO`, `EMERGENCY_BUTTON_GPIO`,
 and `REPEAT_BUTTON_GPIO` in `indepensense.config`.
+
+#### Physical position is spoken aloud — keep this column true
+
+Positions are **body-relative: as worn, user facing forward** — the same
+frame the three vibration motors use (front / right / left below). A
+position is meaningless without a frame, and the user cannot look down to
+resolve an ambiguous one.
+
+The PTT position is not merely documentation. The wearable reads it out
+when it asks the user to confirm a destination:
+
+> "Jollibee Lipa City, 400 meters away. Press the **left** button to
+> confirm, or wait to cancel."
+
+That word comes from the `button.ptt_position` key in
+`src/indepensense/intents/messages.py`, in both English and Tagalog. **If
+the enclosure is rebuilt and PTT moves, change that key** — otherwise the
+device confidently sends a blind user to press the emergency button. The
+key exists separately from the sentences that use it precisely so this is
+one edit rather than a hunt.
+
+Emergency and Repeat positions are left blank rather than guessed: nothing
+currently speaks them, and a wrong value here is worse than a missing one.
+Fill them in from the physical prototype when convenient.
 
 Manual test:
 ```bash
