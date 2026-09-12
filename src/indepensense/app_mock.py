@@ -57,6 +57,18 @@ callbacks on, so pressing one runs the true handler:
     app.emergency_button.press()   # fires the emergency path
     app.magnetometer.set_heading(90.0)
 
+`navigation.start` now reads its chosen destination back and waits
+`config.DESTINATION_CONFIRM_TIMEOUT_S` for a PTT press before routing, so
+driving it from here takes a second press while that window is open:
+
+    app.ptt_button.press()         # speak the command
+    ...                            # destination is read back
+    app.ptt_button.press()         # confirm — otherwise it cancels
+
+Left the mock buttons' problem rather than special-cased, because the
+window is real behaviour and skipping it here would mean the mock runtime
+no longer exercises the path the Pi takes.
+
 `MockBuzzer` and `MockVibrationMotor` record every call to a public
 `events` list instead of making noise, so you can assert on what the
 runtime tried to do:

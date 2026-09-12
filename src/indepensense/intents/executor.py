@@ -22,12 +22,19 @@ path from English pluralisation.
 import sys
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from indepensense.intents import messages
 from indepensense.intents.base import CloudAnswerer, Intent, IntentResult
 from indepensense.language import LanguageState
-from indepensense.routing.base import Coordinate, Geocoder, GeocodingResult, Route, Router
+from indepensense.routing.base import (
+    Coordinate,
+    Geocoder,
+    GeocodingResult,
+    Route,
+    Router,
+    haversine_m,
+)
 from indepensense.routing.ranking import rank_candidates
 from indepensense.navigation.monitor import NavigationMonitor, round_speech_distance
 from indepensense.power.base import BatteryReader
@@ -36,30 +43,48 @@ from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
 from indepensense.vision.base import Camera, Detection, Detector, OCR
 
 
+def _place_parts(hit: GeocodingResult, *fields: str) -> list[str]:
+    """Pull the named `GeocodingResult` fields, skipping blanks and repeats.
+
+    Photon regularly returns the same string as `name` and `district`, or
+    `name` and `city`, and speaking "Jollibee, Jollibee, Lipa City" sounds
+    broken. De-duplication is case-insensitive; the first spelling wins.
+    """
+    parts: list[str] = []
+    seen: set[str] = set()
+    for field in fields:
+        value = getattr(hit, field, None)
+        if not value:
+            continue
+        key = value.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        parts.append(value.strip())
+    return parts
+
+
+def _describe_destination(hit: GeocodingResult) -> str:
+    """Name a geocoded place precisely enough to tell branches apart.
+
+    Street is what actually distinguishes one Jollibee from another, so it
+    matters more here than in `_format_location_response` — this string is
+    the user's only chance to catch a wrong pick before they start walking.
+    Comma-joined rather than run through `join_items`: this is an address,
+    and "Jollibee, B. Morada Avenue, and Lipa City" reads as a list of three
+    separate places.
+    """
+    parts = _place_parts(hit, "name", "street", "city")
+    return ", ".join(parts) if parts else hit.name
+
+
 def _format_location_response(hit: GeocodingResult, language: str) -> str:
     """Build a spoken location description from a reverse-geocode hit.
 
     Combines up to four fields (name, street, district, city) into a natural
-    "You are near A, B, C" sentence. De-duplicates so we never repeat the
-    same string twice — Photon sometimes returns the same value as `name`
-    and `district`, or `name` and `city`.
+    "You are near A, B, C" sentence.
     """
-    parts: list[str] = []
-    seen: set[str] = set()
-
-    def _add(value: str | None) -> None:
-        if not value:
-            return
-        key = value.strip().lower()
-        if not key or key in seen:
-            return
-        seen.add(key)
-        parts.append(value.strip())
-
-    _add(hit.name)
-    _add(hit.street)
-    _add(hit.district)
-    _add(hit.city)
+    parts = _place_parts(hit, "name", "street", "district", "city")
 
     if not parts:
         return messages.get(
@@ -198,6 +223,11 @@ class IntentExecutor:
         ocr: OCR | None = None,
         language: LanguageState | None = None,
         cloud: CloudAnswerer | None = None,
+        # Asks the user to approve a destination and returns their answer.
+        # Injected rather than called directly because confirming needs
+        # speech and a button press, which this class must stay free of —
+        # tests pass a lambda, `app.py` passes the real thing.
+        confirmer: Callable[[str], bool] | None = None,
         ocr_max_chars: int = 500,
         cloud_max_chars: int = 500,
         geocode_candidate_limit: int = 10,
@@ -218,6 +248,7 @@ class IntentExecutor:
             default=messages.FALLBACK_LANGUAGE, supported=messages.LANGUAGES,
         )
         self._cloud = cloud
+        self._confirmer = confirmer
         self._ocr_max_chars = ocr_max_chars
         self._cloud_max_chars = cloud_max_chars
         self._geocode_candidate_limit = geocode_candidate_limit
@@ -293,6 +324,14 @@ class IntentExecutor:
             prefer_nearest=bool(result.parameters.get("nearest", False)),
         )
         destination = ranked[0]
+
+        # Read the choice back before committing to it. Ranking makes the
+        # right pick far more likely but cannot make it certain — the user
+        # is the only one who knows which Jollibee they meant, and they
+        # cannot glance at a map to check. Declining costs one repeated
+        # command; walking the wrong way costs much more.
+        if not self._confirm_destination(destination, start):
+            return messages.get("nav.confirm_timed_out", self._lang)
 
         route = self._router.route(start, destination.coordinate, profile="foot")
         self._current_route = route
@@ -610,6 +649,43 @@ class IntentExecutor:
         return text
 
     # --- helpers ------------------------------------------------------------
+
+    def _confirm_destination(
+        self,
+        destination: GeocodingResult,
+        origin: Coordinate,
+    ) -> bool:
+        """Ask the user to approve a geocoded destination before routing.
+
+        Returns True to proceed. With no `confirmer` wired — unit tests,
+        and any future caller that has no way to ask — this returns True
+        and navigation behaves exactly as it did before confirmation
+        existed. That default is deliberate: a missing confirmation
+        channel must not make navigation impossible, and the geocoder's
+        answer is the same one the wearable would have used anyway.
+
+        A confirmer that raises is treated as a decline. It runs on the
+        voice thread and touches audio and GPIO, so it can fail in ways
+        this executor has no business interpreting — and proceeding on a
+        question the user may never have heard is the worse guess.
+        """
+        if self._confirmer is None:
+            return True
+
+        question = messages.get(
+            "nav.confirm_destination",
+            self._lang,
+            place=_describe_destination(destination),
+            distance=round_speech_distance(
+                haversine_m(origin, destination.coordinate)
+            ),
+            button=messages.get("button.ptt_position", self._lang),
+        )
+        try:
+            return bool(self._confirmer(question))
+        except Exception as exc:
+            print(f"[nav] confirmation failed: {exc}", file=sys.stderr, flush=True)
+            return False
 
     def _current_position(self) -> Coordinate | None:
         if self._gps is None:

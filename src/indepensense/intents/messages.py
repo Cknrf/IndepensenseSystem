@@ -40,6 +40,17 @@ FALLBACK_LANGUAGE = "en"
 
 
 MESSAGES: dict[str, dict[str, str]] = {
+    # --- hardware the user is told to touch ---------------------------------
+    # Where the push-to-talk button physically sits on the enclosure, as a
+    # word the wearer can act on. Separate from the sentences that use it so
+    # that re-fabricating the enclosure — or discovering PTT is actually the
+    # middle button — is a single edit that cannot leave the two languages
+    # disagreeing. See docs/hardware.md for the layout this describes.
+    "button.ptt_position": {
+        "en": "left",
+        "tl": "kaliwang",
+    },
+
     # --- language switching -------------------------------------------------
     # Spoken in the language being switched TO, so hearing the confirmation
     # verifies the switch worked. A wrong switch is immediately audible.
@@ -108,6 +119,28 @@ MESSAGES: dict[str, dict[str, str]] = {
     "nav.turn_in_distance": {
         "en": "In {distance} meters, {instruction}.",
         "tl": "Sa {distance} metro, {instruction}.",
+    },
+
+    # Destination confirmation. The geocoder returns the best *guess*, and a
+    # user who cannot read a map has no way to notice it picked the branch in
+    # the next province — so the wearable reads its choice back and waits for
+    # a deliberate press before routing anywhere.
+    #
+    # `{button}` is filled from `button.ptt_position` rather than written into
+    # the sentence, so a rebuilt enclosure is one edit in one place instead of
+    # a hunt through every message that names a button.
+    "nav.confirm_destination": {
+        "en": "{place}, {distance} meters away. Press the {button} button to "
+              "confirm, or wait to cancel.",
+        # "kaliwang pindutan", not "kaliwa na pindutan" — the ligature is
+        # baked into the `button.ptt_position` value so the template stays a
+        # plain substitution rather than growing per-language grammar glue.
+        "tl": "{place}, {distance} metro ang layo. Pindutin ang {button} "
+              "pindutan para kumpirmahin, o maghintay para kanselahin.",
+    },
+    "nav.confirm_timed_out": {
+        "en": "Cancelled. Please say where you want to go.",
+        "tl": "Kinansela. Pakisabi po kung saan kayo gustong pumunta.",
     },
 
     # --- location -----------------------------------------------------------

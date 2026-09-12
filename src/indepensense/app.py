@@ -102,6 +102,7 @@ from indepensense.config import (
     CLOUD_LLM_URL,
     CLOUD_MAX_RESPONSE_CHARS,
     DEFAULT_LANGUAGE,
+    DESTINATION_CONFIRM_TIMEOUT_S,
     DEVICE_KEY_PATH,
     DYP_A22_BAUDRATE,
     DYP_A22_BOTTOM_PORT,
@@ -453,6 +454,9 @@ class App:
             monitor=self.nav_monitor,
             language=self.language,
             cloud=self.cloud,
+            # Bound method, resolved at call time — `self.ptt_button` is
+            # still None right now and gets opened a few lines below.
+            confirmer=self._confirm_destination,
             cloud_max_chars=CLOUD_MAX_RESPONSE_CHARS,
             ocr_max_chars=OCR_MAX_CHARS,
             geocode_candidate_limit=GEOCODE_CANDIDATE_LIMIT,
@@ -1224,6 +1228,64 @@ class App:
                 except Exception:
                     pass
             self._voice_active.clear()
+
+    def _confirm_destination(self, question: str) -> bool:
+        """Speak `question`, then wait for a PTT press meaning "yes".
+
+        Given to the `IntentExecutor` as its `confirmer`, so it runs on the
+        voice thread inside `navigation.start` — between choosing a
+        destination and asking the router for a path.
+
+        Silence is "no". The prototype's three buttons are all spoken for,
+        so a dedicated "no" button does not exist; a timeout is the decline.
+        That also fails in the right direction, because the two ways this
+        can go wrong — the user did not hear the question, or is not holding
+        the device — should both end in not walking anywhere.
+
+        The PTT handler is swapped for the duration and restored afterwards,
+        the same borrow-and-return `record_until_button` performs. The press
+        that ends recording cannot leak into this window: several seconds of
+        speech separate them.
+
+        Returns False if an emergency press lands mid-question. The
+        emergency path is already speaking and alerting by then, and
+        starting turn-by-turn navigation on top of it would be absurd.
+        """
+        if self.ptt_button is None:
+            # No button means no way to ask. Reachable only in degraded
+            # setups — a PTT press is what starts a voice command in the
+            # first place, so in practice this button exists whenever this
+            # code runs. Proceed rather than making navigation impossible.
+            print("[nav] no PTT button — skipping confirmation.", flush=True)
+            return True
+
+        self._speak_error(question)   # reuse the best-effort speak helper
+        if self._voice_cancel.is_set():
+            return False
+
+        confirmed = threading.Event()
+        try:
+            self.ptt_button.on("pressed", confirmed.set)
+
+            deadline = time.monotonic() + DESTINATION_CONFIRM_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if confirmed.wait(timeout=0.05):
+                    break
+                if self._voice_cancel.is_set():
+                    return False
+        finally:
+            # Hand the button back even if speaking or waiting blew up,
+            # or the next press would land on a dead handler.
+            try:
+                self.ptt_button.on("pressed", self._on_ptt_press)
+            except Exception:
+                pass
+
+        if confirmed.is_set():
+            print("[nav] destination confirmed.", flush=True)
+            return True
+        print("[nav] destination confirmation timed out — cancelling.", flush=True)
+        return False
 
     def _speak_greeting(self) -> None:
         """Announce readiness in the active language. Never raises.

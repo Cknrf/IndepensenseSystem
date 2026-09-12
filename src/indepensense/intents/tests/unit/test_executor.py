@@ -7,6 +7,7 @@ import time
 
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
+from indepensense.navigation.monitor import NavigationMonitor
 from indepensense.routing.base import Coordinate, GeocodingResult
 from indepensense.routing.mock import MockGeocoder, MockRouter
 from indepensense.sensors.base import GPSFix
@@ -339,3 +340,129 @@ def test_a_missing_nearest_parameter_defaults_to_name_matching():
     ))
 
     assert "Jollibee" in response
+
+
+# --- destination confirmation ------------------------------------------------
+#
+# The executor only decides WHETHER to ask and what to do with the answer.
+# Speaking the question and reading the button is `app.py`'s job, injected
+# here as a plain callable — see `tests/unit/test_app_confirmation.py`.
+
+class _SpyConfirmer:
+    """Records the question it was asked and returns a canned answer."""
+
+    def __init__(self, answer: bool):
+        self._answer = answer
+        self.questions: list[str] = []
+
+    def __call__(self, question: str) -> bool:
+        self.questions.append(question)
+        return self._answer
+
+
+def _confirming_executor(confirmer, candidates=None):
+    candidates = candidates or [_candidate("Jollibee Manila", 14.5830, 120.9770)]
+    return IntentExecutor(
+        router=MockRouter(),
+        geocoder=_RecordingGeocoder(candidates),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        confirmer=confirmer,
+    )
+
+
+def test_confirmed_destination_starts_navigation():
+    confirmer = _SpyConfirmer(answer=True)
+    response = _confirming_executor(confirmer).execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert len(confirmer.questions) == 1
+    assert "Navigating" in response
+
+
+def test_a_declined_destination_does_not_navigate():
+    confirmer = _SpyConfirmer(answer=False)
+    executor = _confirming_executor(confirmer)
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert "cancelled" in response.lower()
+    assert "Navigating" not in response
+
+
+def test_declining_leaves_no_route_behind():
+    """A cancelled confirmation must not arm the navigation monitor, or the
+    wearable would start calling out turns to a place the user refused."""
+    monitor = NavigationMonitor()
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=_RecordingGeocoder([_candidate("Jollibee", 14.5830, 120.9770)]),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        monitor=monitor,
+        confirmer=_SpyConfirmer(answer=False),
+    )
+
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert not monitor.is_active()
+
+
+def test_the_question_names_the_place_the_distance_and_the_button():
+    """All three have to be there: the place so a wrong branch is audible,
+    the distance because that is what gives it away, and the button because
+    the user cannot see which one to press."""
+    confirmer = _SpyConfirmer(answer=True)
+    _confirming_executor(
+        confirmer, [_candidate("Jollibee Manila", 14.5830, 120.9770)],
+    ).execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    question = confirmer.questions[0]
+    assert "Jollibee Manila" in question
+    assert "meters away" in question
+    assert "left button" in question
+
+
+def test_navigation_without_a_confirmer_behaves_as_before():
+    """No confirmation channel must not mean no navigation."""
+    response = _confirming_executor(confirmer=None).execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert "Navigating" in response
+
+
+def test_a_raising_confirmer_is_treated_as_a_decline():
+    """It touches audio and GPIO on the voice thread, so it can fail in ways
+    the executor cannot interpret. Proceeding on a question the user may
+    never have heard is the worse guess."""
+    def _broken(question: str) -> bool:
+        raise OSError("audio device gone")
+
+    response = _confirming_executor(_broken).execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert "cancelled" in response.lower()
+
+
+def test_confirmation_is_not_asked_when_nothing_was_found():
+    """No point asking the user to approve a destination that doesn't exist."""
+    confirmer = _SpyConfirmer(answer=True)
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=_RecordingGeocoder([]),
+        gps=_StaticGPS(),
+        confirmer=confirmer,
+    )
+
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Nowhere", "nearest": False}
+    ))
+
+    assert confirmer.questions == []

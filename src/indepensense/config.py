@@ -366,6 +366,20 @@ REPEAT_BUTTON_GPIO = 25      # physical pin 22 — single click repeats last ins
 # current-draw caveat if the Pi shows undervoltage warnings).
 BUZZER_GPIO = 18             # physical pin 12
 
+# How long the wearable waits for the user to approve a destination before
+# it starts routing. A press within this window means yes; silence means no.
+#
+# Silence-as-decline is what lets a three-button prototype ask a yes/no
+# question at all — a "no" button would have needed a fourth. It also fails
+# in the safe direction: a user who did not hear the question, or who is not
+# holding the device, is never sent walking somewhere they did not choose.
+#
+# 4 s is long enough to hear the question end and react without hurrying,
+# short enough that a decline doesn't feel like the device has hung. The
+# whole confirmation costs ~3-4 s in the common case, since a yes lands as
+# soon as the user presses.
+DESTINATION_CONFIRM_TIMEOUT_S = 4.0
+
 # Voice pipeline safety cap. If the user presses PTT and never presses
 # again (or does so out of habit and forgets), recording auto-stops
 # after this many seconds. Downstream STT/LLM still runs on whatever
