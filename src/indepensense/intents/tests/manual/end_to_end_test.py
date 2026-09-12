@@ -15,6 +15,23 @@ Two physical buttons drive interaction:
   emergency wait for a currently-recording PTT session would defeat the
   point.
 
+Destination confirmation
+------------------------
+
+`navigation.start` does not route straight away. It reads its chosen
+destination back — name, street, distance — and waits for a **second PTT
+press** meaning yes; silence for `DESTINATION_CONFIRM_TIMEOUT_S` cancels.
+So a navigation command takes three presses in total: start recording,
+stop recording, confirm.
+
+Under `--keyboard` the confirmation blocks on Enter instead, with no
+timeout. The decision is the same but the timing behaviour is not, so
+"does silence cancel?" has to be checked on wired buttons.
+
+That confirmation time is reported separately from the execute timing —
+it is paced by the user, and counting it as executor latency would spoil
+the measurement.
+
 Concurrency caveat: the emergency handler runs on gpiozero's background
 thread. If the user presses emergency mid-recording or mid-playback,
 audio-device contention with sounddevice may briefly conflict. This is
@@ -46,8 +63,10 @@ from datetime import datetime
 
 from indepensense.config import (
     BACKEND_URL,
+    DESTINATION_CONFIRM_TIMEOUT_S,
     DEVICE_KEY_PATH,
     EMERGENCY_BUTTON_GPIO,
+    GEOCODE_CANDIDATE_LIMIT,
     GRAPHHOPPER_URL,
     NLU_MODEL,
     NLU_PROMPT_PATH,
@@ -114,6 +133,86 @@ def _try_open_button():
     except Exception as exc:
         print(f"  PTT button unavailable ({exc}). Falling back to keyboard Enter.")
         return None
+
+
+class _Confirmer:
+    """Asks the user to approve a geocoded destination before routing.
+
+    Handed to the `IntentExecutor` as its `confirmer`, so `navigation.start`
+    reaches it between choosing a destination and asking for a route —
+    the same wiring `app.py` uses, which is the point: without it this test
+    would exercise a navigation path production no longer has.
+
+    Two input modes, and they are NOT equivalent:
+
+      - **Button.** Speak the question, then wait `timeout_s` for a PTT
+        press. Silence declines. This mirrors production exactly.
+      - **Keyboard** (`--keyboard`). Blocks on `input()` with no timeout,
+        because a timed stdin read is platform-specific glue that would
+        only ever run in this file. Enter confirms, anything else
+        declines. The *decision* is faithful; the "silence declines"
+        timing behaviour is not — verify that on wired buttons.
+
+    Tracks how long it spent so the caller can subtract it from the
+    execute timing. Confirmation is user-paced, and folding seconds of
+    human reaction time into a measurement of the executor would make the
+    latency numbers this test prints useless.
+    """
+
+    def __init__(self, tts, language, button, cancel_event, timeout_s):
+        self._tts = tts
+        self._language = language
+        self._button = button
+        self._cancel = cancel_event
+        self._timeout_s = timeout_s
+        self._elapsed_s = 0.0
+
+    def take_elapsed_s(self) -> float:
+        """Seconds spent confirming since the last call, then reset."""
+        elapsed, self._elapsed_s = self._elapsed_s, 0.0
+        return elapsed
+
+    def __call__(self, question: str) -> bool:
+        t0 = time.time()
+        try:
+            return self._ask(question)
+        finally:
+            self._elapsed_s = time.time() - t0
+
+    def _ask(self, question: str) -> bool:
+        print(f"  [confirm] {question}")
+
+        timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
+        confirm_path = VOICE_TEST_DIR / f"{timestamp}_confirm.wav"
+        try:
+            self._tts.synthesize(
+                question, confirm_path, language=self._language.current,
+            )
+            play(confirm_path)
+        except Exception as exc:
+            # Best effort, matching `app.py`: a dead speaker must not make
+            # the question un-answerable, since it is printed above too.
+            print(f"  [confirm] could not speak: {exc}")
+
+        if self._cancel.is_set():
+            return False
+
+        if self._button is None:
+            answer = input("  [confirm] Enter to confirm, anything else to cancel: ")
+            return answer.strip() == ""
+
+        confirmed = threading.Event()
+        # No handler to restore: every consumer of this button in the loop
+        # below (`wait_for_button_press`, `record_until_button`) installs
+        # its own before use.
+        self._button.on("pressed", confirmed.set)
+        deadline = time.monotonic() + self._timeout_s
+        while time.monotonic() < deadline:
+            if confirmed.wait(timeout=0.05):
+                return True
+            if self._cancel.is_set():
+                return False
+        return False
 
 
 def _try_open_emergency_button():
@@ -198,6 +297,23 @@ def main():
         state_path=LANGUAGE_STATE_PATH,
     )
 
+    # Shared cancel flag: emergency callback sets it to signal any
+    # in-progress PTT recording/processing that it should abort. The
+    # main loop clears it at the top of every fresh PTT cycle.
+    #
+    # Declared before the executor because the confirmer closes over it —
+    # an emergency press must abort a pending destination confirmation,
+    # not leave the user waiting out a window that no longer matters.
+    cancel_recording = threading.Event()
+
+    confirmer = _Confirmer(
+        tts=tts,
+        language=language,
+        button=button,
+        cancel_event=cancel_recording,
+        timeout_s=DESTINATION_CONFIRM_TIMEOUT_S,
+    )
+
     executor = IntentExecutor(
         router=router,
         geocoder=geocoder,
@@ -205,12 +321,9 @@ def main():
         telemetry=telemetry,
         device_id=credential.device_id,
         language=language,
+        confirmer=confirmer,
+        geocode_candidate_limit=GEOCODE_CANDIDATE_LIMIT,
     )
-
-    # Shared cancel flag: emergency callback sets it to signal any
-    # in-progress PTT recording/processing that it should abort. The
-    # main loop clears it at the top of every fresh PTT cycle.
-    cancel_recording = threading.Event()
 
     # Wire the emergency button. Its handler runs on gpiozero's background
     # thread and fires the emergency.trigger intent immediately —
@@ -291,10 +404,17 @@ def main():
             if intent_result.raw_llm_response:
                 print(f"    raw LLM: {intent_result.raw_llm_response}")
 
-            # 4. Execute
+            # 4. Execute. `navigation.start` stops mid-way to confirm the
+            # destination, so subtract that out — it is user-paced, and
+            # folding human reaction time into the executor's timing would
+            # ruin the one number this stage is here to measure.
             t0 = time.time()
             response = executor.execute(intent_result)
-            print(f"  ({time.time() - t0:.1f}s) response: {response}")
+            execute_s = time.time() - t0
+            confirm_s = confirmer.take_elapsed_s()
+            print(f"  ({execute_s - confirm_s:.1f}s) response: {response}")
+            if confirm_s:
+                print(f"    (+{confirm_s:.1f}s spent confirming the destination)")
 
             # 5. Synthesise + play — check cancel one more time so we don't
             # step on the emergency's TTS output at the speaker.
