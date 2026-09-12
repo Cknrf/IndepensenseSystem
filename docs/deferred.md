@@ -85,6 +85,29 @@ sentence through. That is a real piece of work, not a translation pass.
 **Blocked on:** deciding the local instruction-synthesis grammar for both
 languages.
 
+### "Too far to walk" ceiling on geocoded destinations
+**Status:** parked · **Raised:** 2026-09-13
+
+Originally conceived as a hard filter — drop candidates beyond some
+distance so a result in another province can never be routed to. It was
+proposed when `routing/ranking.py` was the only defence, and ranking cannot
+help when the geocoder returns *only* far candidates: sorting a list of one
+changes nothing.
+
+Destination confirmation has since made it largely redundant. A far result
+is now read back to the user with its distance before anything is routed,
+and they decline. The guard would be a second net under a net that works.
+
+If revived, it should be a **spoken message rather than a silent filter** —
+"the nearest one I can find is 510 kilometres away, that's too far to walk"
+tells the user why nothing happened, where filtering would leave them with
+the false "I couldn't find any place matching Jollibee". It also needs a
+threshold that has to be defended: ~10 km is roughly a two-hour walk, which
+is a plausible ceiling for a battery-powered pedestrian device.
+
+**Revisit when:** field testing shows users being offered absurd
+destinations often enough that declining each one is a nuisance.
+
 ### Automatic re-routing after off-route deviation
 **Status:** parked
 
