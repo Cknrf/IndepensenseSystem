@@ -29,6 +29,7 @@ class Intent(Enum):
     VISION_READ = "vision.read"
     SYSTEM_LANGUAGE = "system.language"
     SYSTEM_HELP = "system.help"
+    SYSTEM_VOLUME = "system.volume"
     PLACE_SAVE = "place.save"
     PLACE_DELETE = "place.delete"
     UNKNOWN = "unknown"

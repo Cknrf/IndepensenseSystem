@@ -173,6 +173,11 @@ from indepensense.config import (
     OCR_LANGUAGES,
     OCR_MAX_CHARS,
     VOICE_TEST_DIR,
+    VOLUME_DEFAULT_PERCENT,
+    VOLUME_MAX_PERCENT,
+    VOLUME_MIN_PERCENT,
+    VOLUME_STATE_PATH,
+    VOLUME_STEP_PERCENT,
     WHISPER_INITIAL_PROMPTS,
     YOLO_CONFIDENCE_THRESHOLD,
     YOLO_MODEL_PATH,
@@ -220,6 +225,7 @@ from indepensense.voice.audio import (
     stop_playback,
 )
 from indepensense.voice.piper import PiperTTS
+from indepensense.voice.volume import VolumeState
 from indepensense.voice.whisper import FasterWhisperSTT
 
 
@@ -489,6 +495,7 @@ class App:
         self.tts: PiperTTS | None = None
         self.parser: OllamaIntentParser | None = None
         self.places: SavedPlaces | None = None
+        self.volume: VolumeState | None = None
         # Owns all speech that originates on the main loop. See `Announcer`.
         self.announcer: Announcer | None = None
         self.buffered: BufferedTelemetryClient | None = None
@@ -592,6 +599,9 @@ class App:
         self.announcer = Announcer(self.tts, VOICE_TEST_DIR)
         self.announcer.start()
 
+        self.volume = self._open_volume()
+        print(f"  Speaker volume {self.volume.current}%.", flush=True)
+
         print("  Connecting to Ollama (with warmup)...", flush=True)
         self.parser = self._open_parser()
 
@@ -657,6 +667,7 @@ class App:
             # still None right now and gets opened a few lines below.
             confirmer=self._confirm_destination,
             places=self.places,
+            volume=self.volume,
             cloud_max_chars=CLOUD_MAX_RESPONSE_CHARS,
             ocr_max_chars=OCR_MAX_CHARS,
             geocode_candidate_limit=GEOCODE_CANDIDATE_LIMIT,
@@ -1725,6 +1736,21 @@ class App:
             timeout_s=NLU_TIMEOUT_S,
             warmup=True,
             warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
+        )
+
+    def _open_volume(self) -> VolumeState:
+        """Speaker volume, restored from disk and pushed to the sink.
+
+        Not `_try_open_*`: it cannot fail in a way worth aborting for.
+        Every OS call inside is best effort, so a Pi without `wpctl`
+        simply runs at the system default and still talks.
+        """
+        return VolumeState(
+            default_percent=VOLUME_DEFAULT_PERCENT,
+            minimum_percent=VOLUME_MIN_PERCENT,
+            maximum_percent=VOLUME_MAX_PERCENT,
+            step_percent=VOLUME_STEP_PERCENT,
+            state_path=VOLUME_STATE_PATH,
         )
 
     def _open_saved_places(self) -> SavedPlaces:

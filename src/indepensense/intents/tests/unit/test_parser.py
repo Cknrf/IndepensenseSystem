@@ -235,3 +235,25 @@ def test_the_progress_intent_name_round_trips():
     assert parse_llm_response(
         '{"intent": "navigation.progress", "parameters": {}}', "how much further",
     ).intent is Intent.NAVIGATION_PROGRESS
+
+
+def test_the_mock_parser_reads_volume_requests():
+    parser = MockIntentParser()
+    assert parser.parse("louder").parameters == {"direction": "up"}
+    assert parser.parse("turn the volume down").parameters == {"direction": "down"}
+    assert parser.parse("set the volume to 60").parameters == {"level": 60}
+    assert parser.parse("palakasin mo ang tunog").parameters == {"direction": "up"}
+
+
+def test_speak_louder_is_volume_not_a_language_switch():
+    """"speak" is the verb for both. Only the object separates them, and
+    getting it wrong would switch language when the user just wanted to
+    hear the device on a noisy street."""
+    assert MockIntentParser().parse("speak louder").intent is Intent.SYSTEM_VOLUME
+    assert MockIntentParser().parse("speak English").intent is Intent.SYSTEM_LANGUAGE
+
+
+def test_the_volume_intent_name_round_trips():
+    assert parse_llm_response(
+        '{"intent": "system.volume", "parameters": {"direction": "up"}}', "louder",
+    ).intent is Intent.SYSTEM_VOLUME

@@ -140,6 +140,11 @@ ENGLISH_CASES = [
     # sole entry point to the cloud fallback (see intents/cloud.py). If
     # the model ever classified these as a real intent, the command would
     # be mishandled instead of answered.
+    # --- system.volume ---
+    ("Louder",                           "system.volume", {"direction": "up"}),
+    ("Turn the volume down",             "system.volume", {"direction": "down"}),
+    ("Set the volume to 60",             "system.volume", {"level": 60}),
+
     # --- navigation.progress ---
     ("How much further",                 "navigation.progress", {}),
     ("How far do I still have to go",    "navigation.progress", {}),
@@ -184,6 +189,9 @@ TAGALOG_CASES = [
     ("Mag-Ingles ka naman",                           "system.language",     {"language": "en"}),
     ("Magsalita ka ng Tagalog",                       "system.language",     {"language": "tl"}),
     ("Tagalog na lang",                               "system.language",     {"language": "tl"}),
+
+    ("Palakasin mo ang tunog",                        "system.volume",       {"direction": "up"}),
+    ("Pahinaan mo ang tunog",                         "system.volume",       {"direction": "down"}),
 
     ("Gaano pa kalayo",                               "navigation.progress", {}),
 
@@ -247,6 +255,10 @@ ADVERSARIAL_CASES = [
     # "English" out of a destination would swallow a real navigation
     # command and send the user nowhere.
     ("How do you say hello in Tagalog",  "unknown", {}),
+    # "speak" is the verb for both a volume change and a language switch.
+    # Only the object separates them.
+    ("Speak louder",                     "system.volume", {"direction": "up"}),
+
     ("Read this English sign",           "vision.read", {}),
     ("Take me to English Street",        "navigation.start", {"location": "English Street"}),
     ("I speak Tagalog at home",          "unknown", {}),

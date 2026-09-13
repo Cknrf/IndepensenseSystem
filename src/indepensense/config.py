@@ -375,6 +375,26 @@ DEFAULT_LANGUAGE = "tl"
 SUPPORTED_LANGUAGES = ("en", "tl")
 LANGUAGE_STATE_PATH = PROJECT_ROOT / "var" / "language"
 
+# Speaker volume, as a percentage of the audio sink's range.
+#
+# The 20% floor is a hard clamp, not a suggestion. Speech is this device's
+# only channel to its user, so a volume low enough to be inaudible on a
+# busy road is a trap with no way out: the user cannot hear the response
+# that would let them turn it back up, and there is no screen to fall back
+# on. `VolumeState` refuses to go below it whatever is asked.
+#
+# The buzzer is unaffected by all of this — it is driven straight from GPIO
+# and never passes through the audio sink, so obstacle and emergency alerts
+# keep their loudness no matter what the user sets here.
+#
+# 10% steps: small enough to tune, large enough that "louder" is audibly
+# louder on the first try rather than needing four presses.
+VOLUME_DEFAULT_PERCENT = 80
+VOLUME_MIN_PERCENT = 20
+VOLUME_MAX_PERCENT = 100
+VOLUME_STEP_PERCENT = 10
+VOLUME_STATE_PATH = PROJECT_ROOT / "var" / "volume"
+
 
 # Physical buttons (KY-004 style breakouts with on-board 10kΩ pull-down)
 PTT_BUTTON_GPIO = 23         # physical pin 16 — push-to-talk (click to start, click to stop)

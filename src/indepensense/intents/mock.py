@@ -82,6 +82,29 @@ class MockIntentParser:
                     "",
                 )
 
+        # Volume. Before the language matcher, which claims "speak" —
+        # "speak louder" is a volume request, not a language switch.
+        if any(w in text for w in ("volume", "louder", "quieter", "lakas ng tunog",
+                                   "palakasin", "pahinaan", "hinaan", "lakasan")):
+            import re
+            match = re.search(r"(\d+)", text)
+            if match:
+                return IntentResult(
+                    Intent.SYSTEM_VOLUME, {"level": int(match.group(1))},
+                    transcript, "",
+                )
+            if any(w in text for w in ("louder", "up", "palakasin", "lakasan",
+                                       "increase", "raise")):
+                return IntentResult(
+                    Intent.SYSTEM_VOLUME, {"direction": "up"}, transcript, "",
+                )
+            if any(w in text for w in ("quieter", "down", "pahinaan", "hinaan",
+                                       "lower", "decrease", "softer")):
+                return IntentResult(
+                    Intent.SYSTEM_VOLUME, {"direction": "down"}, transcript, "",
+                )
+            return IntentResult(Intent.SYSTEM_VOLUME, {}, transcript, "")
+
         if any(w in text for w in ("cancel navigation", "stop navigation", "ihinto")):
             return IntentResult(Intent.NAVIGATION_STOP, {}, transcript, "")
 

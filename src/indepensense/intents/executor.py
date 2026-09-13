@@ -42,6 +42,7 @@ from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
 from indepensense.vision.base import Camera, Detection, Detector, OCR
+from indepensense.voice.volume import VolumeState
 
 
 def _place_parts(hit: GeocodingResult, *fields: str) -> list[str]:
@@ -233,6 +234,9 @@ class IntentExecutor:
         # falls back to geocoding every destination, which is what the
         # wearable did before this existed.
         places: SavedPlaces | None = None,
+        # Speaker volume. None means the wearable cannot change it —
+        # it stays at whatever the OS default is and says so.
+        volume: VolumeState | None = None,
         ocr_max_chars: int = 500,
         cloud_max_chars: int = 500,
         geocode_candidate_limit: int = 10,
@@ -255,6 +259,7 @@ class IntentExecutor:
         self._cloud = cloud
         self._confirmer = confirmer
         self._places = places
+        self._volume = volume
         self._ocr_max_chars = ocr_max_chars
         self._cloud_max_chars = cloud_max_chars
         self._geocode_candidate_limit = geocode_candidate_limit
@@ -301,6 +306,7 @@ class IntentExecutor:
             Intent.VISION_READ:         self._handle_vision_read,
             Intent.SYSTEM_LANGUAGE:     self._handle_system_language,
             Intent.SYSTEM_HELP:         self._handle_system_help,
+            Intent.SYSTEM_VOLUME:       self._handle_system_volume,
             Intent.PLACE_SAVE:          self._handle_place_save,
             Intent.PLACE_DELETE:        self._handle_place_delete,
         }
@@ -697,6 +703,65 @@ class IntentExecutor:
         if self._places.delete(label):
             return messages.get("place.deleted", self._lang, label=label)
         return messages.get("place.not_found", self._lang, label=label)
+
+    def _handle_system_volume(self, result: IntentResult) -> str:
+        """Raise, lower, or set the speaker volume.
+
+        The response is spoken *at* the new volume by the caller, so
+        hearing it is the verification — the same reason the language
+        switch confirms in the language it switched to.
+
+        Refusing to go below the floor gets its own message rather than a
+        silent clamp. A user who asked for 10 percent and simply heard
+        "volume is now 20 percent" would think they were misheard; being
+        told why turns it into a decision they can understand.
+        """
+        if self._volume is None:
+            return messages.get("volume.unavailable", self._lang)
+
+        direction = (result.parameters.get("direction") or "").strip().lower()
+        level = result.parameters.get("level")
+
+        if direction == "up":
+            if self._volume.at_maximum():
+                return messages.get(
+                    "volume.at_maximum", self._lang, percent=self._volume.current,
+                )
+            return messages.get(
+                "volume.set", self._lang, percent=self._volume.louder(),
+            )
+
+        if direction == "down":
+            if self._volume.at_minimum():
+                return messages.get(
+                    "volume.at_minimum", self._lang, percent=self._volume.minimum,
+                )
+            return messages.get(
+                "volume.set", self._lang, percent=self._volume.quieter(),
+            )
+
+        if level is not None:
+            try:
+                requested = int(level)
+            except (TypeError, ValueError):
+                return self._volume_not_understood()
+            applied = self._volume.set(requested)
+            if requested < applied:
+                # Asked below the floor — say the floor and why, not just
+                # the number that happened instead.
+                return messages.get(
+                    "volume.at_minimum", self._lang, percent=applied,
+                )
+            return messages.get("volume.set", self._lang, percent=applied)
+
+        return self._volume_not_understood()
+
+    def _volume_not_understood(self) -> str:
+        minimum = self._volume.minimum if self._volume else 0
+        maximum = self._volume.maximum if self._volume else 100
+        return messages.get(
+            "volume.not_understood", self._lang, minimum=minimum, maximum=maximum,
+        )
 
     def _handle_system_help(self, result: IntentResult) -> str:
         """Say what the wearable can do, in the language it is speaking.

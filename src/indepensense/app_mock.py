@@ -84,6 +84,10 @@ from indepensense.config import (
     MOCK_ULTRASONIC_MAX_CM,
     MOCK_ULTRASONIC_MIN_CM,
     MOCK_ULTRASONIC_PERIOD_S,
+    VOLUME_DEFAULT_PERCENT,
+    VOLUME_MAX_PERCENT,
+    VOLUME_MIN_PERCENT,
+    VOLUME_STEP_PERCENT,
 )
 from indepensense.feedback.mock import MockButton, MockBuzzer, MockVibrationMotor
 from indepensense.intents.mock import MockCloudAnswerer, MockIntentParser
@@ -99,6 +103,7 @@ from indepensense.sensors.mock import (
 from indepensense.telemetry.mock import MockTelemetryClient
 from indepensense.vision.mock import MockCamera, MockDetector, MockOCR
 from indepensense.voice.mock import MockSTT, MockTTS
+from indepensense.voice.volume import VolumeState
 
 
 class MockApp(App):
@@ -137,6 +142,22 @@ class MockApp(App):
 
     def _open_tts(self) -> MockTTS:
         return MockTTS()
+
+    def _open_volume(self) -> VolumeState:
+        """The real state machine, with the OS call switched off.
+
+        Clamping, stepping and persistence are pure logic worth exercising
+        on a Mac; `wpctl` is not there and shelling out to it on every
+        start would print a failure on a path that is working as intended.
+        """
+        return VolumeState(
+            default_percent=VOLUME_DEFAULT_PERCENT,
+            minimum_percent=VOLUME_MIN_PERCENT,
+            maximum_percent=VOLUME_MAX_PERCENT,
+            step_percent=VOLUME_STEP_PERCENT,
+            state_path=None,
+            apply_on_start=False,
+        )
 
     def _try_open_cloud_answerer(self) -> MockCloudAnswerer:
         """Always on under mocks, regardless of `CLOUD_LLM_ENABLED`, so the

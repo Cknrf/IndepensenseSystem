@@ -14,6 +14,7 @@ from indepensense.navigation.monitor import NavigationMonitor
 from indepensense.routing.base import Coordinate, GeocodingResult
 from indepensense.routing.mock import MockGeocoder, MockRouter
 from indepensense.routing.places import SavedPlaces
+from indepensense.voice.volume import VolumeState
 from indepensense.sensors.base import GPSFix
 from indepensense.telemetry.base import EventType
 from indepensense.telemetry.mock import MockTelemetryClient
@@ -781,3 +782,128 @@ def test_progress_is_not_the_same_question_as_location():
     location = executor.execute(IntentResult(Intent.NAVIGATION_LOCATION))
 
     assert progress != location
+
+
+# --- volume ------------------------------------------------------------------
+#
+# `voice/tests/unit/test_volume.py` covers the clamping and persistence.
+# These cover what the user is told, which is the part that matters on a
+# device with no screen.
+
+def _volume_executor(default=50):
+    state = VolumeState(
+        default_percent=default, minimum_percent=20, maximum_percent=100,
+        step_percent=10, state_path=None, apply_on_start=False,
+    )
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), volume=state,
+    )
+    return executor, state
+
+
+def test_louder_raises_and_says_the_new_level():
+    executor, state = _volume_executor(default=50)
+
+    response = executor.execute(
+        IntentResult(Intent.SYSTEM_VOLUME, {"direction": "up"})
+    )
+
+    assert state.current == 60
+    assert "60" in response
+
+
+def test_quieter_lowers_and_says_the_new_level():
+    executor, state = _volume_executor(default=50)
+
+    response = executor.execute(
+        IntentResult(Intent.SYSTEM_VOLUME, {"direction": "down"})
+    )
+
+    assert state.current == 40
+    assert "40" in response
+
+
+def test_a_named_level_is_applied():
+    executor, state = _volume_executor()
+
+    response = executor.execute(IntentResult(Intent.SYSTEM_VOLUME, {"level": 70}))
+
+    assert state.current == 70
+    assert "70" in response
+
+
+def test_asking_below_the_floor_explains_why_not():
+    """Silently clamping would read as being misheard. The reason turns it
+    into a decision the user can understand."""
+    executor, state = _volume_executor()
+
+    response = executor.execute(IntentResult(Intent.SYSTEM_VOLUME, {"level": 5}))
+
+    assert state.current == 20
+    assert "20" in response
+    assert "hear" in response.lower()
+
+
+def test_quieter_at_the_floor_explains_rather_than_confirming():
+    executor, _ = _volume_executor(default=20)
+
+    response = executor.execute(
+        IntentResult(Intent.SYSTEM_VOLUME, {"direction": "down"})
+    )
+
+    assert "hear" in response.lower()
+
+
+def test_louder_at_the_ceiling_says_so():
+    executor, _ = _volume_executor(default=100)
+
+    response = executor.execute(
+        IntentResult(Intent.SYSTEM_VOLUME, {"direction": "up"})
+    )
+
+    assert "maximum" in response.lower()
+
+
+def test_a_request_with_neither_direction_nor_level_asks_again():
+    executor, _ = _volume_executor()
+
+    response = executor.execute(IntentResult(Intent.SYSTEM_VOLUME, {}))
+
+    assert "louder" in response.lower()
+    assert "20" in response and "100" in response
+
+
+def test_a_non_numeric_level_asks_again():
+    executor, state = _volume_executor(default=50)
+
+    response = executor.execute(
+        IntentResult(Intent.SYSTEM_VOLUME, {"level": "quite loud"})
+    )
+
+    assert state.current == 50
+    assert "louder" in response.lower()
+
+
+def test_volume_without_a_controller_says_it_cannot():
+    executor = IntentExecutor(router=MockRouter(), geocoder=MockGeocoder())
+
+    response = executor.execute(
+        IntentResult(Intent.SYSTEM_VOLUME, {"direction": "up"})
+    )
+
+    assert "can't change the volume" in response.lower()
+
+
+def test_volume_answers_in_the_active_language():
+    language = LanguageState(default="en", supported=("en", "tl"))
+    state = VolumeState(50, 20, 100, 10, state_path=None, apply_on_start=False)
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(),
+        volume=state, language=language,
+    )
+
+    english = executor.execute(IntentResult(Intent.SYSTEM_VOLUME, {"direction": "up"}))
+    language.set("tl")
+    tagalog = executor.execute(IntentResult(Intent.SYSTEM_VOLUME, {"direction": "up"}))
+
+    assert english != tagalog

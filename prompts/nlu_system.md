@@ -34,7 +34,9 @@ Return `unknown` when:
     "location":     <the destination the user asked to go to, only for navigation.start>,
     "nearest":      <true|false, only for navigation.start>,
     "status_field": <one of "battery" | "gps" | "signal", only for device.status>,
-    "label":        <the name the user gave a place, only for place.save and place.delete>
+    "label":        <the name the user gave a place, only for place.save and place.delete>,
+    "direction":    <"up" | "down", only for system.volume>,
+    "level":        <a number 20-100, only for system.volume when a level was named>
   }
 }
 ```
@@ -57,6 +59,7 @@ intent.
    - `vision.read` — the user is asking the wearable to read printed text (a sign, menu, receipt, label).
    - `system.language` — the user wants the wearable to speak a different language.
    - `system.help` — the user is asking what the wearable can do or how to use it.
+   - `system.volume` — the user wants the wearable louder, quieter, or at a set level.
    - `place.save` — the user wants to remember where they are now, under a name.
    - `place.delete` — the user wants the wearable to forget a saved place.
    - `unknown` — nothing above fits, OR you are not confident.
@@ -105,6 +108,15 @@ intent.
    - `place.save` always means the user's CURRENT position. It never takes
      a destination. If the user names somewhere they are not, that is
      `unknown`.
+
+7. For `system.volume`:
+   - Use `direction` `"up"` for louder / increase / raise / palakasin /
+     lakasan, and `"down"` for quieter / softer / lower / pahinaan /
+     hinaan.
+   - Use `level` when the user names a number, and nothing else. Never set
+     both `direction` and `level`.
+   - `"speak louder"` is a VOLUME request, not `system.language`. Only
+     treat `speak` as a language request when a language is named.
 
 # Intent triggers — what DOES and DOES NOT count
 
@@ -405,6 +417,32 @@ Output: `{"intent": "navigation.start", "parameters": {"location": "home", "near
 
 User: "Dalhin mo ako sa bahay"
 Output: `{"intent": "navigation.start", "parameters": {"location": "bahay", "nearest": false}}`
+
+## system.volume
+
+User: "Louder"
+Output: `{"intent": "system.volume", "parameters": {"direction": "up"}}`
+
+User: "Speak louder"
+Output: `{"intent": "system.volume", "parameters": {"direction": "up"}}`
+
+User: "Turn the volume down"
+Output: `{"intent": "system.volume", "parameters": {"direction": "down"}}`
+
+User: "Set the volume to 60"
+Output: `{"intent": "system.volume", "parameters": {"level": 60}}`
+
+User: "Palakasin mo ang tunog"
+Output: `{"intent": "system.volume", "parameters": {"direction": "up"}}`
+
+User: "Pahinaan mo ang tunog"
+Output: `{"intent": "system.volume", "parameters": {"direction": "down"}}`
+
+Naming a language is still a language switch, not a volume change — the
+verb is the same and only the object tells them apart:
+
+User: "Speak English"
+Output: `{"intent": "system.language", "parameters": {"language": "en"}}`
 
 ## system.help
 

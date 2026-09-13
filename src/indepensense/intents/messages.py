@@ -210,6 +210,37 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Hindi ako makakapag-save ng lugar sa ngayon.",
     },
 
+    # --- volume -------------------------------------------------------------
+    # The confirmation is spoken AT the new volume, the same trick the
+    # language switch uses: hearing it is the verification. A user who asks
+    # for louder and hears the same level knows immediately it did not work.
+    "volume.set": {
+        "en": "Volume is now {percent} percent.",
+        "tl": "{percent} porsyento na ang lakas ng tunog.",
+    },
+    "volume.at_maximum": {
+        "en": "Volume is already at the maximum, {percent} percent.",
+        "tl": "Nasa pinakamataas na ang lakas ng tunog, {percent} porsyento.",
+    },
+    # Says the floor AND why it exists. "I can't" on its own would read as
+    # the device being broken; the reason makes it a decision.
+    "volume.at_minimum": {
+        "en": "I can't go below {percent} percent, or you might not hear me.",
+        "tl": "Hindi ko puwedeng ibaba sa {percent} porsyento, baka hindi mo "
+              "na ako marinig.",
+    },
+    "volume.not_understood": {
+        "en": "I didn't catch what volume you want. Say louder, quieter, "
+              "or a number from {minimum} to {maximum}.",
+        "tl": "Hindi ko naintindihan kung anong lakas ang gusto mo. Sabihin "
+              "mong palakasin, pahinaan, o isang numero mula {minimum} "
+              "hanggang {maximum}.",
+    },
+    "volume.unavailable": {
+        "en": "I can't change the volume right now.",
+        "tl": "Hindi ko mababago ang lakas ng tunog sa ngayon.",
+    },
+
     # --- help ---------------------------------------------------------------
     # A user who cannot see a screen also cannot read a manual, so the only
     # place the wearable's capabilities can live is in its own voice.
