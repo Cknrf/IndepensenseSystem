@@ -314,6 +314,8 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 |---|---|
 | Live CPU / memory / temperature | `python -m indepensense.tools.system_performance` |
 | Same, with CSV output for later analysis | `python -m indepensense.tools.system_performance --csv` — writes a timestamped file to `data/performance/` |
+| **Voice-pipeline latency** (STT → NLU → TTS) | `python -m indepensense.voice.tests.manual.latency_bench --repeat 10 --csv` — replays recorded WAVs, so **no microphone needed**. This is the evidence for the low-latency objective |
+| Latency without Ollama running | `python -m indepensense.voice.tests.manual.latency_bench --no-nlu` |
 
 ## First-Boot Verification Checklist
 
