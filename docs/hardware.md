@@ -94,6 +94,17 @@ python -m indepensense.sensors.tests.manual.single_mpu6050_test
 
 ### QMC5883P magnetometer — STATUS: working on the bench; awaiting final mount + calibration
 
+**Nothing acts on the heading yet, by design.** `config.COMPASS_CALIBRATED`
+is `False`, which makes `App.trusted_heading()` return `None` and leaves
+every consumer behaving as it did before the compass existed. The driver
+still opens and the reading is still cached — `App.latest_heading()` and
+the manual tests below show it — but routing will not use a bearing that
+has not been verified on the assembled unit.
+
+Flip it only after steps 1-4 in the `COMPASS_CALIBRATED` comment in
+`config.py`: fix the axis roles, run the calibration sweep, paste the
+values, and check all four cardinals against a phone compass.
+
 Verified on the bench: chip ID `0x80`, both control registers holding, and a
 horizontal field of 41.7 μT measured from a flat rotation sweep against ~40 μT
 expected for Manila — which validates the ±8 G / 3750 LSB/G conversion

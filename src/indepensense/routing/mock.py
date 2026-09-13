@@ -12,12 +12,19 @@ from indepensense.routing.base import (
 
 
 class MockRouter:
+    def __init__(self) -> None:
+        # What the last call was given, so a test can assert the heading
+        # reached the router rather than being dropped in the executor.
+        self.last_heading: float | None = None
+
     def route(
         self,
         start: Coordinate,
         end: Coordinate,
         profile: str = "foot",
+        heading: float | None = None,
     ) -> Route:
+        self.last_heading = heading
         # Contrived three-instruction route so tests that exercise the
         # NavigationMonitor can advance through multiple waypoints.
         # Halfway point synthesised as the mid-lat/mid-lon of start+end.

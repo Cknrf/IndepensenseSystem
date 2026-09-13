@@ -237,6 +237,10 @@ class IntentExecutor:
         # Speaker volume. None means the wearable cannot change it —
         # it stays at whatever the OS default is and says so.
         volume: VolumeState | None = None,
+        # Returns the user's current heading in degrees, or None when
+        # it is unknown or not yet trustworthy. A callable rather than
+        # a value because the user turns; the executor is built once.
+        heading: Callable[[], float | None] | None = None,
         ocr_max_chars: int = 500,
         cloud_max_chars: int = 500,
         geocode_candidate_limit: int = 10,
@@ -260,6 +264,7 @@ class IntentExecutor:
         self._confirmer = confirmer
         self._places = places
         self._volume = volume
+        self._heading = heading
         self._ocr_max_chars = ocr_max_chars
         self._cloud_max_chars = cloud_max_chars
         self._geocode_candidate_limit = geocode_candidate_limit
@@ -360,7 +365,15 @@ class IntentExecutor:
             if not self._confirm_destination(destination, start):
                 return messages.get("nav.confirm_timed_out", self._lang)
 
-        route = self._router.route(start, destination.coordinate, profile="foot")
+        # Which way the user is facing, so the route does not open by
+        # telling them to turn around. Unknown — including whenever the
+        # compass is uncalibrated — simply omits the bias.
+        route = self._router.route(
+            start,
+            destination.coordinate,
+            profile="foot",
+            heading=self._current_heading(),
+        )
         self._current_route = route
 
         # Hand the route to the navigation monitor so the app can start
@@ -807,6 +820,20 @@ class IntentExecutor:
         return text
 
     # --- helpers ------------------------------------------------------------
+
+    def _current_heading(self) -> float | None:
+        """The user's facing direction, or None if it cannot be trusted.
+
+        Swallows failures: a compass that throws must cost us a routing
+        bias, not the route.
+        """
+        if self._heading is None:
+            return None
+        try:
+            return self._heading()
+        except Exception as exc:
+            print(f"[nav] heading unavailable: {exc}", file=sys.stderr, flush=True)
+            return None
 
     def _saved_destination(self, location: str) -> GeocodingResult | None:
         """A saved place matching `location`, shaped like a geocoder hit.

@@ -19,7 +19,9 @@ everywhere else in this repo.
 """
 import pytest
 
+from indepensense import app as app_module
 from indepensense.app import App
+from indepensense.app_mock import MockApp
 from indepensense.config import HEADING_CHECK_INTERVAL_S
 from indepensense.sensors.mock import MockMagnetometer
 
@@ -135,3 +137,43 @@ def test_heading_is_none_before_the_first_successful_read():
     app = _app_with(_NoneMagnetometer())
     app._check_heading()
     assert app.latest_heading() is None
+
+
+# --- the calibration gate ----------------------------------------------------
+#
+# `latest_heading` is the raw cached reading; `trusted_heading` is what
+# navigation is wired to. They differ only by `config.COMPASS_CALIBRATED`,
+# and the difference is the whole safety argument: an uncalibrated compass
+# does not fail obviously, it produces a plausible heading that may be
+# mirrored or tens of degrees out.
+
+def test_an_uncalibrated_compass_is_withheld_from_consumers(monkeypatch):
+    app = MockApp()
+    app.magnetometer = MockMagnetometer(heading_deg=137.0)
+    monkeypatch.setattr(app_module, "COMPASS_CALIBRATED", False)
+
+    app._last_heading_check = 0.0
+    app._check_heading()
+
+    assert app.latest_heading() == 137.0      # the sensor is read and cached
+    assert app.trusted_heading() is None      # but nothing may act on it
+
+
+def test_a_calibrated_compass_reaches_consumers(monkeypatch):
+    app = MockApp()
+    app.magnetometer = MockMagnetometer(heading_deg=137.0)
+    monkeypatch.setattr(app_module, "COMPASS_CALIBRATED", True)
+
+    app._last_heading_check = 0.0
+    app._check_heading()
+
+    assert app.trusted_heading() == 137.0
+
+
+def test_calibrated_but_unread_is_still_none(monkeypatch):
+    """Calibration says the numbers can be trusted, not that a reading has
+    arrived."""
+    app = MockApp()
+    monkeypatch.setattr(app_module, "COMPASS_CALIBRATED", True)
+
+    assert app.trusted_heading() is None

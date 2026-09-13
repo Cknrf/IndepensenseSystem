@@ -907,3 +907,84 @@ def test_volume_answers_in_the_active_language():
     tagalog = executor.execute(IntentResult(Intent.SYSTEM_VOLUME, {"direction": "up"}))
 
     assert english != tagalog
+
+
+# --- departure heading -------------------------------------------------------
+
+def test_the_heading_reaches_the_router():
+    router = MockRouter()
+    executor = IntentExecutor(
+        router=router, geocoder=MockGeocoder(), gps=_StaticGPS(),
+        heading=lambda: 90.0, confirmer=_SpyConfirmer(answer=True),
+    )
+
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert router.last_heading == 90.0
+
+
+def test_no_heading_provider_routes_without_one():
+    """The normal case today — the compass is uncalibrated, so nothing
+    provides a heading and routing must be exactly as it was."""
+    router = MockRouter()
+    executor = IntentExecutor(
+        router=router, geocoder=MockGeocoder(), gps=_StaticGPS(),
+        confirmer=_SpyConfirmer(answer=True),
+    )
+
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert router.last_heading is None
+
+
+def test_an_unknown_heading_routes_without_one():
+    """What an uncalibrated or unread compass returns."""
+    router = MockRouter()
+    executor = IntentExecutor(
+        router=router, geocoder=MockGeocoder(), gps=_StaticGPS(),
+        heading=lambda: None, confirmer=_SpyConfirmer(answer=True),
+    )
+
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert router.last_heading is None
+
+
+def test_a_raising_heading_provider_costs_the_bias_not_the_route():
+    """A compass that throws must not stop the user getting anywhere."""
+    def _broken():
+        raise OSError("I2C bus gone")
+
+    router = MockRouter()
+    executor = IntentExecutor(
+        router=router, geocoder=MockGeocoder(), gps=_StaticGPS(),
+        heading=_broken, confirmer=_SpyConfirmer(answer=True),
+    )
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert "Navigating" in response
+    assert router.last_heading is None
+
+
+def test_a_heading_of_zero_survives_the_executor():
+    """Due north. `if heading:` anywhere on this path would drop it."""
+    router = MockRouter()
+    executor = IntentExecutor(
+        router=router, geocoder=MockGeocoder(), gps=_StaticGPS(),
+        heading=lambda: 0.0, confirmer=_SpyConfirmer(answer=True),
+    )
+
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert router.last_heading == 0.0

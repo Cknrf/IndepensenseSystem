@@ -133,6 +133,35 @@ recompute a route. The user's recourse is to cancel and re-issue the command.
 Accepted for the MVP: a wrong automatic reroute is worse than a warning the
 user can act on.
 
+### Quieting the buzzer
+**Status:** parked · **Raised:** 2026-09-13
+
+The buzzer was judged too loud in prototype testing. It is an **active**
+buzzer — it contains its own oscillator, so applying voltage is the only
+control there is and loudness is fixed by the part.
+
+Options, none free of caveats:
+
+* **PWM the supply** to lower the average voltage. Probably works, but the
+  oscillator has a minimum start voltage, so the usable range may be only
+  100%→60% before it stutters or falls silent. gpiozero on the Pi 5 uses
+  *software* PWM whose jitter can itself be audible; GPIO 18 is a hardware
+  PWM pin but reaching it needs `dtoverlay` and sysfs, not gpiozero.
+* **Series resistor** — reliable, but hardware rework on a fabricated unit.
+* **Physical damping** (tape or foam over the sound port) — several dB,
+  free, reversible, and the fabricator can do it in a minute.
+
+**The likely misdiagnosis:** the buzzer fires on TOP + *warning*, i.e.
+anything within 100 cm at head level, with a 2 s cooldown. Under an awning
+or past a row of signage that is a beep every two seconds indefinitely, so
+"too loud" may really be "would not stop". The free fix is to drop the
+buzzer from the warning tier — which already fires a front-motor pulse —
+and keep it for danger (50 cm) and the emergency button, matching the
+reasoning already applied to the silent BOTTOM sensor.
+
+**Revisit when:** the prototype is back and it can be judged with the
+warning tier silenced first, before anything is attenuated or rewired.
+
 ### Left / right obstacle sensing
 **Status:** blocked · **Raised:** 2026-09-12
 

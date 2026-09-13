@@ -82,8 +82,17 @@ class Router(Protocol):
         start: Coordinate,
         end: Coordinate,
         profile: str = "foot",
+        heading: float | None = None,
     ) -> Route:
-        """Compute a route between two coordinates."""
+        """Compute a route between two coordinates.
+
+        `heading` is the direction the user is currently facing, in degrees
+        clockwise from north. When given, the route is biased to set off
+        that way rather than opening with "turn around" — a sighted user
+        glances at a map and corrects; this one would simply walk the wrong
+        way. None means the direction is unknown, which is also what an
+        uncalibrated compass reports.
+        """
 
 
 class Geocoder(Protocol):

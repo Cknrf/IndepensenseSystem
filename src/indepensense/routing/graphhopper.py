@@ -89,7 +89,17 @@ class GraphHopperRouter:
         start: Coordinate,
         end: Coordinate,
         profile: str = "foot",
+        heading: float | None = None,
     ) -> Route:
+        """Ask GraphHopper for a pedestrian route.
+
+        `heading` biases the departure direction. GraphHopper applies a
+        `heading_penalty` (300 s by default) to paths that set off against
+        it, which makes "carry on the way you are facing" win unless going
+        back is genuinely much shorter. Omitted entirely when None, so a
+        request without a heading is byte-identical to what this sent
+        before the parameter existed.
+        """
         import requests  # lazy: keeps imports cheap on cold starts
 
         params = [
@@ -99,6 +109,11 @@ class GraphHopperRouter:
             ("points_encoded", "false"),
             ("instructions", "true"),
         ]
+        if heading is not None:
+            # Normalised because GraphHopper rejects values outside 0-360,
+            # and a heading arriving as -10 or 375 is a caller's arithmetic
+            # rather than a reason to fail the whole route request.
+            params.append(("heading", f"{heading % 360:.0f}"))
         response = requests.get(
             f"{self._base_url}/route",
             params=params,

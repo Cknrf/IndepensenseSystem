@@ -161,6 +161,30 @@ MAG_SCALE_Z = 1.0
 MAG_FORWARD_AXIS = "+x"
 MAG_LEFT_AXIS = "+y"
 
+# Whether the compass may be acted upon. **Leave False until calibrated.**
+#
+# The offsets and scales above are at their identity values and the axis
+# roles are the flat-board defaults, so the heading this produces today is
+# not merely imprecise — it can be mirrored or off by tens of degrees while
+# reading perfectly plausibly. That is the dangerous failure: a confident
+# wrong bearing sends the user the wrong way, and they have no way to see
+# that it is wrong.
+#
+# `App.latest_heading()` returns None while this is False, so every
+# consumer degrades to the behaviour it had before the compass existed.
+# The driver still opens and `_check_heading` still caches, so the manual
+# tests and the calibration sweep work unaffected.
+#
+# To flip it, on the ASSEMBLED wearable:
+#   1. Determine the real MAG_FORWARD_AXIS / MAG_LEFT_AXIS — the defaults
+#      above assume a board lying flat, and a vest-mounted board is not.
+#      Procedure in docs/hardware.md.
+#   2. python -m indepensense.sensors.tests.manual.magnetometer_calibrate
+#      and paste the printed offsets and scales above.
+#   3. Check the heading against a phone compass at all four cardinals.
+#   4. Set this True.
+COMPASS_CALIBRATED = False
+
 # Waveshare UPS HAT (E) — battery + power management, also on I2C1 bus.
 # The HAT mounts under the Pi via pogo pins (no GPIO header conflict).
 # I²C address `0x2D` — do NOT confuse with a generic INA219 at 0x43.

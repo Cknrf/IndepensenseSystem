@@ -110,6 +110,7 @@ from indepensense.config import (
     CLOUD_LLM_TIMEOUT_S,
     CLOUD_LLM_URL,
     CLOUD_MAX_RESPONSE_CHARS,
+    COMPASS_CALIBRATED,
     CRITICAL_BATTERY_PERCENT,
     CRITICAL_BATTERY_RECOVERY_PERCENT,
     CRITICAL_BATTERY_STATE_PATH,
@@ -668,6 +669,7 @@ class App:
             confirmer=self._confirm_destination,
             places=self.places,
             volume=self.volume,
+            heading=self.trusted_heading,
             cloud_max_chars=CLOUD_MAX_RESPONSE_CHARS,
             ocr_max_chars=OCR_MAX_CHARS,
             geocode_candidate_limit=GEOCODE_CANDIDATE_LIMIT,
@@ -983,12 +985,40 @@ class App:
                 self._set_critical_battery_latch(True)
 
     def latest_heading(self) -> float | None:
-        """Most recent compass heading in degrees, or None if unavailable.
+        """Most recent compass reading in degrees, calibrated or not.
 
         Never touches the I²C bus — returns whatever `_check_heading` last
-        cached. `None` means either no magnetometer or no successful read yet.
+        cached. `None` means either no magnetometer or no successful read
+        yet.
+
+        This is the *raw* value, for bring-up and for anything that wants
+        to see what the sensor is saying. **Navigation must not use it** —
+        see `trusted_heading`.
         """
         return self._last_heading_deg
+
+    def trusted_heading(self) -> float | None:
+        """Heading a consumer may actually act on, or None.
+
+        The same cached reading, but withheld entirely until
+        `config.COMPASS_CALIBRATED` says the compass has been calibrated on
+        the assembled unit.
+
+        The distinction exists because of how this sensor fails. With
+        identity offsets and the flat-board axis defaults, it does not
+        produce an obviously broken heading — it produces a *plausible* one
+        that may be mirrored or tens of degrees out, and a bearing like
+        that sends the user the wrong way with nothing to show them it is
+        wrong. Returning None means every consumer falls back to the
+        behaviour it had before the compass existed, which is merely less
+        helpful rather than actively misleading.
+
+        This is the accessor navigation is wired to. `latest_heading` stays
+        raw so bring-up and the calibration sweep are unaffected.
+        """
+        if not COMPASS_CALIBRATED:
+            return None
+        return self.latest_heading()
 
     def _check_heading(self) -> None:
         """Refresh the cached compass heading.
