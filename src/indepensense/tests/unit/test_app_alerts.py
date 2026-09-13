@@ -277,3 +277,90 @@ def test_absent_magnetometer_is_a_no_op(app):
     app._last_heading_check = 0.0
     app._check_heading()
     assert app.latest_heading() is None
+
+
+# --- telling the wearer, not only the guardian -------------------------------
+#
+# Automatic fall detection used to notify guardians and say nothing at all
+# to the person on the ground, who then had no way to know whether help was
+# coming. (The emergency BUTTON always spoke — it was only the automatic
+# path that was silent.)
+
+class _RecordingApp(MockApp):
+    def __init__(self):
+        super().__init__()
+        self.spoken: list[tuple[str, bool]] = []     # (text, critical)
+
+    def _announce(self, text: str, critical: bool = False) -> None:
+        self.spoken.append((text, critical))
+
+
+@pytest.fixture
+def speaking_app():
+    instance = _RecordingApp()
+    instance.alert_sink = MockTelemetryClient()
+    return instance
+
+
+def test_a_detected_fall_is_spoken_to_the_wearer(speaking_app):
+    speaking_app._on_fall_detected(_fall())
+
+    assert len(speaking_app.spoken) == 1
+    text, _critical = speaking_app.spoken[0]
+    assert text.strip() != ""
+
+
+def test_the_fall_announcement_preempts_whatever_is_speaking(speaking_app):
+    """A fall part-way through a turn instruction has to cut it off, not
+    queue behind it."""
+    speaking_app._on_fall_detected(_fall())
+
+    _text, critical = speaking_app.spoken[0]
+    assert critical is True
+
+
+def test_the_guardian_alert_still_fires_alongside_the_announcement(speaking_app):
+    """Speaking to the wearer must not have displaced the alert — both
+    parties need to know."""
+    speaking_app._on_fall_detected(_fall())
+
+    fall_alerts = [
+        a for a in speaking_app.alert_sink.alerts
+        if a.event_type is EventType.FALL_DETECTION
+    ]
+    assert len(fall_alerts) == 1
+
+
+def test_the_fall_announcement_follows_the_active_language(speaking_app):
+    """A Tagalog user being told about their own fall in English would be
+    the worst possible moment for the language switch to leak."""
+    speaking_app.language.set("tl")
+    speaking_app._on_fall_detected(_fall())
+    tagalog = speaking_app.spoken[0][0]
+
+    speaking_app.spoken.clear()
+    speaking_app.language.set("en")
+    speaking_app._on_fall_detected(_fall())
+    english = speaking_app.spoken[0][0]
+
+    assert tagalog != english
+
+
+def test_a_failing_announcer_does_not_block_the_guardian_alert(speaking_app):
+    """The alert is the part that summons help. It must survive a broken
+    speaker — `_announce` swallows so nothing after it is skipped."""
+    class _BrokenAnnouncer:
+        def say(self, *args, **kwargs):
+            raise OSError("audio device gone")
+
+    plain = MockApp()
+    plain.alert_sink = MockTelemetryClient()
+    plain.announcer = _BrokenAnnouncer()
+
+    plain._on_fall_detected(_fall())      # must not raise
+
+    fall_alerts = [
+        a for a in plain.alert_sink.alerts
+        if a.event_type is EventType.FALL_DETECTION
+    ]
+    assert len(fall_alerts) == 1

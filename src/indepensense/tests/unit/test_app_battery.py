@@ -13,6 +13,8 @@ from indepensense import app as app_module
 from indepensense.app_mock import MockApp
 from indepensense.config import (
     BATTERY_CHECK_INTERVAL_S,
+    CRITICAL_BATTERY_PERCENT,
+    CRITICAL_BATTERY_RECOVERY_PERCENT,
     LOW_BATTERY_PERCENT,
     LOW_BATTERY_RECOVERY_PERCENT,
 )
@@ -63,14 +65,33 @@ def _latch_path(tmp_path, monkeypatch):
     monkeypatch.setattr(
         app_module, "LOW_BATTERY_STATE_PATH", tmp_path / "low_battery_alerted",
     )
+    monkeypatch.setattr(
+        app_module, "CRITICAL_BATTERY_STATE_PATH",
+        tmp_path / "critical_battery_alerted",
+    )
+
+
+class _RecordingApp(MockApp):
+    """Captures announcements instead of synthesising audio."""
+
+    def __init__(self):
+        super().__init__()
+        self.spoken: list[tuple[str, bool]] = []     # (text, critical)
+
+    def _announce(self, text: str, critical: bool = False) -> None:
+        self.spoken.append((text, critical))
 
 
 @pytest.fixture
 def app():
-    instance = MockApp()
+    instance = _RecordingApp()
     instance.battery = _ScriptedBattery()
     instance.alert_sink = MockTelemetryClient()
     return instance
+
+
+def _spoken_text(app) -> list[str]:
+    return [text for text, _ in app.spoken]
 
 
 def _check_now(app):
@@ -247,3 +268,133 @@ def test_a_none_reading_is_ignored(app):
     _check_now(app)
     assert app.alert_sink.alerts == []
     assert app._low_battery_alerted is False
+
+
+# --- warning the wearer ------------------------------------------------------
+#
+# Guardians have had an SMS and a dashboard alert since the first threshold.
+# The person actually carrying the device was the only one not told, and
+# found out when it died.
+
+def test_the_wearer_is_warned_at_the_low_threshold(app):
+    app.battery.reading = _reading(LOW_BATTERY_PERCENT - 1)
+    _check_now(app)
+
+    assert len(app.spoken) == 1
+    text, critical = app.spoken[0]
+    assert str(LOW_BATTERY_PERCENT - 1) in text
+    assert critical is False, "a 15% warning should not cut off speech in progress"
+
+
+def test_the_low_warning_is_spoken_once_per_crossing(app):
+    """Same latch that stops the guardian SMS flapping — the wearer should
+    not be nagged every ten seconds either."""
+    app.battery.reading = _reading(LOW_BATTERY_PERCENT - 1)
+    _check_now(app)
+    _check_now(app)
+    _check_now(app)
+
+    assert len(app.spoken) == 1
+
+
+def test_the_critical_warning_preempts(app):
+    """"Your device is about to die" is worth interrupting a turn
+    instruction for; "charge it soon" is not."""
+    app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT - 1)
+    _check_now(app)
+
+    critical_flags = [critical for _, critical in app.spoken]
+    assert True in critical_flags
+
+
+def test_crossing_both_thresholds_speaks_both_tiers(app):
+    """Different instructions: charge soon, then it is about to shut down."""
+    app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT - 1)
+    _check_now(app)
+
+    assert len(app.spoken) == 2
+    assert app.spoken[0][1] is False        # low warning, not critical
+    assert app.spoken[1][1] is True         # critical warning
+
+
+def test_the_critical_tier_does_not_alert_guardians_again(app):
+    """They were told at 15% over SMS and the dashboard. A second text as
+    the battery dies says nothing they can act on."""
+    app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT - 1)
+    _check_now(app)
+
+    assert len(_low_battery_alerts(app)) == 1
+
+
+def test_the_critical_warning_is_spoken_once_per_crossing(app):
+    app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT - 1)
+    _check_now(app)
+    _check_now(app)
+
+    assert len(app.spoken) == 2      # one low + one critical, not four
+
+
+def test_a_charging_device_is_not_warned(app):
+    """Plugged in at 3% is a device being looked after, not an emergency."""
+    app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT - 2, charging=True)
+    _check_now(app)
+
+    assert app.spoken == []
+
+
+def test_the_critical_latch_clears_on_recovery(app):
+    app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT - 1)
+    _check_now(app)
+    assert app._critical_battery_alerted is True
+
+    app.battery.reading = _reading(CRITICAL_BATTERY_RECOVERY_PERCENT + 1)
+    _check_now(app)
+
+    assert app._critical_battery_alerted is False
+
+
+def test_the_two_latches_are_independent(app):
+    """Recovering past 10% must not clear the 15% latch, or the guardian
+    SMS would re-fire on the way back down."""
+    app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT - 1)
+    _check_now(app)
+    assert app._low_battery_alerted is True
+    assert app._critical_battery_alerted is True
+
+    # Back above the critical recovery point but still below the low one.
+    app.battery.reading = _reading(CRITICAL_BATTERY_RECOVERY_PERCENT + 1)
+    _check_now(app)
+
+    assert app._critical_battery_alerted is False
+    assert app._low_battery_alerted is True
+
+
+def test_the_critical_latch_survives_a_restart(app, tmp_path):
+    """Same reasoning as the low-battery latch: a crash-looping Pi on a
+    dying battery must not repeat the warning on every boot."""
+    app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT - 1)
+    _check_now(app)
+
+    restarted = _RecordingApp()
+    assert restarted._critical_battery_alerted is True
+
+
+def test_a_failing_announcer_still_sets_the_latch(app):
+    """If the announcement could abort the check, the latch would never be
+    set and the guardian SMS would re-fire on every ten-second poll —
+    texting the whole contact list until the battery died."""
+    class _BrokenAnnouncer:
+        def say(self, *args, **kwargs):
+            raise OSError("audio device gone")
+
+    plain = MockApp()
+    plain.battery = _ScriptedBattery(_reading(LOW_BATTERY_PERCENT - 1))
+    plain.alert_sink = MockTelemetryClient()
+    plain.announcer = _BrokenAnnouncer()
+
+    _check_now(plain)
+    _check_now(plain)
+    _check_now(plain)
+
+    assert plain._low_battery_alerted is True
+    assert len(_low_battery_alerts(plain)) == 1

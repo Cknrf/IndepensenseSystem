@@ -182,6 +182,36 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # --- emergency ----------------------------------------------------------
+    # Spoken to the *wearer* when the system acts on its own, as opposed to
+    # `emergency.sent` which answers a button they deliberately pressed.
+    # Automatic fall detection used to notify guardians and say nothing at
+    # all to the person lying on the ground, who then had no way to know
+    # whether help was coming.
+    #
+    # Phrased as a statement, not a question: there is no cancel window by
+    # design — someone knocked unconscious cannot decline one — so implying
+    # they have a choice would be a lie.
+    "fall.detected": {
+        "en": "I detected a fall. I have alerted your guardian.",
+        "tl": "May natukoy akong pagkahulog. Naabisuhan ko na ang inyong tagabantay.",
+    },
+
+    # --- battery warnings spoken to the wearer ------------------------------
+    # The guardian has had an SMS and a dashboard alert since the first
+    # threshold; the person carrying the device was the only one not told.
+    "battery.low_warning": {
+        "en": "Battery is low, {percent} percent remaining. "
+              "Please charge the device soon.",
+        "tl": "Mababa na ang baterya, {percent} porsyento na lang. "
+              "Pakisingil na po ang device.",
+    },
+    "battery.critical_warning": {
+        "en": "Battery critically low at {percent} percent. "
+              "The device will shut down soon.",
+        "tl": "Kritikal na ang baterya, {percent} porsyento na lang. "
+              "Malapit nang mag-shut down ang device.",
+    },
+
     "emergency.local_only": {
         "en": "Emergency alert triggered locally. Guardian dashboard not connected.",
         "tl": "Naitala ang emergency sa device. Hindi konektado ang dashboard ng tagapag-alaga.",

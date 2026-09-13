@@ -175,6 +175,25 @@ LOW_BATTERY_PERCENT = 15
 LOW_BATTERY_RECOVERY_PERCENT = 20
 BATTERY_CHECK_INTERVAL_S = 10.0
 
+# Second, spoken-only tier. The wearer is told at `LOW_BATTERY_PERCENT`
+# ("charge soon") and again here ("about to shut down"), because those are
+# different instructions and 15% on this pack is still a long while.
+#
+# Only the critical one preempts speech in progress. A 15% warning is not
+# worth cutting off a turn instruction the user is mid-way through hearing;
+# "your device is about to die" is, because everything else the wearable
+# might be saying stops mattering shortly afterwards.
+#
+# No second guardian alert fires here. They were already told at 15% over
+# both SMS and the dashboard, and texting them again as the battery dies
+# tells them nothing they can act on.
+CRITICAL_BATTERY_PERCENT = 5
+CRITICAL_BATTERY_RECOVERY_PERCENT = 10
+
+# Separate latch file from the 15% one, so the two tiers cannot clear each
+# other. Same presence-is-the-state trick — see `LOW_BATTERY_STATE_PATH`.
+CRITICAL_BATTERY_STATE_PATH = PROJECT_ROOT / "var" / "critical_battery_alerted"
+
 # The latch is written here so it survives a restart.
 #
 # Without this it lives only in memory, and the systemd unit sets

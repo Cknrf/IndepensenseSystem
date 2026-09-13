@@ -110,6 +110,9 @@ from indepensense.config import (
     CLOUD_LLM_TIMEOUT_S,
     CLOUD_LLM_URL,
     CLOUD_MAX_RESPONSE_CHARS,
+    CRITICAL_BATTERY_PERCENT,
+    CRITICAL_BATTERY_RECOVERY_PERCENT,
+    CRITICAL_BATTERY_STATE_PATH,
     DEFAULT_LANGUAGE,
     DESTINATION_CONFIRM_TIMEOUT_S,
     DEVICE_KEY_PATH,
@@ -531,6 +534,7 @@ class App:
         # Restored from disk so it survives a restart — see
         # `config.LOW_BATTERY_STATE_PATH` for why that matters.
         self._low_battery_alerted = self._load_low_battery_latch()
+        self._critical_battery_alerted = self._load_latch(CRITICAL_BATTERY_STATE_PATH)
         self._last_battery_check = 0.0
 
         # Latest compass heading, refreshed at HEADING_CHECK_INTERVAL_S.
@@ -842,6 +846,18 @@ class App:
             flush=True,
         )
 
+        # Tell the wearer, not only the guardian. Until this existed, the
+        # person who had just fallen over was the one party not informed —
+        # they had no way to know whether anyone had been alerted.
+        #
+        # Critical, so it interrupts a turn instruction or scene
+        # description already in progress; and queued rather than spoken
+        # here, because this runs on the 100 Hz loop and speaking inline
+        # would stop fall detection for the length of the sentence.
+        self._announce(
+            messages.get("fall.detected", self.language.current), critical=True,
+        )
+
         # Use current cached GPS fix; fall back to 0.0/0.0 if unknown.
         # The alert goes out regardless — safety > location precision.
         lat, lon = 0.0, 0.0
@@ -863,12 +879,24 @@ class App:
     # ---------------------------------------------------------------- battery
 
     def _check_battery_and_alert(self) -> None:
-        """Poll battery and fire a LOW_BATTERY alert on threshold crossing.
+        """Poll battery, warn the wearer, and alert guardians on crossing.
 
         Called from the 100 Hz main loop but internally rate-limited to
         `BATTERY_CHECK_INTERVAL_S` — battery changes slowly, no reason
         to hammer the I²C bus. Hysteresis (separate fire + recovery
-        thresholds) prevents alert flapping when hovering at 15%.
+        thresholds) prevents alert flapping when hovering at a threshold.
+
+        Two tiers, and they notify different people:
+
+          - `LOW_BATTERY_PERCENT` (15%) — guardians get the HTTP alert and
+            an SMS, and the wearer is told to charge soon. Until this
+            existed only the guardians knew; the person actually carrying
+            the device found out when it died.
+          - `CRITICAL_BATTERY_PERCENT` (5%) — spoken only, and critical so
+            it interrupts. No second guardian alert: they were told at 15%
+            over two channels and a repeat says nothing they can act on.
+
+        Each tier owns an independent latch so neither can clear the other.
         """
         if self.battery is None:
             return
@@ -906,7 +934,34 @@ class App:
                     flush=True,
                 )
                 self._fire_low_battery_alert(pct)
+                self._announce(
+                    messages.get(
+                        "battery.low_warning", self.language.current, percent=pct,
+                    )
+                )
                 self._set_low_battery_latch(True)
+
+        # Critical tier, checked independently — a device that boots below
+        # 5% has both latches unset and should still say the urgent thing.
+        if self._critical_battery_alerted:
+            if pct >= CRITICAL_BATTERY_RECOVERY_PERCENT:
+                print(
+                    f"[battery] recovered to {pct}% — CRITICAL latch cleared",
+                    flush=True,
+                )
+                self._set_critical_battery_latch(False)
+        else:
+            if pct < CRITICAL_BATTERY_PERCENT and reading.is_discharging:
+                print(f"[battery] {pct}% — critical, warning the wearer", flush=True)
+                self._announce(
+                    messages.get(
+                        "battery.critical_warning",
+                        self.language.current,
+                        percent=pct,
+                    ),
+                    critical=True,
+                )
+                self._set_critical_battery_latch(True)
 
     def latest_heading(self) -> float | None:
         """Most recent compass heading in degrees, or None if unavailable.
@@ -951,33 +1006,44 @@ class App:
         self._last_heading_deg = reading.heading_deg
 
     def _load_low_battery_latch(self) -> bool:
-        """Whether we had already alerted before this process started.
+        """Whether we had already alerted before this process started."""
+        return self._load_latch(LOW_BATTERY_STATE_PATH)
+
+    def _load_latch(self, path: Path) -> bool:
+        """Read a presence-is-the-state latch file.
 
         Any read problem is treated as "not alerted". The cost of getting
         that wrong is one extra alert; the cost of the opposite would be a
         low battery that never warns anyone.
         """
         try:
-            return LOW_BATTERY_STATE_PATH.exists()
+            return path.exists()
         except OSError as exc:
             print(f"[battery] could not read latch: {exc}", file=sys.stderr, flush=True)
             return False
 
     def _set_low_battery_latch(self, alerted: bool) -> None:
-        """Set the latch and mirror it to disk.
+        self._low_battery_alerted = alerted
+        self._write_latch(LOW_BATTERY_STATE_PATH, alerted)
+
+    def _set_critical_battery_latch(self, alerted: bool) -> None:
+        self._critical_battery_alerted = alerted
+        self._write_latch(CRITICAL_BATTERY_STATE_PATH, alerted)
+
+    def _write_latch(self, path: Path, alerted: bool) -> None:
+        """Mirror a latch to disk.
 
         Presence of the file is the state — no contents to parse, so a
         truncated write cannot be misread. Persistence is best effort: if
         the write fails the latch still holds for this session, it just
         won't survive a restart.
         """
-        self._low_battery_alerted = alerted
         try:
             if alerted:
-                LOW_BATTERY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-                LOW_BATTERY_STATE_PATH.touch()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
             else:
-                LOW_BATTERY_STATE_PATH.unlink(missing_ok=True)
+                path.unlink(missing_ok=True)
         except OSError as exc:
             print(f"[battery] could not persist latch: {exc}", file=sys.stderr, flush=True)
 
@@ -1100,10 +1166,21 @@ class App:
         A missing announcer (a test that never called `start()`) is a
         no-op rather than an error: losing an announcement is not worth
         taking down the loop that detects falls.
+
+        **Never raises**, the same contract `_speak_error` carries, and for
+        a sharper reason here. Callers interleave this with work that must
+        happen regardless: `_on_fall_detected` sends the alert that summons
+        help, and `_check_battery_and_alert` sets the latch that stops the
+        guardian SMS re-firing every ten seconds. An exception escaping
+        this would silently skip whichever of those came after it.
         """
         if self.announcer is None:
             return
-        self.announcer.say(text, self.language.current, critical=critical)
+        try:
+            self.announcer.say(text, self.language.current, critical=critical)
+        except Exception as exc:
+            print(f"[announce] could not queue {text!r}: {exc}",
+                  file=sys.stderr, flush=True)
 
     def _spawn_haptic(self, name: str, action) -> None:
         """Run a blocking motor/buzzer pattern off the calling thread.
