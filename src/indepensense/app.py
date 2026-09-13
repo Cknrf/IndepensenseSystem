@@ -1972,9 +1972,16 @@ class App:
         utterances exactly as it did before — a missing key must degrade,
         never abort startup.
 
-        No provider driver exists yet; `intents/cloud.py` documents what
-        one has to implement. `OfflineGuard` is applied here rather than
-        inside a driver so every future provider inherits it.
+        The provider is `MistralAnswerer`. `OfflineGuard` wraps it here
+        rather than living inside the driver, so the offline path is
+        identical whichever provider is in use — `intents/cloud.py`
+        documents the contract a replacement would have to meet.
+
+        In practice the thing that decides whether this is live is the
+        API key: with `CLOUD_LLM_ENABLED` already True, an empty
+        `INDEPENSENSE_CLOUD_API_KEY` is the only reason the wearable
+        answers "I didn't catch that" instead of forwarding the question.
+        See `.env.example`.
         """
         if not CLOUD_LLM_ENABLED:
             return None
