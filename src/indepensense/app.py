@@ -22,8 +22,17 @@ well-scoped background threads for I/O concerns:
     handler directly. This preempts voice AND fires the alert without
     waiting for the voice thread to finish.
   - Repeat button callback: replays the last navigation instruction.
-  - Warning-pattern threads (per obstacle event): play a vibration +
-    buzzer pattern under a mutex so overlapping patterns don't race.
+  - Warning-pattern threads (per obstacle event, and per navigation
+    haptic): play a vibration + buzzer pattern under a mutex so
+    overlapping patterns don't race. Every driver's `pulse`/`beep`
+    sleeps for the pattern's duration, so these can never be called
+    from the loop directly.
+  - Announcer: the single owner of speech that originates on the main
+    loop. `_announce(text)` appends and returns; the worker synthesises
+    and plays. Navigation cues used to do both inline, which stopped
+    fall detection and obstacle polling for ~3-4 s per turn instruction.
+    A critical announcement aborts playback, discards pending
+    non-critical items, and abandons anything caught mid-synthesis.
   - Heartbeat sender (already built): every N seconds, non-blocking.
   - Telemetry worker (already built): drains queue, retries failures.
   - GPS cache thread: polls SIM7600 GPS at 1 Hz, exposes latest fix to
@@ -198,7 +207,12 @@ from indepensense.telemetry.sms_alerts import SMSAlertNotifier
 from indepensense.vision.detector import YOLOv8Detector
 from indepensense.vision.ocr import TesseractOCR
 from indepensense.vision.picamera import PiCamera
-from indepensense.voice.audio import play, play_chime, record_until_button
+from indepensense.voice.audio import (
+    play,
+    play_chime,
+    record_until_button,
+    stop_playback,
+)
 from indepensense.voice.piper import PiperTTS
 from indepensense.voice.whisper import FasterWhisperSTT
 
@@ -254,6 +268,173 @@ class GPSCache:
             self._stop.wait(timeout=self._poll_interval_s)
 
 
+class Announcer:
+    """Speaks text on its own thread so the caller never waits for audio.
+
+    Synthesis takes ~1 s and playback several more. Both were being run
+    straight from the 100 Hz loop by the navigation-cue path, which meant
+    fall detection and obstacle polling stopped for the duration of every
+    turn instruction — during navigation, which is exactly when the user
+    is walking. `say()` appends and returns; this thread does the waiting.
+
+    The obstacle path already worked this way (`_play_warning_pattern` on
+    a spawned thread). This is the same idea with one durable worker
+    instead of a thread per event, because speech has to be serialised —
+    two overlapping announcements on one output device are unintelligible,
+    whereas two vibration motors are not.
+
+    Critical alerts preempt
+    -----------------------
+
+    Draining the queue only skips speech that has not started. A fall
+    happening midway through "in ninety metres, turn left" has to cut that
+    off, not queue behind it, so `say(critical=True)` aborts playback via
+    `stop_playback()`, drops pending non-critical items, and goes to the
+    front.
+
+    Ordering among non-critical items is plain FIFO. A priority queue was
+    considered and rejected: once preemption exists the queue almost never
+    holds more than one item, and `queue.PriorityQueue` compares payloads
+    when priorities tie, which needs a tiebreaker counter purely to avoid
+    sorting announcements alphabetically.
+
+    The language is captured per item rather than read at playback time.
+    The text was already rendered by `messages.get(key, language)` before
+    it got here, so synthesising it with a voice chosen later would pair
+    Tagalog words with an English voice if the user switched in between.
+    """
+
+    # Bounded so a misbehaving producer cannot grow it without limit. Eight
+    # is far above what the upstream cooldowns and latches allow through
+    # (obstacle tiers, per-instruction announce latches, off-route and
+    # low-battery latches all rate-limit at the source) — it is a backstop,
+    # not the rate limiter.
+    _MAX_PENDING = 8
+
+    def __init__(self, tts, output_dir: Path):
+        self._tts = tts
+        self._output_dir = output_dir
+        self._pending: list[tuple[str, str, bool]] = []
+        self._lock = threading.Lock()
+        self._wakeup = threading.Event()
+        self._stop = threading.Event()
+        # Bumped by every critical alert. The worker captures it before
+        # synthesising and re-checks afterwards, so an announcement that
+        # was already in flight when the alert arrived is abandoned instead
+        # of played. Without this, `stop_playback()` aborts nothing —
+        # synthesis has not reached the speaker yet — and the stale
+        # announcement plays in full ahead of the alert that preempted it.
+        self._preempt_epoch = 0
+        self._thread = threading.Thread(
+            target=self._run, name="announcer", daemon=True,
+        )
+
+    def start(self) -> None:
+        self._stop.clear()
+        self._thread.start()
+
+    def stop(self, timeout_s: float = 2.0) -> None:
+        """Stop the worker, cutting off anything mid-playback.
+
+        `stop_playback()` is what makes the join bounded: without it a
+        worker blocked inside `play()` would hold up shutdown for the
+        remaining length of the audio.
+        """
+        self._stop.set()
+        self._wakeup.set()
+        stop_playback()
+        if self._thread.is_alive():
+            self._thread.join(timeout=timeout_s)
+
+    def say(self, text: str, language: str, critical: bool = False) -> None:
+        """Queue `text` to be spoken. Returns immediately.
+
+        `critical=True` preempts: playback is aborted, pending non-critical
+        announcements are dropped, and this goes to the front.
+        """
+        if not text:
+            return
+
+        if critical:
+            stop_playback()
+
+        with self._lock:
+            if critical:
+                self._preempt_epoch += 1
+                dropped = [item for item in self._pending if not item[2]]
+                if dropped:
+                    print(
+                        f"[announcer] critical alert dropped {len(dropped)} "
+                        f"pending announcement(s)",
+                        flush=True,
+                    )
+                self._pending = [item for item in self._pending if item[2]]
+                self._pending.insert(0, (text, language, True))
+            else:
+                if len(self._pending) >= self._MAX_PENDING:
+                    # Drop the oldest rather than the newest: a stale
+                    # instruction is worth less than a current one.
+                    stale = self._pending.pop(0)
+                    print(
+                        f"[announcer] queue full, dropped: {stale[0]!r}",
+                        file=sys.stderr, flush=True,
+                    )
+                self._pending.append((text, language, False))
+        self._wakeup.set()
+
+    def clear(self) -> None:
+        """Drop everything pending. Does not stop what is already playing."""
+        with self._lock:
+            self._pending.clear()
+
+    def pending_count(self) -> int:
+        with self._lock:
+            return len(self._pending)
+
+    def _take(self) -> tuple[tuple[str, str, bool], int] | None:
+        """Pop the next item along with the preemption epoch it was taken at."""
+        with self._lock:
+            if not self._pending:
+                return None
+            return self._pending.pop(0), self._preempt_epoch
+
+    def _preempted_since(self, epoch: int) -> bool:
+        with self._lock:
+            return self._preempt_epoch != epoch
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            taken = self._take()
+            if taken is None:
+                self._wakeup.wait(timeout=0.2)
+                self._wakeup.clear()
+                continue
+
+            (text, language, critical), epoch = taken
+            try:
+                timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S-%f")
+                path = self._output_dir / f"{timestamp}_announce.wav"
+                self._tts.synthesize(text, path, language=language)
+                if self._stop.is_set():
+                    return
+                # Synthesis takes about a second, which is long enough for a
+                # fall to happen inside it. Abandon what we just built rather
+                # than making the alert wait out an instruction the user no
+                # longer needs. Critical items are never abandoned.
+                if not critical and self._preempted_since(epoch):
+                    print(
+                        f"[announcer] preempted before speaking: {text!r}",
+                        flush=True,
+                    )
+                    continue
+                play(path)
+            except Exception as exc:
+                # One bad announcement must not kill the worker — every
+                # later warning would go unspoken with nothing to show why.
+                print(f"[announcer] failed to speak {text!r}: {exc}",
+                      file=sys.stderr, flush=True)
+
+
 class _CachedGPSAdapter:
     """Implements the GPSSensor protocol on top of a GPSCache.
 
@@ -301,6 +482,8 @@ class App:
         self.stt: FasterWhisperSTT | None = None
         self.tts: PiperTTS | None = None
         self.parser: OllamaIntentParser | None = None
+        # Owns all speech that originates on the main loop. See `Announcer`.
+        self.announcer: Announcer | None = None
         self.buffered: BufferedTelemetryClient | None = None
         # `alert_sink` is what every alert path posts to. It is either
         # `buffered` or `buffered` wrapped in an `SMSAlertNotifier` — the
@@ -395,6 +578,11 @@ class App:
 
         print("  Loading Piper voices...", flush=True)
         self.tts = self._open_tts()
+
+        # Started as soon as TTS exists so anything that wants to speak
+        # from the loop has somewhere to put it, for the whole of startup.
+        self.announcer = Announcer(self.tts, VOICE_TEST_DIR)
+        self.announcer.start()
 
         print("  Connecting to Ollama (with warmup)...", flush=True)
         self.parser = self._open_parser()
@@ -581,6 +769,12 @@ class App:
 
         # Cancel any in-flight voice cycle so the pipeline notices and exits.
         self._voice_cancel.set()
+
+        # Before the telemetry drain: this aborts playback, so a worker
+        # part-way through a long announcement doesn't hold up shutdown
+        # for the remaining seconds of audio.
+        if self.announcer is not None:
+            self.announcer.stop(timeout_s=2.0)
 
         if self.heartbeat_sender is not None:
             self.heartbeat_sender.stop(timeout_s=2.0)
@@ -838,13 +1032,22 @@ class App:
             self._fire_navigation_cue(cue)
 
     def _fire_navigation_cue(self, cue: NavigationCue) -> None:
-        """Route a NavigationCue to its actuator.
+        """Route a NavigationCue to its actuator, without blocking.
 
-        - "announce": speak the text via Piper (skipped if voice pipeline
-          is currently busy — we don't want to talk over a user's
-          command or a response mid-play).
+        - "announce": speak the text (skipped if the voice pipeline is
+          busy — we don't want to talk over a user's command or a
+          response mid-play).
         - "haptic": pulse the direction-matching motor.
         - "arrive": speak + pulse all motors (louder cue for the finish).
+        - "off_route": speak + a distinctive all-motor pulse.
+
+        **This runs on the 100 Hz loop, so nothing here may block.** It
+        used to: speech went through `_speak_error` (~3-4 s of synthesis
+        and playback) and the motor pulses slept inline (~0.3-0.5 s), which
+        stopped fall detection and obstacle polling for the whole of every
+        turn instruction. Speech now goes to the `Announcer`; haptics go to
+        a spawned thread under `_warning_lock`, matching what
+        `_check_obstacle_sensor` has always done.
         """
         try:
             if cue.kind == "announce":
@@ -855,22 +1058,23 @@ class App:
                     )
                     return
                 print(f"[nav] announce: {cue.text}", flush=True)
-                self._speak_error(cue.text)   # reuse the speak helper
+                self._announce(cue.text)
             elif cue.kind == "haptic":
                 motor = self._motor_for_direction(cue.direction)
                 if motor is not None:
                     print(f"[nav] haptic: {cue.direction}", flush=True)
-                    motor.pulse(times=2, duration_s=0.2, gap_s=0.1)
+                    self._spawn_haptic(
+                        f"nav-haptic-{cue.direction}",
+                        lambda m=motor: m.pulse(times=2, duration_s=0.2, gap_s=0.1),
+                    )
             elif cue.kind == "arrive":
                 print(f"[nav] arrive: {cue.text}", flush=True)
-                with self._warning_lock:
-                    self._pulse_all_motors(duration_s=0.4)
+                self._spawn_haptic(
+                    "nav-arrive", lambda: self._pulse_all_motors(duration_s=0.4),
+                )
                 if not self._voice_active.is_set() and cue.text is not None:
-                    self._speak_error(cue.text)
+                    self._announce(cue.text)
             elif cue.kind == "off_route":
-                # Deviation warning — spoken + a distinctive all-motor
-                # pulse so the user notices even if they missed the
-                # audio. Deferred when a voice command is in flight.
                 if self._voice_active.is_set():
                     print(
                         f"[nav] deferred off_route (voice busy): {cue.text}",
@@ -878,12 +1082,45 @@ class App:
                     )
                     return
                 print(f"[nav] off_route: {cue.text}", flush=True)
-                with self._warning_lock:
-                    self._pulse_all_motors(duration_s=0.3)
+                self._spawn_haptic(
+                    "nav-off-route", lambda: self._pulse_all_motors(duration_s=0.3),
+                )
                 if cue.text is not None:
-                    self._speak_error(cue.text)
+                    self._announce(cue.text)
         except Exception as exc:
             print(f"[nav] fire error: {exc}", file=sys.stderr, flush=True)
+
+    def _announce(self, text: str, critical: bool = False) -> None:
+        """Speak `text` without waiting for it. Safe from the main loop.
+
+        `critical=True` cuts off whatever is playing and discards pending
+        non-critical announcements — for events the user must hear now,
+        not after the turn instruction ahead of them in the queue.
+
+        A missing announcer (a test that never called `start()`) is a
+        no-op rather than an error: losing an announcement is not worth
+        taking down the loop that detects falls.
+        """
+        if self.announcer is None:
+            return
+        self.announcer.say(text, self.language.current, critical=critical)
+
+    def _spawn_haptic(self, name: str, action) -> None:
+        """Run a blocking motor/buzzer pattern off the calling thread.
+
+        The same shape `_check_obstacle_sensor` uses: every driver's
+        `pulse`/`beep` sleeps for the pattern's duration, so calling one
+        from the main loop stalls it. `_warning_lock` serialises overlapping
+        patterns so two events don't leave a motor stuck on.
+        """
+        def _run() -> None:
+            with self._warning_lock:
+                try:
+                    action()
+                except Exception as exc:
+                    print(f"[haptic:{name}] error: {exc}", file=sys.stderr, flush=True)
+
+        threading.Thread(target=_run, name=name, daemon=True).start()
 
     def _motor_for_direction(self, direction: str | None):
         """Map a direction string to the motor that should fire.

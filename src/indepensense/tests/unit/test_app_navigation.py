@@ -16,19 +16,38 @@ from indepensense.sensors.base import GPSFix
 
 
 class _RecordingApp(MockApp):
-    """Captures what would have been spoken instead of synthesising audio.
+    """Captures what would have been announced instead of synthesising audio.
 
-    `_speak_error` is the helper `_fire_navigation_cue` reuses for all its
-    speech. Overriding it here keeps these tests off the audio stack while
-    leaving the cue-routing logic itself untouched.
+    `_announce` is the seam `_fire_navigation_cue` hands all its speech to —
+    it enqueues on the `Announcer` thread rather than blocking. Overriding it
+    keeps these tests off the audio stack while leaving the cue-routing logic
+    itself untouched.
     """
 
     def __init__(self):
         super().__init__()
         self.spoken: list[str] = []
+        self.critical: list[str] = []
 
-    def _speak_error(self, message: str) -> None:
-        self.spoken.append(message)
+    def _announce(self, text: str, critical: bool = False) -> None:
+        self.spoken.append(text)
+        if critical:
+            self.critical.append(text)
+
+
+def _wait_until(predicate, timeout_s: float = 2.0) -> bool:
+    """Poll `predicate` until true or the timeout expires.
+
+    Haptic patterns run on spawned threads now — asserting on motor events
+    the instant `_fire_navigation_cue` returns would be racing the very
+    thread that exists to keep the main loop free.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
 
 
 @pytest.fixture
@@ -67,7 +86,7 @@ def test_announce_is_spoken(app):
 def test_haptic_pulses_only_the_matching_motor(app):
     app._fire_navigation_cue(NavigationCue(kind="haptic", direction="left"))
 
-    assert app.left_motor.events
+    assert _wait_until(lambda: app.left_motor.events)
     assert app.right_motor.events == []
     assert app.front_motor.events == []
     assert app.spoken == []
@@ -80,7 +99,7 @@ def test_arrive_speaks_and_pulses_every_motor(app):
 
     assert app.spoken == ["You have arrived at Home."]
     for motor in (app.front_motor, app.left_motor, app.right_motor):
-        assert motor.events
+        assert _wait_until(lambda m=motor: m.events)
 
 
 def test_off_route_speaks_and_pulses(app):
@@ -88,7 +107,7 @@ def test_off_route_speaks_and_pulses(app):
 
     assert app.spoken == ["You are off the planned route."]
     for motor in (app.front_motor, app.left_motor, app.right_motor):
-        assert motor.events
+        assert _wait_until(lambda m=motor: m.events)
 
 
 def test_an_unrecognised_cue_kind_is_ignored(app):
@@ -117,7 +136,7 @@ def test_haptic_still_fires_while_voice_is_busy(app):
     audio one is occupied."""
     app._voice_active.set()
     app._fire_navigation_cue(NavigationCue(kind="haptic", direction="right"))
-    assert app.right_motor.events
+    assert _wait_until(lambda: app.right_motor.events)
 
 
 def test_arrival_still_pulses_while_voice_is_busy(app):
@@ -127,7 +146,7 @@ def test_arrival_still_pulses_while_voice_is_busy(app):
     app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
 
     assert app.spoken == []
-    assert app.front_motor.events
+    assert _wait_until(lambda: app.front_motor.events)
 
 
 # --- containment -------------------------------------------------------------
@@ -239,7 +258,7 @@ def test_cues_from_the_monitor_reach_the_actuators(app):
     app._check_navigation()
 
     assert app.spoken == ["In 50 meters, turn right"]
-    assert app.right_motor.events
+    assert _wait_until(lambda: app.right_motor.events)
 
 
 def test_warning_lock_is_released_after_a_cue(app):

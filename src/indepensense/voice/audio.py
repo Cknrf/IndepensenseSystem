@@ -205,6 +205,34 @@ def play(audio_path: Path) -> None:
     sd.play(audio, samplerate=samplerate, blocking=True)
 
 
+def stop_playback() -> None:
+    """Abort whatever is currently playing, from any thread.
+
+    `play` and `play_chime` block on `sd.play(..., blocking=True)`, which
+    internally waits on the stream. `sd.stop()` aborts that stream, so the
+    blocked call returns early — this is PortAudio's intended way to
+    interrupt playback and the only one available to us, since the playing
+    thread is by definition not running Python while it waits.
+
+    Deliberately global rather than per-stream: `sounddevice` keeps one
+    default output stream, and every caller here uses it. A critical alert
+    needs to cut off whatever is speaking without knowing who started it.
+
+    Safe to call when nothing is playing — `sd.stop()` is a no-op then.
+    Never raises; interrupting speech must not itself become a failure.
+    """
+    try:
+        import sounddevice as sd
+    except Exception as exc:
+        # No audio stack (dev machine without the extras) — nothing to stop.
+        print(f"[audio] cannot stop playback: {exc}", flush=True)
+        return
+    try:
+        sd.stop()
+    except Exception as exc:
+        print(f"[audio] stop failed: {exc}", flush=True)
+
+
 def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
     """Play a short synthesized chime as an audio button-press acknowledgment.
 
