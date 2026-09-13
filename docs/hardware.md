@@ -302,11 +302,18 @@ active-high pull-down accordingly.
 Each button needs three wires: VCC to Pi 3.3V, GND to Pi GND, OUT to the
 GPIO pin listed below.
 
+The third button carries two meanings, decided by whether the wearable is
+currently speaking: a press interrupts speech in progress, and otherwise
+replays the last response. They are companions rather than a compromise —
+both concern the last thing the device said, and there is no state in
+which the user wants both. A dedicated stop button was never an option
+anyway; all three were assigned before the enclosure was fabricated.
+
 | Function                     | Pi physical pin | Pi GPIO  | Position on enclosure |
 |------------------------------|-----------------|----------|-----------------------|
 | Push-to-talk (PTT)           | 16              | GPIO 23  | **left**              |
 | Emergency                    | 18              | GPIO 24  | *unrecorded*          |
-| Repeat last instruction      | 22              | GPIO 25  | *unrecorded*          |
+| Repeat / stop speech         | 22              | GPIO 25  | *unrecorded*          |
 
 All three pins are configurable via `PTT_BUTTON_GPIO`, `EMERGENCY_BUTTON_GPIO`,
 and `REPEAT_BUTTON_GPIO` in `indepensense.config`.

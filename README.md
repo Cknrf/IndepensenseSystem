@@ -105,7 +105,7 @@ This repository holds the **on-device runtime** — everything that runs on the 
 - 3× Vibration motors — front / left / right directional feedback
 - Buzzer — audio alerts
 - USB microphone + speaker — voice interaction
-- Push-to-talk + SOS buttons + Repeat (Last instruction) button
+- Push-to-talk + SOS buttons + Repeat/stop button (replays the last response, or interrupts speech in progress)
 
 ## Wiring & Pin Alignment
 

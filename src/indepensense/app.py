@@ -211,6 +211,7 @@ from indepensense.vision.detector import YOLOv8Detector
 from indepensense.vision.ocr import TesseractOCR
 from indepensense.vision.picamera import PiCamera
 from indepensense.voice.audio import (
+    is_playing,
     play,
     play_chime,
     record_until_button,
@@ -1339,8 +1340,15 @@ class App:
         the emergency alert immediately.
 
         Feedback: buzzer three fast beeps (buzzer is loud on purpose here —
-        emergencies SHOULD be loud) + all-motor pulse. Then the existing
-        spoken confirmation plays.
+        emergencies SHOULD be loud) + all-motor pulse. Then the spoken
+        confirmation, queued as critical so it cuts off anything mid-
+        sentence rather than waiting behind it.
+
+        The confirmation used to be synthesised and played right here, on
+        gpiozero's callback thread. That made this a second, uncoordinated
+        speaker — it could talk over the announcer — and it tied up a
+        callback thread for the length of the sentence. Going through the
+        announcer fixes both.
         """
         self._voice_cancel.set()
         print("\n[EMERGENCY BUTTON] Pressed. Firing alert...", flush=True)
@@ -1354,25 +1362,43 @@ class App:
                 IntentResult(intent=Intent.EMERGENCY_TRIGGER)
             )
             print(f"[EMERGENCY BUTTON] response: {response}", flush=True)
-
-            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
-            resp_path = VOICE_TEST_DIR / f"{timestamp}_emergency.wav"
-            self.tts.synthesize(response, resp_path, language=self.language.current)
-            play(resp_path)
+            self._announce(response, critical=True)
         except Exception as exc:
             print(f"[EMERGENCY BUTTON] handler error: {exc}", file=sys.stderr, flush=True)
 
     def _on_repeat_press(self) -> None:
-        """Repeat press: repeats the last navigation instruction.
+        """Dual-purpose: stop talking if it is talking, otherwise repeat.
 
-        No-op if there's no active navigation — the executor returns a
-        clear message the user hears. If the wearable ever grows a
-        "repeat any last response" feature, it lives in the executor,
-        not here.
+        The two meanings are companions — both are about the last thing the
+        wearable said — so one button carries them without ambiguity. The
+        prototype has three buttons and all were already assigned, so a
+        dedicated stop button was never an option, but this reads better
+        than one anyway: there is no state in which the user wants both.
 
-        Feedback: brief all-motor pulse (same shape as PTT/Emergency
-        acks) so the user knows the button was received.
+        **Stop.** Until now nothing could interrupt speech. `vision.read`
+        on a menu is thirty seconds of Piper the user had to wait out, and
+        `sd.play` is blocking with no interrupt. A press now aborts
+        playback and drops the queue.
+
+        Stopping discards pending *critical* announcements too. The
+        alternative — a warning resuming a moment after the user asked for
+        silence — makes the button feel broken, and the guardian alert has
+        already gone out by then regardless, so what is lost is a
+        notification the user has chosen not to hear.
+
+        **Repeat.** Unchanged: replays the executor's last response,
+        whatever produced it. A response cut short by a stop press is still
+        the last response, so pressing again replays the one just
+        cancelled — which is what someone who stopped it for a passing
+        jeepney would expect.
         """
+        if is_playing():
+            print("[REPEAT] Stopping playback.", flush=True)
+            stop_playback()
+            if self.announcer is not None:
+                self.announcer.clear()
+            return
+
         if self._voice_active.is_set():
             print("[REPEAT] Voice pipeline busy — press ignored.", flush=True)
             return
@@ -1382,11 +1408,7 @@ class App:
                 IntentResult(intent=Intent.NAVIGATION_REPEAT)
             )
             print(f"[REPEAT] response: {response}", flush=True)
-
-            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
-            resp_path = VOICE_TEST_DIR / f"{timestamp}_repeat.wav"
-            self.tts.synthesize(response, resp_path, language=self.language.current)
-            play(resp_path)
+            self._announce(response)
         except Exception as exc:
             print(f"[REPEAT] handler error: {exc}", file=sys.stderr, flush=True)
 

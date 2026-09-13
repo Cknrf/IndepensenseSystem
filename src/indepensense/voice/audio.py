@@ -10,9 +10,30 @@ Both `record` and `play` are blocking. Callers that need concurrency (e.g. a
 polling loop that must keep reading sensors while audio plays) should invoke
 them from a separate thread.
 """
+import threading
 from pathlib import Path
 
 DEFAULT_SAMPLERATE_HZ = 16000   # Whisper expects 16 kHz mono; Piper output is resampled at playback time
+
+# Set while `play` has speech on the speaker. Tracked here rather than asked
+# of PortAudio because `sounddevice` exposes no reliable "is anything
+# playing" query, and every speaker in the system already goes through
+# `play` — the announcer worker, the voice pipeline, and the button
+# handlers. One flag therefore covers all of them.
+#
+# Deliberately NOT set by `play_chime`: a chime is ~120 ms of
+# acknowledgement tone, and counting it as "speaking" would make a
+# stop-talking press land on nothing during the gap after a PTT press.
+_playing = threading.Event()
+
+
+def is_playing() -> bool:
+    """True while speech is on the speaker.
+
+    Lets a button handler tell "stop talking" from "repeat" without
+    knowing which subsystem started the audio.
+    """
+    return _playing.is_set()
 
 
 def record(
@@ -202,7 +223,14 @@ def play(audio_path: Path) -> None:
     import soundfile as sf
 
     audio, samplerate = sf.read(str(audio_path))
-    sd.play(audio, samplerate=samplerate, blocking=True)
+    _playing.set()
+    try:
+        sd.play(audio, samplerate=samplerate, blocking=True)
+    finally:
+        # Cleared even when `stop_playback` aborted us, so a cut-off
+        # announcement doesn't leave the wearable believing it is still
+        # talking — every later stop press would then be swallowed.
+        _playing.clear()
 
 
 def stop_playback() -> None:
