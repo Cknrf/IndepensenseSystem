@@ -155,6 +155,7 @@ from indepensense.config import (
     PIPER_VOICES,
     PTT_BUTTON_GPIO,
     PTT_MAX_RECORDING_S,
+    SAVED_PLACES_PATH,
     REPEAT_BUTTON_GPIO,
     LANGUAGE_STATE_PATH,
     SIM7600_GPS_PORT,
@@ -194,6 +195,7 @@ from indepensense.navigation.monitor import NavigationCue, NavigationMonitor
 from indepensense.power.waveshare_ups_e import WaveshareUPSHatE
 from indepensense.routing.base import Coordinate
 from indepensense.routing.graphhopper import GraphHopperRouter
+from indepensense.routing.places import SavedPlaces
 from indepensense.routing.photon import PhotonGeocoder
 from indepensense.safety.fall_detector import ThresholdFallDetector
 from indepensense.sensors.dyp_a22 import DYPA22
@@ -486,6 +488,7 @@ class App:
         self.stt: FasterWhisperSTT | None = None
         self.tts: PiperTTS | None = None
         self.parser: OllamaIntentParser | None = None
+        self.places: SavedPlaces | None = None
         # Owns all speech that originates on the main loop. See `Announcer`.
         self.announcer: Announcer | None = None
         self.buffered: BufferedTelemetryClient | None = None
@@ -599,6 +602,9 @@ class App:
         router = self._open_router()
         geocoder = self._open_geocoder()
 
+        self.places = self._open_saved_places()
+        print(f"  {len(self.places)} saved place(s).", flush=True)
+
         print("  Loading device credential...", flush=True)
         self.credential = self._load_credential()
         if self.credential is not None:
@@ -650,6 +656,7 @@ class App:
             # Bound method, resolved at call time — `self.ptt_button` is
             # still None right now and gets opened a few lines below.
             confirmer=self._confirm_destination,
+            places=self.places,
             cloud_max_chars=CLOUD_MAX_RESPONSE_CHARS,
             ocr_max_chars=OCR_MAX_CHARS,
             geocode_candidate_limit=GEOCODE_CANDIDATE_LIMIT,
@@ -1719,6 +1726,15 @@ class App:
             warmup=True,
             warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
         )
+
+    def _open_saved_places(self) -> SavedPlaces:
+        """Load the user's own places. Not a device, so not `_try_open_*`.
+
+        Cannot fail in a way worth aborting for: a missing file is the
+        normal first-boot case and an unreadable one degrades to an empty
+        list, both handled inside `SavedPlaces`.
+        """
+        return SavedPlaces(SAVED_PLACES_PATH)
 
     def _open_router(self) -> GraphHopperRouter:
         return GraphHopperRouter(base_url=GRAPHHOPPER_URL)

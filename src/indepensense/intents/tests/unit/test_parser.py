@@ -164,3 +164,59 @@ def test_the_help_intent_name_round_trips():
         '{"intent": "system.help", "parameters": {}}', "what can you do",
     )
     assert result.intent is Intent.SYSTEM_HELP
+
+
+# --- saved places ------------------------------------------------------------
+
+def test_the_mock_parser_extracts_a_save_label():
+    parser = MockIntentParser()
+    cases = {
+        "save this as home": "home",
+        "Save this place as work": "work",
+        "remember this as my sister's house": "my sister's house",
+        "I-save mo ito bilang bahay": "bahay",
+        "Tandaan mo ito bilang opisina": "opisina",
+    }
+    for utterance, expected in cases.items():
+        result = parser.parse(utterance)
+        assert result.intent is Intent.PLACE_SAVE, utterance
+        assert result.parameters["label"].lower() == expected.lower(), utterance
+
+
+def test_the_save_label_keeps_the_users_own_spelling():
+    """It is what they will say later to navigate back, so it has to
+    round-trip unchanged — lower-casing it here would come back out of
+    Piper as something they did not say."""
+    result = MockIntentParser().parse("remember this as My Sister's House")
+    assert result.parameters["label"] == "My Sister's House"
+
+
+def test_the_mock_parser_extracts_a_delete_label():
+    result = MockIntentParser().parse("forget the place saved as home")
+    assert result.intent is Intent.PLACE_DELETE
+    assert result.parameters["label"] == "home"
+
+
+def test_take_me_home_is_navigation_not_a_save():
+    """"take me home" has no preposition, so it must not fall through the
+    "take me to X" prefix and come out as a destination called "to"."""
+    result = MockIntentParser().parse("take me home")
+    assert result.intent is Intent.NAVIGATION_START
+    assert result.parameters["location"] == "home"
+
+
+def test_take_me_to_a_place_still_strips_the_preposition():
+    result = MockIntentParser().parse("take me to Jollibee")
+    assert result.parameters["location"] == "jollibee"
+
+
+def test_place_intent_names_round_trip():
+    for name, intent in (
+        ("place.save", Intent.PLACE_SAVE),
+        ("place.delete", Intent.PLACE_DELETE),
+    ):
+        parsed = parse_llm_response(
+            '{"intent": "%s", "parameters": {"label": "home"}}' % name, "x",
+        )
+        assert parsed.intent is intent
+        assert parsed.parameters["label"] == "home"

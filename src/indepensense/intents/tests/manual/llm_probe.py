@@ -140,6 +140,12 @@ ENGLISH_CASES = [
     # sole entry point to the cloud fallback (see intents/cloud.py). If
     # the model ever classified these as a real intent, the command would
     # be mishandled instead of answered.
+    # --- place.save / place.delete ---
+    ("Save this place as home",          "place.save", {"label": "home"}),
+    ("Remember this as my sister's house", "place.save", {"label": "my sister's house"}),
+    ("Forget the place saved as work",   "place.delete", {"label": "work"}),
+    ("Take me home",                     "navigation.start", {"location": "home"}),
+
     # --- system.help ---
     ("What can you do",                  "system.help", {}),
     ("What can I ask you",               "system.help", {}),
@@ -174,6 +180,9 @@ TAGALOG_CASES = [
     ("Magsalita ka ng Tagalog",                       "system.language",     {"language": "tl"}),
     ("Tagalog na lang",                               "system.language",     {"language": "tl"}),
 
+    ("I-save mo ito bilang bahay",                    "place.save",          {"label": "bahay"}),
+    ("Kalimutan mo ang bahay",                        "place.delete",        {"label": "bahay"}),
+
     ("Ano ang kaya mong gawin",                       "system.help",         {}),
     ("Paano ito gamitin",                             "system.help",         {}),
 
@@ -203,6 +212,10 @@ ADVERSARIAL_CASES = [
     # confusion on the device: answering a cry for help by listing
     # features. It sits in the adversarial group because `system.help`
     # gives the model a tempting place to put it.
+    # Saving is always the CURRENT position. Naming somewhere the user is
+    # not would store the wrong coordinate under a label they later trust.
+    ("Save Jollibee as my favourite",    "unknown", {}),
+
     ("help",                             "emergency.trigger", {}),
     ("tulong",                           "emergency.trigger", {}),
 

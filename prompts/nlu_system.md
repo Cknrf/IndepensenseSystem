@@ -33,7 +33,8 @@ Return `unknown` when:
   "parameters": {
     "location":     <the destination the user asked to go to, only for navigation.start>,
     "nearest":      <true|false, only for navigation.start>,
-    "status_field": <one of "battery" | "gps" | "signal", only for device.status>
+    "status_field": <one of "battery" | "gps" | "signal", only for device.status>,
+    "label":        <the name the user gave a place, only for place.save and place.delete>
   }
 }
 ```
@@ -55,6 +56,8 @@ intent.
    - `vision.read` — the user is asking the wearable to read printed text (a sign, menu, receipt, label).
    - `system.language` — the user wants the wearable to speak a different language.
    - `system.help` — the user is asking what the wearable can do or how to use it.
+   - `place.save` — the user wants to remember where they are now, under a name.
+   - `place.delete` — the user wants the wearable to forget a saved place.
    - `unknown` — nothing above fits, OR you are not confident.
 
 2. If more than one intent appears in a single utterance, choose the primary
@@ -87,6 +90,20 @@ intent.
 
 5. English and Tagalog inputs are treated equally. Do not translate the
    `location` value — preserve the user's spelling.
+
+6. For `place.save` and `place.delete`:
+   - `label` must contain ONLY the name the user gave the place. Strip the
+     surrounding command:
+       * English: `save this as`, `save this place as`, `remember this as`,
+         `call this`, `forget`, `delete the place`
+       * Tagalog: `i-save mo ito bilang`, `tandaan mo ito bilang`,
+         `tawagin mo itong`, `kalimutan mo ang`, `burahin mo ang`
+   - Do NOT translate or tidy the label — "my sister's house" stays exactly
+     that. It is what the user will say later to navigate back, so it must
+     round-trip unchanged.
+   - `place.save` always means the user's CURRENT position. It never takes
+     a destination. If the user names somewhere they are not, that is
+     `unknown`.
 
 # Intent triggers — what DOES and DOES NOT count
 
@@ -297,6 +314,54 @@ Output: `{"intent": "vision.read", "parameters": {}}`
 
 User: "Take me to English Street"
 Output: `{"intent": "navigation.start", "parameters": {"location": "English Street", "nearest": false}}`
+
+## place.save
+
+The user is standing somewhere and wants it remembered under a name.
+
+User: "Save this place as home"
+Output: `{"intent": "place.save", "parameters": {"label": "home"}}`
+
+User: "Remember this as my sister's house"
+Output: `{"intent": "place.save", "parameters": {"label": "my sister's house"}}`
+
+User: "Save this as work"
+Output: `{"intent": "place.save", "parameters": {"label": "work"}}`
+
+User: "I-save mo ito bilang bahay"
+Output: `{"intent": "place.save", "parameters": {"label": "bahay"}}`
+
+User: "Tandaan mo ito bilang opisina"
+Output: `{"intent": "place.save", "parameters": {"label": "opisina"}}`
+
+Saving is always about where the user IS. Naming somewhere they are not is
+not a save, and guessing would store the wrong coordinate under a label
+they will later trust:
+
+User: "Save Jollibee as my favourite"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+## place.delete
+
+User: "Forget the place saved as home"
+Output: `{"intent": "place.delete", "parameters": {"label": "home"}}`
+
+User: "Delete work"
+Output: `{"intent": "place.delete", "parameters": {"label": "work"}}`
+
+User: "Kalimutan mo ang bahay"
+Output: `{"intent": "place.delete", "parameters": {"label": "bahay"}}`
+
+## navigation.start to a saved place
+
+A saved label is just a destination — the wearable resolves it before
+asking the geocoder, so nothing special is needed here:
+
+User: "Take me home"
+Output: `{"intent": "navigation.start", "parameters": {"location": "home", "nearest": false}}`
+
+User: "Dalhin mo ako sa bahay"
+Output: `{"intent": "navigation.start", "parameters": {"location": "bahay", "nearest": false}}`
 
 ## system.help
 

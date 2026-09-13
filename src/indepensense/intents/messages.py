@@ -167,6 +167,40 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Kinansela. Pakisabi po kung saan kayo gustong pumunta.",
     },
 
+    # --- saved places -------------------------------------------------------
+    # The label is always spoken back. It is the only confirmation the user
+    # gets that the wearable heard "my sister's house" and not something
+    # else, and a place saved under a misheard label is unreachable —
+    # they would have to guess the mishearing to navigate to it.
+    "place.saved": {
+        "en": "Saved this place as {label}.",
+        "tl": "Na-save ko ang lugar na ito bilang {label}.",
+    },
+    "place.updated": {
+        "en": "Updated {label} to this place.",
+        "tl": "Na-update ko ang {label} sa lugar na ito.",
+    },
+    "place.no_label_heard": {
+        "en": "I didn't hear what to call this place. Please try again.",
+        "tl": "Hindi ko narinig kung ano ang itatawag dito. Pakiulit po.",
+    },
+    "place.no_gps_to_save": {
+        "en": "I can't save this place without a GPS fix yet.",
+        "tl": "Hindi ko masi-save ang lugar na ito dahil wala pang GPS signal.",
+    },
+    "place.deleted": {
+        "en": "Forgot the place saved as {label}.",
+        "tl": "Kinalimutan ko na ang lugar na naka-save bilang {label}.",
+    },
+    "place.not_found": {
+        "en": "I don't have a place saved as {label}.",
+        "tl": "Wala akong lugar na naka-save bilang {label}.",
+    },
+    "place.unavailable": {
+        "en": "I can't save places right now.",
+        "tl": "Hindi ako makakapag-save ng lugar sa ngayon.",
+    },
+
     # --- help ---------------------------------------------------------------
     # A user who cannot see a screen also cannot read a manual, so the only
     # place the wearable's capabilities can live is in its own voice.
@@ -182,11 +216,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     "help.capabilities": {
         "en": "I am IndepenSense. I help you walk safely and independently. "
               "You can ask me where you are, what is around you, have me read "
-              "text out loud, or tell me where you want to go.",
+              "text out loud, or tell me where you want to go. You can also "
+              "say save this place as home, and later say take me home.",
         "tl": "Ako si IndepenSense. Tinutulungan kitang makapaglakad nang "
               "ligtas at malaya. Puwede mong itanong kung nasaan ka, kung ano "
               "ang nasa paligid mo, pabasahin ang nakasulat, o sabihin kung "
-              "saan mo gustong pumunta.",
+              "saan mo gustong pumunta. Puwede mo ring sabihing i-save mo ito "
+              "bilang bahay, at mamaya ay dalhin mo ako sa bahay.",
     },
 
     # --- location -----------------------------------------------------------

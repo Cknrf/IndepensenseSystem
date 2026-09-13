@@ -35,6 +35,7 @@ from indepensense.routing.base import (
     Router,
     haversine_m,
 )
+from indepensense.routing.places import SavedPlaces
 from indepensense.routing.ranking import rank_candidates
 from indepensense.navigation.monitor import NavigationMonitor
 from indepensense.power.base import BatteryReader
@@ -228,6 +229,10 @@ class IntentExecutor:
         # speech and a button press, which this class must stay free of —
         # tests pass a lambda, `app.py` passes the real thing.
         confirmer: Callable[[str], bool] | None = None,
+        # Places the user named themselves. None disables saving and
+        # falls back to geocoding every destination, which is what the
+        # wearable did before this existed.
+        places: SavedPlaces | None = None,
         ocr_max_chars: int = 500,
         cloud_max_chars: int = 500,
         geocode_candidate_limit: int = 10,
@@ -249,6 +254,7 @@ class IntentExecutor:
         )
         self._cloud = cloud
         self._confirmer = confirmer
+        self._places = places
         self._ocr_max_chars = ocr_max_chars
         self._cloud_max_chars = cloud_max_chars
         self._geocode_candidate_limit = geocode_candidate_limit
@@ -294,6 +300,8 @@ class IntentExecutor:
             Intent.VISION_READ:         self._handle_vision_read,
             Intent.SYSTEM_LANGUAGE:     self._handle_system_language,
             Intent.SYSTEM_HELP:         self._handle_system_help,
+            Intent.PLACE_SAVE:          self._handle_place_save,
+            Intent.PLACE_DELETE:        self._handle_place_delete,
         }
 
     # --- handlers -----------------------------------------------------------
@@ -307,32 +315,43 @@ class IntentExecutor:
         if start is None:
             return messages.get("nav.no_gps_for_start", self._lang)
 
-        # Ask for several candidates and decide locally. Photon's own
-        # ordering blends text relevance with an opaque location bias, so
-        # taking its first result means accepting a choice we cannot
-        # inspect — which is how "Jollibee" resolved to a branch 700 km
-        # away. `near` still biases the search; ranking decides the answer.
-        hits = self._geocoder.geocode(
-            location, limit=self._geocode_candidate_limit, near=start,
-        )
-        if not hits:
-            return messages.get("nav.place_not_found", self._lang, location=location)
+        # A place the user saved themselves wins outright, and skips both
+        # the geocoder and the confirmation. There is nothing to
+        # disambiguate — they named this exact spot while standing in it —
+        # and asking them to approve their own "home" every time would be
+        # noise. It is also the only destination that resolves with no
+        # network at all, which is the point of the feature.
+        destination = self._saved_destination(location)
 
-        ranked = rank_candidates(
-            hits,
-            origin=start,
-            query=location,
-            prefer_nearest=bool(result.parameters.get("nearest", False)),
-        )
-        destination = ranked[0]
+        if destination is None:
+            # Ask for several candidates and decide locally. Photon's own
+            # ordering blends text relevance with an opaque location bias, so
+            # taking its first result means accepting a choice we cannot
+            # inspect — which is how "Jollibee" resolved to a branch 700 km
+            # away. `near` still biases the search; ranking decides the answer.
+            hits = self._geocoder.geocode(
+                location, limit=self._geocode_candidate_limit, near=start,
+            )
+            if not hits:
+                return messages.get(
+                    "nav.place_not_found", self._lang, location=location,
+                )
 
-        # Read the choice back before committing to it. Ranking makes the
-        # right pick far more likely but cannot make it certain — the user
-        # is the only one who knows which Jollibee they meant, and they
-        # cannot glance at a map to check. Declining costs one repeated
-        # command; walking the wrong way costs much more.
-        if not self._confirm_destination(destination, start):
-            return messages.get("nav.confirm_timed_out", self._lang)
+            ranked = rank_candidates(
+                hits,
+                origin=start,
+                query=location,
+                prefer_nearest=bool(result.parameters.get("nearest", False)),
+            )
+            destination = ranked[0]
+
+            # Read the choice back before committing to it. Ranking makes the
+            # right pick far more likely but cannot make it certain — the user
+            # is the only one who knows which Jollibee they meant, and they
+            # cannot glance at a map to check. Declining costs one repeated
+            # command; walking the wrong way costs much more.
+            if not self._confirm_destination(destination, start):
+                return messages.get("nav.confirm_timed_out", self._lang)
 
         route = self._router.route(start, destination.coordinate, profile="foot")
         self._current_route = route
@@ -616,6 +635,37 @@ class IntentExecutor:
             return messages.get("language.already", target)
         return messages.get("language.switched", target)
 
+    def _handle_place_save(self, result: IntentResult) -> str:
+        """Store the user's current position under a label they chose.
+
+        No geocoding: the device already knows where it is, and the point
+        of this feature is naming places OpenStreetMap does not have.
+        """
+        label = (result.parameters.get("label") or "").strip()
+        if not label:
+            return messages.get("place.no_label_heard", self._lang)
+        if self._places is None:
+            return messages.get("place.unavailable", self._lang)
+
+        position = self._current_position()
+        if position is None:
+            return messages.get("place.no_gps_to_save", self._lang)
+
+        replaced = self._places.save(label, position)
+        key = "place.updated" if replaced else "place.saved"
+        return messages.get(key, self._lang, label=label)
+
+    def _handle_place_delete(self, result: IntentResult) -> str:
+        label = (result.parameters.get("label") or "").strip()
+        if not label:
+            return messages.get("place.no_label_heard", self._lang)
+        if self._places is None:
+            return messages.get("place.unavailable", self._lang)
+
+        if self._places.delete(label):
+            return messages.get("place.deleted", self._lang, label=label)
+        return messages.get("place.not_found", self._lang, label=label)
+
     def _handle_system_help(self, result: IntentResult) -> str:
         """Say what the wearable can do, in the language it is speaking.
 
@@ -660,6 +710,32 @@ class IntentExecutor:
         return text
 
     # --- helpers ------------------------------------------------------------
+
+    def _saved_destination(self, location: str) -> GeocodingResult | None:
+        """A saved place matching `location`, shaped like a geocoder hit.
+
+        Returning a `GeocodingResult` rather than a `SavedPlace` keeps
+        `_handle_navigation_start` reading as one path: whether the
+        destination came from the user's own list or from Photon, the
+        routing and response code below it is identical.
+
+        Street and city are None because a saved place has no address —
+        the user named a coordinate, not a listing — so the spoken
+        response falls back to their own label, which is what they would
+        recognise anyway.
+        """
+        if self._places is None:
+            return None
+        place = self._places.find(location)
+        if place is None:
+            return None
+        return GeocodingResult(
+            name=place.label,
+            coordinate=place.coordinate,
+            country=None,
+            city=None,
+            feature_type="saved_place",
+        )
 
     def _confirm_destination(
         self,

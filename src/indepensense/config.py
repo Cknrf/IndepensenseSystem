@@ -559,6 +559,15 @@ DEVICE_KEY_PATH = Path("/etc/indepensense/device.key")
 # lists change on human timescales, and re-fetching on a timer would
 # spend metered cellular data to re-transmit an almost always identical
 # list.
+# Places the user has named and saved ("home", "my sister's house").
+#
+# Under `var/` with the other runtime state, and deliberately NOT in the
+# repo: this is one person's list of where they live and who they visit.
+# It is also the only destination source that works with no data
+# connection, which is much of why the feature exists — see
+# `routing/places.py`.
+SAVED_PLACES_PATH = PROJECT_ROOT / "var" / "places.json"
+
 GUARDIAN_CACHE_PATH = PROJECT_ROOT / "var" / "guardians.json"
 GUARDIAN_FETCH_TIMEOUT_S = 10.0
 

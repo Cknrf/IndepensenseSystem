@@ -49,6 +49,39 @@ class MockIntentParser:
                     Intent.SYSTEM_LANGUAGE, {"language": "tl"}, transcript, "",
                 )
 
+        # Saved places. Checked before navigation so "save this place as
+        # home" isn't caught by a destination prefix, and before the
+        # generic matchers so the label survives intact.
+        for prefix in (
+            "save this place as ",
+            "save this as ",
+            "remember this as ",
+            "i-save mo ito bilang ",
+            "tandaan mo ito bilang ",
+        ):
+            if text.startswith(prefix):
+                return IntentResult(
+                    Intent.PLACE_SAVE,
+                    {"label": transcript.strip()[len(prefix):].strip()},
+                    transcript,
+                    "",
+                )
+
+        for prefix in (
+            "forget the place saved as ",
+            "forget the place ",
+            "delete the place ",
+            "kalimutan mo ang ",
+            "burahin mo ang ",
+        ):
+            if text.startswith(prefix):
+                return IntentResult(
+                    Intent.PLACE_DELETE,
+                    {"label": transcript.strip()[len(prefix):].strip()},
+                    transcript,
+                    "",
+                )
+
         if any(w in text for w in ("cancel navigation", "stop navigation", "ihinto")):
             return IntentResult(Intent.NAVIGATION_STOP, {}, transcript, "")
 
@@ -74,13 +107,19 @@ class MockIntentParser:
                 Intent.DEVICE_STATUS, {"status_field": "signal"}, transcript, ""
             )
 
+        # Ordered longest-first where prefixes overlap: "take me to X" must
+        # match before the bare "take me X", or the destination would come
+        # out as "to X". The bare forms are what reach a saved place —
+        # "take me home" has no preposition.
         for prefix in (
             "navigate to ",
             "take me to ",
+            "take me ",
             "guide me to ",
             "bring me to ",
             "go to ",
             "dalhin mo ako sa ",
+            "dalhin mo ako ",
             "puntahan mo ang ",
         ):
             if text.startswith(prefix):

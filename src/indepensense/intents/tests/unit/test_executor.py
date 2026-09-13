@@ -5,12 +5,15 @@ and routing modules — no live LLM, no live services, no hardware.
 """
 import time
 
+import pytest
+
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.language import LanguageState
 from indepensense.navigation.monitor import NavigationMonitor
 from indepensense.routing.base import Coordinate, GeocodingResult
 from indepensense.routing.mock import MockGeocoder, MockRouter
+from indepensense.routing.places import SavedPlaces
 from indepensense.sensors.base import GPSFix
 from indepensense.telemetry.base import EventType
 from indepensense.telemetry.mock import MockTelemetryClient
@@ -508,3 +511,170 @@ def test_help_can_be_repeated():
     helped = executor.execute(IntentResult(Intent.SYSTEM_HELP))
 
     assert executor.execute(IntentResult(Intent.NAVIGATION_REPEAT)) == helped
+
+
+# --- saved places ------------------------------------------------------------
+#
+# The destinations people actually walk to — home, work, a relative's house
+# — are frequently not in OpenStreetMap at all, so no geocoder tuning
+# reaches them. `routing/tests/unit/test_places.py` covers the store; these
+# cover what the executor does with it.
+
+@pytest.fixture
+def places(tmp_path):
+    return SavedPlaces(tmp_path / "places.json")
+
+
+def _place_executor(places, geocoder=None, confirmer=None):
+    return IntentExecutor(
+        router=MockRouter(),
+        geocoder=geocoder or MockGeocoder(),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        places=places,
+        confirmer=confirmer,
+    )
+
+
+def test_saving_stores_the_users_current_position(places):
+    executor = _place_executor(places)
+
+    response = executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
+
+    assert "home" in response
+    saved = places.find("home")
+    assert saved.coordinate == Coordinate(lat=14.5824, lon=120.9760)
+
+
+def test_saving_without_a_gps_fix_says_so(places):
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(),
+        gps=_StaticGPS(fix_quality=0), places=places,
+    )
+
+    response = executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
+
+    assert "GPS" in response or "gps" in response
+    assert len(places) == 0
+
+
+def test_saving_without_a_label_asks_again(places):
+    response = _place_executor(places).execute(
+        IntentResult(Intent.PLACE_SAVE, {"label": ""})
+    )
+
+    assert "didn't hear" in response.lower()
+    assert len(places) == 0
+
+
+def test_re_saving_a_label_says_updated_rather_than_saved(places):
+    """The only signal the user gets that they overwrote something."""
+    executor = _place_executor(places)
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
+
+    response = executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
+
+    assert "updated" in response.lower()
+
+
+def test_a_place_can_be_forgotten(places):
+    executor = _place_executor(places)
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
+
+    response = executor.execute(IntentResult(Intent.PLACE_DELETE, {"label": "home"}))
+
+    assert "home" in response
+    assert places.find("home") is None
+
+
+def test_forgetting_an_unsaved_place_says_so(places):
+    response = _place_executor(places).execute(
+        IntentResult(Intent.PLACE_DELETE, {"label": "home"})
+    )
+
+    assert "don't have" in response.lower()
+
+
+# --- navigating to a saved place ---------------------------------------------
+
+def test_navigating_to_a_saved_place_skips_the_geocoder(places):
+    """The point of the feature: it resolves with no network at all, so a
+    geocoder that refuses every call must not stop "take me home"."""
+    class _DeadGeocoder:
+        def geocode(self, query, limit=5, near=None):
+            raise AssertionError("the geocoder must not be consulted")
+
+        def reverse(self, coordinate):
+            return None
+
+    places.save("home", Coordinate(lat=14.5830, lon=120.9770))
+    executor = _place_executor(places, geocoder=_DeadGeocoder())
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "home", "nearest": False}
+    ))
+
+    assert "home" in response
+
+
+def test_navigating_to_a_saved_place_skips_confirmation(places):
+    """They named this exact spot while standing in it. Asking them to
+    approve their own home every time would be noise."""
+    confirmer = _SpyConfirmer(answer=True)
+    places.save("home", Coordinate(lat=14.5830, lon=120.9770))
+
+    _place_executor(places, confirmer=confirmer).execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "home", "nearest": False}
+    ))
+
+    assert confirmer.questions == []
+
+
+def test_an_unsaved_destination_still_goes_through_the_geocoder(places):
+    """Saved places are a shortcut, not a replacement."""
+    confirmer = _SpyConfirmer(answer=True)
+    places.save("home", Coordinate(lat=14.5830, lon=120.9770))
+
+    response = _place_executor(places, confirmer=confirmer).execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert len(confirmer.questions) == 1
+    assert "Jollibee" in response
+
+
+def test_a_saved_label_beats_a_geocoder_hit_of_the_same_name(places):
+    """If the user went to the trouble of saving a place under a name,
+    that is the one they mean by it."""
+    places.save("home", Coordinate(lat=14.5830, lon=120.9770))
+    executor = _place_executor(places, confirmer=_SpyConfirmer(answer=True))
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "home", "nearest": False}
+    ))
+
+    # MockGeocoder would have echoed the query with its own fixed
+    # coordinate; reaching the saved one means the lookup won.
+    assert executor._current_route.points[-1] == Coordinate(lat=14.5830, lon=120.9770)
+
+
+def test_navigation_still_works_with_no_places_store():
+    """`places=None` is how the wearable behaved before this existed."""
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=_StaticGPS(),
+    )
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    assert "Jollibee" in response
+
+
+def test_saving_without_a_places_store_says_it_cannot():
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=_StaticGPS(),
+    )
+
+    response = executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
+
+    assert "can't save" in response.lower()
