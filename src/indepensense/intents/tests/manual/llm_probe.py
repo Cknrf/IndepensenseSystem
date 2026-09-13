@@ -140,6 +140,10 @@ ENGLISH_CASES = [
     # sole entry point to the cloud fallback (see intents/cloud.py). If
     # the model ever classified these as a real intent, the command would
     # be mishandled instead of answered.
+    # --- system.help ---
+    ("What can you do",                  "system.help", {}),
+    ("What can I ask you",               "system.help", {}),
+
     ("How tall is Mount Apo",            "unknown", {}),
     ("How many days until Christmas",    "unknown", {}),
     ("What is the capital of Japan",      "unknown", {}),
@@ -170,6 +174,9 @@ TAGALOG_CASES = [
     ("Magsalita ka ng Tagalog",                       "system.language",     {"language": "tl"}),
     ("Tagalog na lang",                               "system.language",     {"language": "tl"}),
 
+    ("Ano ang kaya mong gawin",                       "system.help",         {}),
+    ("Paano ito gamitin",                             "system.help",         {}),
+
     # --- unknown, bound for the cloud fallback ---
     ("Gaano katangkad ang Bundok Apo",                "unknown",             {}),
     ("Ilang araw na lang bago mag-Pasko",             "unknown",             {}),
@@ -189,7 +196,15 @@ ADVERSARIAL_CASES = [
 
     # "help" in non-emergency context
     ("help me find the pharmacy",        "navigation.start", {"location": "pharmacy"}),
-    ("how do I use this",                "unknown", {}),
+    ("how do I use this",                "system.help", {}),
+    ("what can you help me with",        "system.help", {}),
+
+    # The single word must stay an emergency. This is the most expensive
+    # confusion on the device: answering a cry for help by listing
+    # features. It sits in the adversarial group because `system.help`
+    # gives the model a tempting place to put it.
+    ("help",                             "emergency.trigger", {}),
+    ("tulong",                           "emergency.trigger", {}),
 
     # "location" / "where" about a place, not the user
     ("where is Jollibee",                "unknown", {}),

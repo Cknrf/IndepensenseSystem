@@ -293,6 +293,7 @@ class IntentExecutor:
             Intent.VISION_DESCRIBE:     self._handle_vision_describe,
             Intent.VISION_READ:         self._handle_vision_read,
             Intent.SYSTEM_LANGUAGE:     self._handle_system_language,
+            Intent.SYSTEM_HELP:         self._handle_system_help,
         }
 
     # --- handlers -----------------------------------------------------------
@@ -614,6 +615,16 @@ class IntentExecutor:
             # Supported but unchanged — already speaking it.
             return messages.get("language.already", target)
         return messages.get("language.switched", target)
+
+    def _handle_system_help(self, result: IntentResult) -> str:
+        """Say what the wearable can do, in the language it is speaking.
+
+        Deliberately static: no device state, no network, nothing that can
+        fail. "What can you do?" is a question a confused or new user asks,
+        and it would be a poor answer to have it depend on whether GPS has
+        a fix.
+        """
+        return messages.get("help.capabilities", self._lang)
 
     def _handle_unknown(self, result: IntentResult) -> str:
         """Answer an utterance the local NLU declined to classify.

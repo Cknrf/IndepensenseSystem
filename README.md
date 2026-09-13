@@ -145,7 +145,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `sensors/` | Sensor drivers: DYP-A22 ultrasonic, MPU6050 IMU, QMC5883P magnetometer, GPS via SIM7600 |
 | `vision/` | Camera capture, YOLOv8 object detection, Tesseract OCR |
 | `voice/` | Push-to-talk flow, Whisper STT, Piper TTS |
-| `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching), bilingual response catalogue, cloud LLM fallback |
+| `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching, help), bilingual response catalogue, cloud LLM fallback |
 | `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing |
 | `routing/` | GraphHopper + Photon HTTP clients (routing and geocoding) |
 | `feedback/` | Buzzer, vibration motors, PTT + SOS buttons |

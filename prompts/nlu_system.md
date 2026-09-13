@@ -54,6 +54,7 @@ intent.
    - `vision.describe` — the user is asking what is around them (uses the camera).
    - `vision.read` — the user is asking the wearable to read printed text (a sign, menu, receipt, label).
    - `system.language` — the user wants the wearable to speak a different language.
+   - `system.help` — the user is asking what the wearable can do or how to use it.
    - `unknown` — nothing above fits, OR you are not confident.
 
 2. If more than one intent appears in a single utterance, choose the primary
@@ -114,7 +115,26 @@ intent.
 
 **DOES NOT trigger** — the word "help" in non-urgent context:
 - "help me find the store" → navigation.start (asking for navigation)
-- "how do I use this" → unknown (asking for instructions, not emergency)
+- "how do I use this" → system.help (asking for instructions, not emergency)
+- "what can you help me with" → system.help
+
+The word "help" alone, or "tulong" alone, IS an emergency. A user in
+trouble says one word. Only treat "help" as `system.help` when the
+sentence is clearly asking about the device's abilities.
+
+## system.help — REQUIRES asking about the device's abilities
+
+**DOES trigger:**
+- "What can you do"
+- "What can I ask you"
+- "How do I use this"
+- "Ano ang kaya mong gawin"
+- "Paano ito gamitin"
+
+**DOES NOT trigger:**
+- "Help" / "Tulong" → emergency.trigger (a cry for help, not a question)
+- "Help me cross the street" → unknown (a request this device cannot fulfil)
+- "Can you read this" → vision.read (a specific request, not a general one)
 
 ## navigation.location — REQUIRES asking about the user's own position
 
@@ -277,6 +297,35 @@ Output: `{"intent": "vision.read", "parameters": {}}`
 
 User: "Take me to English Street"
 Output: `{"intent": "navigation.start", "parameters": {"location": "English Street", "nearest": false}}`
+
+## system.help
+
+User: "What can you do"
+Output: `{"intent": "system.help", "parameters": {}}`
+
+User: "What can I ask you"
+Output: `{"intent": "system.help", "parameters": {}}`
+
+User: "How do I use this"
+Output: `{"intent": "system.help", "parameters": {}}`
+
+User: "Ano ang kaya mong gawin"
+Output: `{"intent": "system.help", "parameters": {}}`
+
+User: "Paano ito gamitin"
+Output: `{"intent": "system.help", "parameters": {}}`
+
+User: "Anong mga utos ang naiintindihan mo"
+Output: `{"intent": "system.help", "parameters": {}}`
+
+The single word stays an emergency — a person in trouble says one word,
+and getting this backwards is the most expensive mistake on this device:
+
+User: "Help"
+Output: `{"intent": "emergency.trigger", "parameters": {}}`
+
+User: "Tulong"
+Output: `{"intent": "emergency.trigger", "parameters": {}}`
 
 ## unknown — the safe default
 

@@ -6,6 +6,7 @@ into a normalised `IntentResult`. No LLM or Ollama server is required.
 import json
 
 from indepensense.intents.base import Intent
+from indepensense.intents.mock import MockIntentParser
 from indepensense.intents.parser import _normalise_parameters, parse_llm_response
 
 
@@ -123,3 +124,43 @@ def test_missing_language_becomes_empty_string():
 def test_non_string_language_becomes_empty_string():
     result = _normalise_parameters(Intent.SYSTEM_LANGUAGE, {"language": 42})
     assert result["language"] == ""
+
+
+# --- help vs emergency -------------------------------------------------------
+#
+# The most expensive confusion on this device. "Help" alone is someone in
+# trouble; "what can you help me with" is someone reading the manual they
+# cannot read. Both the prompt and the mock parser draw the line at whole
+# phrasings rather than the substring "help".
+
+def test_the_mock_parser_reads_a_capability_question_as_help():
+    parser = MockIntentParser()
+    for phrasing in (
+        "what can you do",
+        "What can I ask you?",
+        "how do i use this",
+        "Ano ang kaya mong gawin",
+        "paano ito gamitin",
+    ):
+        assert parser.parse(phrasing).intent is Intent.SYSTEM_HELP, phrasing
+
+
+def test_the_mock_parser_keeps_a_bare_cry_for_help_as_an_emergency():
+    """A person in trouble says one word. Getting this backwards would
+    answer a cry for help by listing features."""
+    parser = MockIntentParser()
+    for phrasing in ("help", "Help!", "tulong", "SOS", "emergency"):
+        assert parser.parse(phrasing).intent is Intent.EMERGENCY_TRIGGER, phrasing
+
+
+def test_help_carries_no_parameters():
+    assert parse_llm_response(
+        '{"intent": "system.help", "parameters": {}}', "what can you do",
+    ).parameters == {}
+
+
+def test_the_help_intent_name_round_trips():
+    result = parse_llm_response(
+        '{"intent": "system.help", "parameters": {}}', "what can you do",
+    )
+    assert result.intent is Intent.SYSTEM_HELP

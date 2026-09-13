@@ -7,6 +7,7 @@ import time
 
 from indepensense.intents.base import Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
+from indepensense.language import LanguageState
 from indepensense.navigation.monitor import NavigationMonitor
 from indepensense.routing.base import Coordinate, GeocodingResult
 from indepensense.routing.mock import MockGeocoder, MockRouter
@@ -466,3 +467,44 @@ def test_confirmation_is_not_asked_when_nothing_was_found():
     ))
 
     assert confirmer.questions == []
+
+
+# --- help --------------------------------------------------------------------
+
+def test_help_describes_what_the_wearable_can_do():
+    """A user who cannot see a screen cannot read a manual either — this
+    response is the only place the capabilities exist in their reach."""
+    response = _make_executor().execute(IntentResult(Intent.SYSTEM_HELP))
+
+    assert "IndepenSense" in response
+    assert len(response) > 40
+
+
+def test_help_does_not_depend_on_device_state():
+    """"What can you do?" is what a confused user asks. Answering it must
+    not depend on whether GPS has a fix."""
+    with_gps = _make_executor(fix_quality=1).execute(IntentResult(Intent.SYSTEM_HELP))
+    without = _make_executor(fix_quality=0).execute(IntentResult(Intent.SYSTEM_HELP))
+
+    assert with_gps == without
+
+
+def test_help_answers_in_the_active_language():
+    language = LanguageState(default="en", supported=("en", "tl"))
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), language=language,
+    )
+
+    english = executor.execute(IntentResult(Intent.SYSTEM_HELP))
+    language.set("tl")
+    tagalog = executor.execute(IntentResult(Intent.SYSTEM_HELP))
+
+    assert english != tagalog
+
+
+def test_help_can_be_repeated():
+    """It is long, and a first-time user will want it twice."""
+    executor = _make_executor()
+    helped = executor.execute(IntentResult(Intent.SYSTEM_HELP))
+
+    assert executor.execute(IntentResult(Intent.NAVIGATION_REPEAT)) == helped

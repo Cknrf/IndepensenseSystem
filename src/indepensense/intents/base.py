@@ -27,6 +27,7 @@ class Intent(Enum):
     VISION_DESCRIBE = "vision.describe"
     VISION_READ = "vision.read"
     SYSTEM_LANGUAGE = "system.language"
+    SYSTEM_HELP = "system.help"
     UNKNOWN = "unknown"
 
 

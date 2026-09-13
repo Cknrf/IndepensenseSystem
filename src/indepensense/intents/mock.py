@@ -18,6 +18,21 @@ class MockIntentParser:
     def parse(self, transcript: str) -> IntentResult:
         text = transcript.lower().strip()
 
+        # Checked before emergency, and only on whole phrasings: the
+        # emergency test below matches "help" as a substring, so
+        # "what can you do to help" would otherwise fire an alert. The real
+        # prompt draws the same line — bare "help" is a cry for help, a
+        # sentence asking about abilities is not.
+        if any(w in text for w in (
+            "what can you do",
+            "what can i ask",
+            "how do i use",
+            "kaya mong gawin",
+            "paano ito gamitin",
+            "anong mga utos",
+        )):
+            return IntentResult(Intent.SYSTEM_HELP, {}, transcript, "")
+
         if any(w in text for w in ("emergency", "help", "sos", "tulong")):
             return IntentResult(Intent.EMERGENCY_TRIGGER, {}, transcript, "")
 

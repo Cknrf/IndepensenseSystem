@@ -167,6 +167,28 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Kinansela. Pakisabi po kung saan kayo gustong pumunta.",
     },
 
+    # --- help ---------------------------------------------------------------
+    # A user who cannot see a screen also cannot read a manual, so the only
+    # place the wearable's capabilities can live is in its own voice.
+    #
+    # Four things, not twelve. Reading a full catalogue aloud is roughly
+    # forty-five seconds nobody sits through and nobody remembers; these are
+    # the highest-value asks, and anything else is discoverable by trying.
+    #
+    # No button is named. The emergency button's position on the enclosure
+    # is still unrecorded (see docs/hardware.md), and telling a blind user
+    # to press a button we cannot locate is worse than not mentioning it.
+    # Add that sentence once the layout is confirmed.
+    "help.capabilities": {
+        "en": "I am IndepenSense. I help you walk safely and independently. "
+              "You can ask me where you are, what is around you, have me read "
+              "text out loud, or tell me where you want to go.",
+        "tl": "Ako si IndepenSense. Tinutulungan kitang makapaglakad nang "
+              "ligtas at malaya. Puwede mong itanong kung nasaan ka, kung ano "
+              "ang nasa paligid mo, pabasahin ang nakasulat, o sabihin kung "
+              "saan mo gustong pumunta.",
+    },
+
     # --- location -----------------------------------------------------------
     "location.no_gps": {
         "en": "I don't have a GPS fix yet.",
