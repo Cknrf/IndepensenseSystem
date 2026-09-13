@@ -131,7 +131,7 @@ That file contains:
 - Full 40-pin GPIO header diagram
 - Per-component wiring for every sensor and actuator
 - Which pins are 3.3 V-only (critical — 5 V will damage some sensors) — particularly the QMC5883P
-- Current wiring status ("working / not yet connected") per component
+- Per-component status, which distinguishes **wired** (connected, manual test not yet run) from **working** (connected and confirmed by its manual test). Everything is wired; promoting the rest to *working* is what the first-boot checklist is for
 
 **Please update `hardware.md` every time a wire changes.** It is the single source of truth for physical connections; if it disagrees with reality, reality is wrong and the doc gets fixed.
 

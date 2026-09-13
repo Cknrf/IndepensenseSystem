@@ -37,6 +37,20 @@ Update this file every time a component's wiring changes.
 
 ## Components
 
+**Status vocabulary.** These mean different things and the difference
+matters when deciding what still needs testing:
+
+| Status | Means |
+|---|---|
+| `working` | wired **and** confirmed good by its manual test on the prototype |
+| `wired` | physically connected, manual test not yet run — assume nothing |
+| `wired, calibration outstanding` | connected and reading, but its numbers are not yet trustworthy |
+
+Everything is wired as of 2026-09-13. What remains is running each manual
+test on the assembled unit and promoting `wired` to `working` — or finding
+out why it cannot be.
+
+
 ### DYP-A22 Ultrasonic — TOP sensor — STATUS: working
 
 Cane-mounted, forward-facing, positioned high on the cane to detect
@@ -70,9 +84,34 @@ Pin 33 (TX)
 
 Pin configurable via `DYP_A22_BOTTOM_PORT` in `indepensense.config`.
 
-### Raspberry Pi Camera Module 3 — STATUS: planned
+### Raspberry Pi Camera Module 3 — STATUS: wired
 
-CAM/DISP 0
+Ribbon cable to the **CAM/DISP 0** connector. The Pi 5 has two; either
+works, but `picamera2` enumerates 0 first and nothing here selects a
+camera index, so use 0.
+
+Feeds two on-demand intents — `vision.describe` (YOLOv8) and
+`vision.read` (Tesseract OCR). Neither runs continuously; both fire only
+when a voice command asks, which is what keeps the power and thermal cost
+acceptable.
+
+Enable it once via `raspi-config` (see the one-time setup section at the
+end of this file) and confirm the Pi sees it before running anything else:
+
+```bash
+rpicam-hello --list-cameras      # should list one camera
+```
+
+Manual tests, in order — capture first, then inference:
+```bash
+python -m indepensense.vision.tests.manual.capture_test
+python -m indepensense.vision.tests.manual.detect_test
+python -m indepensense.vision.tests.manual.record_test
+python -m indepensense.vision.tests.manual.continuous_detect_test   # slow by design
+```
+
+Resolution and model size are `CAMERA_WIDTH` / `CAMERA_HEIGHT` and
+`YOLO_MODEL_PATH` in `indepensense.config`.
 
 ### MPU6050 IMU — STATUS: working
 
@@ -92,7 +131,7 @@ Manual test:
 python -m indepensense.sensors.tests.manual.single_mpu6050_test
 ```
 
-### QMC5883P magnetometer — STATUS: working on the bench; awaiting final mount + calibration
+### QMC5883P magnetometer — STATUS: wired, calibration outstanding
 
 **Nothing acts on the heading yet, by design.** `config.COMPASS_CALIBRATED`
 is `False`, which makes `App.trusted_heading()` return `None` and leaves
@@ -108,9 +147,20 @@ values, and check all four cardinals against a phone compass.
 Verified on the bench: chip ID `0x80`, both control registers holding, and a
 horizontal field of 41.7 μT measured from a flat rotation sweep against ~40 μT
 expected for Manila — which validates the ±8 G / 3750 LSB/G conversion
-independently of the datasheet. Still outstanding: the real
-`MAG_FORWARD_AXIS` / `MAG_LEFT_AXIS` values and the calibration sweep, both of
-which need the assembled vest.
+independently of the datasheet.
+
+**Now mounted, and this is the one component whose wiring is not the last
+step.** Two things still stand between it and a usable heading, and both
+need the assembled vest:
+
+1. The real `MAG_FORWARD_AXIS` / `MAG_LEFT_AXIS` values. The defaults are
+   for a board lying flat; the vest mount is upright, which puts a
+   different pair of axes in the horizontal plane.
+2. The calibration sweep, whose offsets and scales are still at identity.
+
+Until both are done and `COMPASS_CALIBRATED` is set True, three built
+features stay inert by design — turn-to-face guidance, the departure
+heading sent to the router, and turn verification. See the note below.
 
 Standalone 3-axis compass on I2C1 at address **`0x2C`**. Independent of the
 IMU: it shares only the SDA/SCL wires, so it appears in `i2cdetect`
@@ -277,7 +327,7 @@ python -m indepensense.power.tests.manual.single_ups_test
 Prints a live readout of voltage / current / percentage / cell
 voltages every 2 seconds.
 
-### Active Buzzer — STATUS: driver ready, awaiting wiring
+### Active Buzzer — STATUS: working (judged too loud — see `docs/deferred.md`)
 
 Standard hobby active buzzer, driven directly from a GPIO pin. GPIO HIGH
 sounds the tone; LOW is silent. Active buzzers contain their own
@@ -302,7 +352,7 @@ python -m indepensense.feedback.tests.manual.buzzer_test              # default 
 python -m indepensense.feedback.tests.manual.buzzer_test 21           # any pin
 ```
 
-### Push Buttons (KY-004 style) — STATUS: wired on the prototype
+### Push Buttons (KY-004 style) — STATUS: working
 
 Three identical breakout-mounted buttons. Each module has an on-board
 10 kΩ pull-down resistor and drives OUT HIGH when pressed (active-high
@@ -359,7 +409,7 @@ python -m indepensense.feedback.tests.manual.button_test           # PTT pin
 python -m indepensense.feedback.tests.manual.button_test 24        # any pin
 ```
 
-### Vibration Motors (3x) — STATUS: driver ready, awaiting wiring
+### Vibration Motors (3x) — STATUS: wired
 
 Three coin/erm-style hobby vibration motors provide directional cueing:
 front (turn ahead), right (turn right), left (turn left). Each motor
