@@ -49,6 +49,7 @@ intent.
    - `navigation.stop` — the user wants to cancel active navigation.
    - `navigation.repeat` — the user wants the last spoken instruction repeated.
    - `navigation.location` — the user is asking where they currently are.
+   - `navigation.progress` — the user is asking how much further there is to go.
    - `emergency.trigger` — the user is calling for help or reporting an emergency.
    - `device.status` — the user is asking about the device (battery, GPS lock, signal).
    - `system.time` — the user is asking for the current time.
@@ -153,6 +154,23 @@ sentence is clearly asking about the device's abilities.
 - "Help me cross the street" → unknown (a request this device cannot fulfil)
 - "Can you read this" → vision.read (a specific request, not a general one)
 
+## navigation.progress vs navigation.location
+
+Both are about the user, and they are easy to confuse. "Where am I" asks
+for a place name; "how much further" asks for a distance. Answering the
+wrong one wastes a question the user had to stop walking to ask.
+
+**navigation.progress** — how much of the journey is left:
+- "How much further"
+- "How far do I still have to go"
+- "How much longer"
+- "Gaano pa kalayo"
+- "Malayo pa ba"
+
+**navigation.location** — where the user is standing:
+- "Where am I"
+- "Nasaan ako"
+
 ## navigation.location — REQUIRES asking about the user's own position
 
 **DOES trigger:**
@@ -198,6 +216,31 @@ Output: `{"intent": "navigation.location", "parameters": {}}`
 
 User: "Nasaan ako?"
 Output: `{"intent": "navigation.location", "parameters": {}}`
+
+## navigation.progress
+
+User: "How much further"
+Output: `{"intent": "navigation.progress", "parameters": {}}`
+
+User: "How far do I still have to go"
+Output: `{"intent": "navigation.progress", "parameters": {}}`
+
+Progress is always about the journey already under way. Asking the
+distance to some OTHER place is a question this device cannot answer, and
+replying with the current destination's distance would be a confident
+wrong answer:
+
+User: "How far is Jollibee from here"
+Output: `{"intent": "unknown", "parameters": {}}`
+
+User: "How much longer"
+Output: `{"intent": "navigation.progress", "parameters": {}}`
+
+User: "Gaano pa kalayo"
+Output: `{"intent": "navigation.progress", "parameters": {}}`
+
+User: "Malayo pa ba"
+Output: `{"intent": "navigation.progress", "parameters": {}}`
 
 ## navigation.stop
 

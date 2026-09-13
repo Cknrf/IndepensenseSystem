@@ -140,6 +140,11 @@ ENGLISH_CASES = [
     # sole entry point to the cloud fallback (see intents/cloud.py). If
     # the model ever classified these as a real intent, the command would
     # be mishandled instead of answered.
+    # --- navigation.progress ---
+    ("How much further",                 "navigation.progress", {}),
+    ("How far do I still have to go",    "navigation.progress", {}),
+    ("How much longer",                  "navigation.progress", {}),
+
     # --- place.save / place.delete ---
     ("Save this place as home",          "place.save", {"label": "home"}),
     ("Remember this as my sister's house", "place.save", {"label": "my sister's house"}),
@@ -179,6 +184,8 @@ TAGALOG_CASES = [
     ("Mag-Ingles ka naman",                           "system.language",     {"language": "en"}),
     ("Magsalita ka ng Tagalog",                       "system.language",     {"language": "tl"}),
     ("Tagalog na lang",                               "system.language",     {"language": "tl"}),
+
+    ("Gaano pa kalayo",                               "navigation.progress", {}),
 
     ("I-save mo ito bilang bahay",                    "place.save",          {"label": "bahay"}),
     ("Kalimutan mo ang bahay",                        "place.delete",        {"label": "bahay"}),
@@ -221,6 +228,10 @@ ADVERSARIAL_CASES = [
 
     # "location" / "where" about a place, not the user
     ("where is Jollibee",                "unknown", {}),
+    # Progress is about the journey under way; the distance to some other
+    # place would be answered with the current destination's, confidently
+    # and wrongly.
+    ("How far is Jollibee from here",    "unknown", {}),
 
     # Statements and chatter (not commands)
     ("the weather is nice today",        "unknown", {}),

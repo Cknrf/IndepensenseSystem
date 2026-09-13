@@ -108,6 +108,21 @@ is a plausible ceiling for a battery-powered pedestrian device.
 **Revisit when:** field testing shows users being offered absurd
 destinations often enough that declining each one is a nuisance.
 
+### Distance to a place other than the current destination
+**Status:** parked · **Raised:** 2026-09-13
+
+`navigation.progress` answers "how much further" for the journey already
+under way. It cannot answer "how far is the market from here" — that would
+need a `location` parameter, a geocode, and a decision about whether to
+measure along a route that does not exist yet or as the crow flies.
+
+Left out rather than half-built: replying with the *current* destination's
+distance to a question about somewhere else would be a confident wrong
+answer, which this device can least afford. The prompt routes such
+questions to `unknown`, where the cloud fallback can attempt them.
+
+**Revisit when:** users are observed asking it.
+
 ### Automatic re-routing after off-route deviation
 **Status:** parked
 

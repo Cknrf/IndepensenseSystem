@@ -293,6 +293,7 @@ class IntentExecutor:
             Intent.NAVIGATION_STOP:     self._handle_navigation_stop,
             Intent.NAVIGATION_REPEAT:   self._handle_navigation_repeat,
             Intent.NAVIGATION_LOCATION: self._handle_navigation_location,
+            Intent.NAVIGATION_PROGRESS: self._handle_navigation_progress,
             Intent.EMERGENCY_TRIGGER:   self._handle_emergency_trigger,
             Intent.DEVICE_STATUS:       self._handle_device_status,
             Intent.SYSTEM_TIME:         self._handle_system_time,
@@ -389,6 +390,37 @@ class IntentExecutor:
         if self._last_response is None:
             return messages.get("nav.nothing_to_repeat", self._lang)
         return self._last_response
+
+    def _handle_navigation_progress(self, result: IntentResult) -> str:
+        """Say how much further there is to walk.
+
+        Distinct from `navigation.location`, which answers "where am I" —
+        this answers "how much longer", and is only meaningful while a
+        route is active.
+
+        The monitor measures along the route rather than straight to the
+        destination, because a walker cannot go through buildings. See
+        `NavigationMonitor.remaining_distance_m`.
+        """
+        if self._monitor is None or not self._monitor.is_active():
+            return messages.get("nav.none_active", self._lang)
+
+        position = self._current_position()
+        if position is None:
+            return messages.get("location.no_gps", self._lang)
+
+        remaining = self._monitor.remaining_distance_m(position)
+        if remaining is None:
+            # Active route with no usable polyline — degenerate, but the
+            # user asked a question and deserves an answer either way.
+            return messages.get("nav.none_active", self._lang)
+
+        return messages.get(
+            "nav.progress",
+            self._lang,
+            destination=self._monitor.destination_name(),
+            distance=messages.speak_distance(remaining, self._lang),
+        )
 
     def _handle_navigation_location(self, result: IntentResult) -> str:
         position = self._current_position()

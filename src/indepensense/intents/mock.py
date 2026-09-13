@@ -88,6 +88,14 @@ class MockIntentParser:
         if any(w in text for w in ("repeat", "say that again", "ulitin")):
             return IntentResult(Intent.NAVIGATION_REPEAT, {}, transcript, "")
 
+        # Before the "where am i" matcher: "how much further am i" would
+        # otherwise be caught by it and answered with the wrong question.
+        if any(w in text for w in (
+            "how far", "how much further", "how much longer", "how far along",
+            "gaano pa kalayo", "malayo pa ba", "ilan pa",
+        )):
+            return IntentResult(Intent.NAVIGATION_PROGRESS, {}, transcript, "")
+
         if any(w in text for w in ("where am i", "nasaan ako", "my location", "my address")):
             return IntentResult(Intent.NAVIGATION_LOCATION, {}, transcript, "")
 

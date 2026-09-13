@@ -220,3 +220,18 @@ def test_place_intent_names_round_trip():
         )
         assert parsed.intent is intent
         assert parsed.parameters["label"] == "home"
+
+
+def test_the_mock_parser_separates_progress_from_location():
+    parser = MockIntentParser()
+    for phrasing in ("how much further", "how much longer", "how far am i",
+                     "gaano pa kalayo", "malayo pa ba"):
+        assert parser.parse(phrasing).intent is Intent.NAVIGATION_PROGRESS, phrasing
+    for phrasing in ("where am i", "nasaan ako"):
+        assert parser.parse(phrasing).intent is Intent.NAVIGATION_LOCATION, phrasing
+
+
+def test_the_progress_intent_name_round_trips():
+    assert parse_llm_response(
+        '{"intent": "navigation.progress", "parameters": {}}', "how much further",
+    ).intent is Intent.NAVIGATION_PROGRESS

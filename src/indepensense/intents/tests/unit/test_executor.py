@@ -678,3 +678,106 @@ def test_saving_without_a_places_store_says_it_cannot():
     response = executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
 
     assert "can't save" in response.lower()
+
+
+# --- progress ----------------------------------------------------------------
+#
+# Distinct from `navigation.location`: that answers "where am I", this
+# answers "how much longer". `navigation/tests/unit/test_monitor.py` covers
+# the along-the-route measurement itself.
+
+def _navigating_executor(monitor):
+    """An executor with an active route to Jollibee, standing at the start."""
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        monitor=monitor,
+        confirmer=_SpyConfirmer(answer=True),
+    )
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+    return executor
+
+
+def test_progress_reports_the_destination_and_what_is_left():
+    executor = _navigating_executor(NavigationMonitor())
+
+    response = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+
+    assert "Jollibee" in response
+    assert any(c.isdigit() for c in response)
+
+
+def test_progress_without_an_active_route_says_so():
+    """Asking how much further with nowhere to go is a real thing a user
+    does — it must not answer with a number."""
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(),
+        gps=_StaticGPS(), monitor=NavigationMonitor(),
+    )
+
+    response = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+
+    assert "active navigation" in response.lower()
+
+
+def test_progress_with_no_monitor_says_so():
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=_StaticGPS(),
+    )
+    response = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+
+    assert "active navigation" in response.lower()
+
+
+def test_progress_without_a_gps_fix_says_so():
+    monitor = NavigationMonitor()
+    executor = _navigating_executor(monitor)
+    executor._gps = _StaticGPS(fix_quality=0)
+
+    response = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+
+    assert "GPS" in response
+
+
+def test_progress_stops_answering_after_navigation_is_cancelled():
+    monitor = NavigationMonitor()
+    executor = _navigating_executor(monitor)
+    executor.execute(IntentResult(Intent.NAVIGATION_STOP))
+
+    response = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+
+    assert "active navigation" in response.lower()
+
+
+def test_progress_answers_in_the_active_language():
+    language = LanguageState(default="en", supported=("en", "tl"))
+    monitor = NavigationMonitor()
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        monitor=monitor, language=language, confirmer=_SpyConfirmer(answer=True),
+    )
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    english = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+    language.set("tl")
+    tagalog = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+
+    assert english != tagalog
+
+
+def test_progress_is_not_the_same_question_as_location():
+    """"Where am I" gives a place name; "how much further" gives a
+    distance. Answering the wrong one wastes a question the user had to
+    stop walking to ask."""
+    executor = _navigating_executor(NavigationMonitor())
+
+    progress = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+    location = executor.execute(IntentResult(Intent.NAVIGATION_LOCATION))
+
+    assert progress != location

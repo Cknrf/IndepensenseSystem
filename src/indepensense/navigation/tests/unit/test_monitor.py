@@ -3,12 +3,14 @@
 Pure logic — no threads, no hardware. Tests exercise the state machine
 by feeding synthetic GPS positions and asserting on the cues returned.
 """
+import pytest
+
 from indepensense.navigation.monitor import (
     NavigationCue,
     NavigationMonitor,
 )
 from indepensense.intents.messages import round_speech_distance
-from indepensense.routing.base import Coordinate, Route, RouteInstruction
+from indepensense.routing.base import Coordinate, Route, RouteInstruction, haversine_m
 
 
 # Two coordinates ~150 m apart at walking scale (0.0013 degrees ~= 145 m
@@ -380,3 +382,102 @@ def test_set_route_clears_off_route_state():
     m.check(_OFF_ROUTE_44M, now=10.0)
     cues = m.check(_OFF_ROUTE_44M, now=12.0)
     assert any(c.kind == "off_route" for c in cues)
+
+
+# --- remaining distance ------------------------------------------------------
+#
+# Measured along the polyline, not straight to the destination. The
+# difference is the whole value of the answer: a destination 200 m away as
+# the crow flies can be 500 m of walking around a block, and a user told
+# the smaller number will believe they have arrived when they have not.
+
+def _l_shaped_route() -> Route:
+    """Two 100 m legs at a right angle: north, then east.
+
+    Straight-line start-to-end is ~141 m; along the route it is 200 m.
+    That gap is what these tests are about.
+    """
+    corner = Coordinate(lat=14.0009, lon=121.0000)      # ~100 m north of start
+    end = Coordinate(lat=14.0009, lon=121.0009)         # ~100 m east of corner
+    return Route(
+        distance_m=200.0,
+        duration_s=150.0,
+        instructions=[],
+        points=[_START, corner, end],
+    )
+
+
+def test_remaining_distance_follows_the_route_not_the_crow():
+    monitor = NavigationMonitor()
+    monitor.set_route(_l_shaped_route(), "Home")
+
+    remaining = monitor.remaining_distance_m(_START)
+
+    straight = haversine_m(_START, _l_shaped_route().points[-1])
+    assert remaining > straight * 1.3        # the detour is real
+    assert remaining == pytest.approx(200, rel=0.05)
+
+
+def test_remaining_distance_shrinks_as_the_user_advances():
+    monitor = NavigationMonitor()
+    route = _l_shaped_route()
+    monitor.set_route(route, "Home")
+
+    at_start = monitor.remaining_distance_m(_START)
+    at_corner = monitor.remaining_distance_m(route.points[1])
+
+    assert at_corner < at_start
+    assert at_corner == pytest.approx(100, rel=0.05)
+
+
+def test_remaining_distance_is_about_zero_at_the_destination():
+    monitor = NavigationMonitor()
+    route = _l_shaped_route()
+    monitor.set_route(route, "Home")
+
+    assert monitor.remaining_distance_m(route.points[-1]) == pytest.approx(0, abs=5)
+
+
+def test_partway_along_a_leg_counts_only_what_is_left_of_it():
+    """The user is rarely standing exactly on a route point."""
+    monitor = NavigationMonitor()
+    route = _l_shaped_route()
+    monitor.set_route(route, "Home")
+
+    halfway_up = Coordinate(lat=14.00045, lon=121.0000)
+    assert monitor.remaining_distance_m(halfway_up) == pytest.approx(150, rel=0.08)
+
+
+def test_remaining_distance_measures_from_the_route_when_off_it():
+    """The honest answer to "how much further" while walking back to the
+    route is how far is left along it, not a detour they have not taken."""
+    monitor = NavigationMonitor()
+    route = _l_shaped_route()
+    monitor.set_route(route, "Home")
+
+    # 30 m to the side of the first leg, level with its midpoint.
+    off_route = Coordinate(lat=14.00045, lon=121.0003)
+    assert monitor.remaining_distance_m(off_route) == pytest.approx(150, rel=0.15)
+
+
+def test_remaining_distance_is_none_without_a_route():
+    assert NavigationMonitor().remaining_distance_m(_START) is None
+
+
+def test_remaining_distance_is_none_for_a_degenerate_route():
+    """A single point is not a path to measure along."""
+    monitor = NavigationMonitor()
+    monitor.set_route(
+        Route(distance_m=0.0, duration_s=0.0, instructions=[], points=[_START]),
+        "Home",
+    )
+    assert monitor.remaining_distance_m(_START) is None
+
+
+def test_the_destination_name_is_available_while_active():
+    monitor = NavigationMonitor()
+    monitor.set_route(_l_shaped_route(), "Home")
+    assert monitor.destination_name() == "Home"
+
+    monitor.clear()
+    assert monitor.destination_name() == ""

@@ -85,13 +85,20 @@ class NavigationCue:
     direction: str | None = None
 
 
-def _distance_to_segment_m(p: Coordinate, a: Coordinate, b: Coordinate) -> float:
-    """Perpendicular distance from point p to segment [a, b] in metres.
+def _project_onto_segment(
+    p: Coordinate, a: Coordinate, b: Coordinate,
+) -> tuple[float, float]:
+    """Distance from p to segment [a, b], and how far along it the foot lies.
+
+    Returns `(distance_m, t)` where `t` is 0 at `a` and 1 at `b`, clamped
+    to the segment. Off-route detection needs only the distance; remaining
+    -distance needs `t` as well, to know how much of this segment is still
+    ahead of the user.
 
     Uses a local flat-earth (ENU) approximation centred at `a`. Accurate
     to well under 1 m at the tens-of-metres scale we care about here.
     Handles the degenerate case where a == b (returns straight distance
-    from p to a).
+    from p to a, with t = 0).
     """
     lat_scale_m_per_deg = 111_000.0
     lon_scale_m_per_deg = 111_000.0 * math.cos(math.radians(a.lat))
@@ -105,7 +112,7 @@ def _distance_to_segment_m(p: Coordinate, a: Coordinate, b: Coordinate) -> float
     seg_len_sq = bx * bx + by * by
     if seg_len_sq < 1e-9:
         # a and b coincide — segment collapses to a point.
-        return math.hypot(px, py)
+        return math.hypot(px, py), 0.0
 
     # Project p onto the segment. `t` is the parameter along ab: 0=a, 1=b.
     t = (px * bx + py * by) / seg_len_sq
@@ -114,7 +121,12 @@ def _distance_to_segment_m(p: Coordinate, a: Coordinate, b: Coordinate) -> float
     # Nearest point on segment, minus p, is the perpendicular vector.
     nx = t * bx
     ny = t * by
-    return math.hypot(px - nx, py - ny)
+    return math.hypot(px - nx, py - ny), t
+
+
+def _distance_to_segment_m(p: Coordinate, a: Coordinate, b: Coordinate) -> float:
+    """Perpendicular distance from point p to segment [a, b] in metres."""
+    return _project_onto_segment(p, a, b)[0]
 
 
 def _min_distance_to_polyline_m(pos: Coordinate, points: list[Coordinate]) -> float:
@@ -200,6 +212,48 @@ class NavigationMonitor:
     def current_index(self) -> int:
         """The next instruction index we're waiting to advance past."""
         return self._current_index
+
+    def destination_name(self) -> str:
+        """Where this route ends, as the user named it. Empty if inactive."""
+        return self._destination_name
+
+    def remaining_distance_m(self, position: Coordinate) -> float | None:
+        """Metres still to walk along the route. None if there is no route.
+
+        Measured along the polyline, not as the crow flies. The difference
+        is the whole value of the answer: a destination 200 m away in a
+        straight line can be 500 m of walking around a block, and a user
+        told the smaller number will believe they have arrived when they
+        have not.
+
+        The user is placed at the nearest point on the route, then the
+        remainder of that segment plus every later segment is summed. That
+        stays correct when they are off-route — it measures from where the
+        route would have them be, which is the honest answer to "how much
+        further" while they walk back to it.
+        """
+        if self._route is None:
+            return None
+        points = self._route.points
+        if len(points) < 2:
+            return None
+
+        # Nearest segment, and how far along it the user has got.
+        best_distance = float("inf")
+        best_index = 0
+        best_t = 0.0
+        for i in range(len(points) - 1):
+            distance, t = _project_onto_segment(position, points[i], points[i + 1])
+            if distance < best_distance:
+                best_distance, best_index, best_t = distance, i, t
+
+        # What is left of the segment they are on, plus all the ones after.
+        remaining = (1.0 - best_t) * haversine_m(
+            points[best_index], points[best_index + 1]
+        )
+        for i in range(best_index + 1, len(points) - 1):
+            remaining += haversine_m(points[i], points[i + 1])
+        return remaining
 
     def check(
         self,

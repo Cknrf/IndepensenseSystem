@@ -21,6 +21,7 @@ class Intent(Enum):
     NAVIGATION_STOP = "navigation.stop"
     NAVIGATION_REPEAT = "navigation.repeat"
     NAVIGATION_LOCATION = "navigation.location"
+    NAVIGATION_PROGRESS = "navigation.progress"
     EMERGENCY_TRIGGER = "emergency.trigger"
     DEVICE_STATUS = "device.status"
     SYSTEM_TIME = "system.time"

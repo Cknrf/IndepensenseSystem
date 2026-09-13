@@ -145,6 +145,15 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Sa {distance}, {instruction}.",
     },
 
+    # Progress. Distance only, no time estimate: the remaining seconds
+    # would have to come from an assumed walking speed, and GraphHopper's
+    # pedestrian profile assumes a brisk 5 km/h that a cane user is
+    # unlikely to match. A confident wrong number would have them hurrying.
+    "nav.progress": {
+        "en": "{destination} is {distance} away.",
+        "tl": "{distance} pa ang layo ng {destination}.",
+    },
+
     # Destination confirmation. The geocoder returns the best *guess*, and a
     # user who cannot read a map has no way to notice it picked the branch in
     # the next province — so the wearable reads its choice back and waits for
