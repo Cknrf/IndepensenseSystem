@@ -22,6 +22,8 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 | Active language | Tagalog by default (`DEFAULT_LANGUAGE`), switchable at runtime by voice — see below |
 | Models stored at | `models/voices/`, `models/whisper/` (gitignored, downloaded on demand) |
 | Test artifacts at | `data/test/voice/` |
+| Speaker volume | `wpctl` on the default PipeWire sink, 20-100%, persisted to `var/volume` |
+| Output ownership | one announcer thread for all main-loop speech; see below |
 
 ## Why these choices
 
@@ -405,3 +407,62 @@ The new Whisper model auto-downloads on next run.
 To upgrade a Whisper model (`tiny` → `base` → `small` → `medium` → `large-v3`),
 edit the value in `WHISPER_MODELS` for the target language. The new model
 auto-downloads on next run.
+
+
+## Who is allowed to speak
+
+Every piece of audio the wearable produces goes out through one output
+device, and more than one part of the runtime wants to use it. The rules
+that keep that from becoming a mess:
+
+**The main loop never speaks directly.** It calls `App._announce(text)`,
+which appends to a queue and returns. A single long-lived worker — the
+announcer — does the synthesis and playback. This is not tidiness: before
+it existed, navigation cues synthesised and played inline on the 100 Hz
+loop, so fall detection and obstacle polling stopped for ~3-4 seconds
+during every turn instruction. The loop sat inside `sd.play(blocking=True)`
+while the user walked.
+
+**Critical announcements preempt.** `_announce(..., critical=True)` aborts
+whatever is playing, discards pending non-critical items, and goes to the
+front. Used for detected falls and the critical battery tier. It also
+abandons anything caught mid-*synthesis* — Piper takes about a second, which
+is long enough for a fall to happen inside it, and making the alert wait out
+an instruction the user no longer needs would defeat the point.
+
+**The voice pipeline keeps its own playback.** It plays its response
+synchronously because the PTT cycle is inherently sequential, and
+`_voice_active` stops the main loop talking over it. Two sub-steps also run
+there and block only that thread: destination confirmation and turn-to-face
+orientation.
+
+**Anything can be stopped.** `voice/audio.py` tracks whether speech is on
+the speaker (`is_playing()`) and can abort it from any thread
+(`stop_playback()`), which is what makes the repeat button dual-purpose —
+stop while talking, repeat while silent. Without it, `vision.read` on a menu
+was thirty seconds the user had to wait out.
+
+## Volume
+
+`system.volume` sets the PipeWire sink level by voice: "louder", "quieter",
+or a number. Steps are 10%, the range is 20-100%, and the choice persists to
+`var/volume` and is re-applied at startup — the OS keeps whatever it last
+had, which after a reboot is not necessarily what the user chose.
+
+**The 20% floor is a hard clamp, not a default.** Speech is this device's
+only channel to its user, so a volume low enough to be inaudible on a busy
+road is a trap with no way out: they cannot hear the response that would let
+them turn it back up, and there is no screen to fall back on. Asking for less
+gets the floor *and an explanation*, because silently clamping would read as
+being misheard.
+
+**The buzzer is unaffected.** It is driven straight from GPIO
+(`feedback/gpio_buzzer.py`) and never passes through the audio sink, so
+obstacle warnings and the emergency acknowledgement keep their loudness
+whatever the user sets. Volume control structurally cannot silence a safety
+alert — that is a property of the wiring, not a rule someone has to remember.
+
+`wpctl` rather than `amixer`: Trixie runs PipeWire, and `amixer` talks to
+ALSA underneath, which on a PipeWire system adjusts a different mixer than
+applications actually play through. The classic symptom is a volume change
+that appears to work and changes nothing audible.

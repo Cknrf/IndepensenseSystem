@@ -20,6 +20,7 @@ IndepenSense supports individuals with visual or mobility impairments by providi
 - [Manual Verification Tests](#manual-verification-tests)
 - [First-Boot Verification Checklist](#first-boot-verification-checklist)
 - [Troubleshooting](#troubleshooting)
+- [Voice Commands](#voice-commands)
 - [System Workflow](#system-workflow)
 - [Documentation Index](#documentation-index)
 
@@ -59,11 +60,22 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Multi-sensor distance estimation
 - Audio + vibration directional feedback
 - Turn-by-turn cueing with off-route warnings
+- Destination confirmation before routing — the chosen place is read back with its distance, and nothing starts until the user presses to confirm
+- Candidate re-ranking, so "the nearest Jollibee" is decided locally by distance rather than by the geocoder's own relevance score
+- Saved places — name the spot you are standing in, then "take me home" later, with no geocoder and no network
+- Progress on demand: how much further there is to walk, measured along the route rather than as the crow flies
+
+**Compass-assisted navigation** *(built, inert until the magnetometer is calibrated on the assembled unit — see `COMPASS_CALIBRATED` in `config.py`)*
+- Turn-to-face guidance: before the first step, a motor pulses on the side to turn toward, faster as the user comes round
+- Departure heading passed to the router, so a route does not open by telling the user to turn around
+- Turn verification — the compass notices a missed turn in about five seconds, where position-based off-route detection takes fifteen to thirty
 
 **Safety Monitoring**
 - Fall detection using the MPU6050 IMU
 - Abnormal-movement detection
 - Emergency SOS trigger via physical button
+- The wearer is told what the device knows: a detected fall and both battery tiers are spoken aloud, not only sent to guardians
+- Critical announcements interrupt whatever is being said, including mid-synthesis
 
 **Computer Vision Awareness**
 - On-demand object detection (YOLOv8)
@@ -74,6 +86,9 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Push-to-talk speech input (Whisper STT)
 - LLM-based intent classification (Qwen 3 1.7B via Ollama), with a Mistral cloud fallback for questions no intent covers
 - Natural-language responses (Piper TTS)
+- Speech can be interrupted — the repeat button stops the wearable mid-sentence, which matters when OCR is reading a menu
+- Spoken help, so a user who cannot read a manual can ask what the device does
+- Speaker volume by voice, with a floor the user cannot go below
 
 **Guardian System**
 - Live monitoring dashboard
@@ -146,8 +161,8 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `vision/` | Camera capture, YOLOv8 object detection, Tesseract OCR |
 | `voice/` | Push-to-talk flow, Whisper STT, Piper TTS, speaker volume |
 | `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching, help, saved places, volume), bilingual response catalogue, cloud LLM fallback |
-| `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing |
-| `routing/` | GraphHopper + Photon HTTP clients, local candidate ranking, and the user's own saved places |
+| `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing, remaining-distance, compass turn verification, and turn-to-face orientation logic |
+| `routing/` | GraphHopper + Photon HTTP clients, local candidate ranking, geo helpers (distance and bearing), and the user's own saved places |
 | `feedback/` | Buzzer, vibration motors, PTT + SOS buttons |
 | `safety/` | Fall detection via accelerometer thresholds |
 | `power/` | Waveshare UPS HAT driver, low-battery alerts |
@@ -160,9 +175,28 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `language.py` | Active language as runtime state, persisted across reboots |
 | `net.py` | Shared connectivity probe |
 
+### Runtime state
+
+Written under `var/`, which is gitignored. None of it is configuration —
+it is what the device remembers between runs, and deleting any of it is
+safe (the wearable falls back to the `config.py` default).
+
+| File | Holds | Delete it and… |
+|---|---|---|
+| `var/language` | active language | starts in `DEFAULT_LANGUAGE` again |
+| `var/volume` | speaker volume | starts at `VOLUME_DEFAULT_PERCENT` |
+| `var/places.json` | the user's saved places | "take me home" stops working until re-saved |
+| `var/guardians.json` | cached guardian numbers | emergency SMS has no recipients until the next successful fetch |
+| `var/low_battery_alerted` | 15% alert latch | guardians may get one duplicate low-battery alert |
+| `var/critical_battery_alerted` | 5% warning latch | the wearer may hear one duplicate critical warning |
+
+The two latches exist because the service restarts on failure: without
+them, a Pi crash-looping on a dying battery would re-alert every boot,
+texting every guardian each time.
+
 **Design conventions** worth knowing before touching code (see also `CLAUDE.md`):
 
-- **Single synchronous polling loop** — no threads / asyncio unless a measured latency problem appears.
+- **One synchronous main loop plus a fixed, named set of background threads** — voice, announcer, heartbeat, telemetry retry, GPS cache, and short-lived per-event haptic workers. The rule is *never block the main loop*, not *never use threads*; adding a new long-lived one is a structural change. No asyncio.
 - **Hardware abstraction** — every sensor exposes a `Protocol` interface + a real driver + a mock, so the full system runs on macOS for development.
 - **Drivers own protocol knowledge** — parsing, checksums, unit conversion live in the driver, never in callers or tests.
 - **Tests nested per module** — `<module>/tests/unit/` for pytest (no hardware), `<module>/tests/manual/` for scripts that need real hardware.
@@ -304,7 +338,31 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
    systemctl status ollama graphhopper photon indepensense
    ```
 5. **Run each manual test above**, one component at a time. Do not skip failing components.
-6. **Only after every component passes**, run the full wearable:
+6. **Calibrate the compass.** It is wired and read but nothing acts on it:
+   `COMPASS_CALIBRATED` in `config.py` is `False`, so turn-to-face
+   guidance, the departure heading and turn verification all stay off.
+   Working heading is not optional for those three — an uncalibrated
+   magnetometer does not fail visibly, it reports a plausible bearing that
+   may be mirrored, and that sends the user the wrong way.
+   ```bash
+   # a. Fix MAG_FORWARD_AXIS / MAG_LEFT_AXIS for the real mount — the
+   #    defaults assume a board lying flat, and the vest mount is upright.
+   #    Procedure in docs/hardware.md.
+   python -m indepensense.sensors.tests.manual.single_magnetometer_test
+
+   # b. Sweep, then paste the printed offsets and scales into config.py
+   python -m indepensense.sensors.tests.manual.magnetometer_calibrate
+
+   # c. Check all four cardinals against a phone compass, then set
+   #    COMPASS_CALIBRATED = True
+   ```
+7. **Set the speaker volume** and confirm it sticks across a restart. The
+   floor is 20% and the buzzer is driven straight from GPIO, so it is not
+   affected by this:
+   ```bash
+   wpctl set-volume @DEFAULT_AUDIO_SINK@ 80%
+   ```
+8. **Only after every component passes**, run the full wearable:
    ```bash
    python -m indepensense.app
    ```
@@ -322,6 +380,42 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | PTT button raises `PinInvalidState` | Do not set `active_state=True` when `pull_up=False` — the pull sets the polarity already |
 | YOLO very slow | Expected during `continuous_detect_test`. In production, YOLO only runs on-demand per voice command |
 | Voice commands don't classify correctly | Check `ollama list` — the Qwen model may not be loaded; the warmup service takes ~1–2 min on cold boot |
+| Turn-to-face never runs; no heading anywhere | `COMPASS_CALIBRATED` is `False` in `config.py`. Expected until the calibration step above is done — `latest_heading()` shows the raw reading meanwhile |
+| Heading looks plausible but guidance sends the user the wrong way | A sign is inverted in `MAG_FORWARD_AXIS` / `MAG_LEFT_AXIS`, which mirrors the compass. Re-check against a phone at all four cardinals, not just one |
+| "Louder" changes nothing | `wpctl` missing, or PipeWire is routing through a different node than `@DEFAULT_AUDIO_SINK@` (common over Bluetooth). `wpctl status` shows the real default |
+| Navigation never starts, always says "cancelled" | The destination confirmation timed out. It wants a **PTT press** within `DESTINATION_CONFIRM_TIMEOUT_S` after the place is read back |
+| The device talks over itself | Should be impossible — every main-loop utterance goes through the announcer, which is single-threaded. If it happens, something is calling `play()` directly |
+| Saved places vanish after a reboot | `var/places.json` unwritable, or the process runs as a user without write access to `var/` |
+
+## Voice Commands
+
+Every intent the wearable recognises, with a phrasing that reaches it. The
+classifier is an LLM, not a keyword matcher, so these are examples rather
+than magic words — the full rules and the Tagalog equivalents live in
+[`prompts/nlu_system.md`](prompts/nlu_system.md).
+
+| Intent | Say something like | Notes |
+|---|---|---|
+| `navigation.start` | "Take me to Jollibee" · "Take me home" | Reads the destination back and waits for a confirming press |
+| `navigation.stop` | "Cancel navigation" | |
+| `navigation.repeat` | "Say that again" | Or press the repeat button |
+| `navigation.location` | "Where am I" | Answers with a place name |
+| `navigation.progress` | "How much further" | Answers with distance along the route |
+| `place.save` | "Save this place as home" | Stores where you are standing, under your own label |
+| `place.delete` | "Forget the place saved as home" | |
+| `vision.describe` | "What's around me" | Camera + YOLO |
+| `vision.read` | "Read this" | Camera + OCR. Press repeat to stop it mid-read |
+| `device.status` | "How much battery do I have" | Also GPS lock and cellular signal |
+| `system.time` | "What time is it" | |
+| `system.language` | "Switch to English" · "Lumipat sa Ingles" | Confirms in the language switched *to* |
+| `system.volume` | "Louder" · "Set the volume to 60" | Floor of 20%; the buzzer is unaffected |
+| `system.help` | "What can you do" | |
+| `emergency.trigger` | "Help" · "Tulong" | Also the emergency button. A bare cry for help is always an emergency, never a request for the help intent |
+| *(anything else)* | — | Forwarded to the cloud LLM when online, otherwise "I didn't catch that" |
+
+**Buttons.** Push-to-talk (left) starts and stops recording, and doubles as
+the confirm press. Emergency fires an alert immediately. Repeat replays the
+last response — or, while the wearable is talking, stops it.
 
 ## System Workflow
 
@@ -331,7 +425,11 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 - The navigation module decides risk levels and directional guidance.
 - The feedback system triggers vibration or audio output.
 - Telemetry is buffered and sent to the backend for guardian monitoring.
-- Alerts (fall, SOS, low battery) are triggered immediately on detection.
+- Alerts (fall, SOS, low battery) fire immediately on detection — to the
+  guardian over both HTTP and SMS, and to the wearer as speech.
+- **The main loop never blocks.** It detects and decides; speech goes to the
+  announcer thread and haptic patterns to short-lived worker threads, so
+  fall and obstacle detection keep running while the device is talking.
 
 ## Documentation Index
 

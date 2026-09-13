@@ -25,8 +25,12 @@ How Claude collaborates on this thesis project.
 
 1. **Concurrency: one synchronous main loop plus a fixed, named set of background threads.**
    The main thread does cheap sensor reads only — 100 Hz MPU6050 → fall detector, both DYP-A22 ultrasonics, obstacle warnings. Everything that blocks (network, LLM, STT/TTS, warning-pattern playback) runs off it:
-   voice thread (one per PTT press), gpiozero button callbacks, per-event warning-pattern threads under a mutex, heartbeat sender, telemetry retry worker, and the 1 Hz GPS cache thread.
+   voice thread (one per PTT press), gpiozero button callbacks, per-event warning-pattern threads under a mutex, heartbeat sender, telemetry retry worker, the 1 Hz GPS cache thread, and the **announcer** — one long-lived worker owning every piece of speech that originates on the main loop.
    The rule is **never block the main loop**, not "never use threads". Adding a *new* long-lived thread is a structural change — propose it first. No asyncio; the thread set is small and each one has a single clear job. See the module docstring at the top of `app.py` for the authoritative description.
+
+   **Anything the main loop wants to say goes through `_announce()`.** It appends and returns. Navigation cues used to synthesise and play inline, which stopped fall detection and obstacle polling for ~3–4 s during every turn instruction — the loop sat inside `sd.play(blocking=True)`. Motor and buzzer patterns are the same hazard for a smaller amount: every driver's `pulse`/`beep` sleeps for the pattern's duration, so they go through `_spawn_haptic()`. Neither may be called inline from `run()`.
+
+   Two sub-steps run on the **voice thread** and block only it: destination confirmation and turn-to-face orientation. Both are bounded, both abort on an emergency press, and both borrow the PTT button and hand it back in a `finally`.
 
 2. **Hardware abstraction.** Every device has a `Protocol` interface in its module's `base.py`, a real driver (e.g. `dyp_a22.py`), and a mock (`mock.py`). Application code depends on the protocol, never the concrete driver.
 
