@@ -16,6 +16,18 @@ rather than from memory.
 - `blocked` — we want it, something concrete is in the way.
 - `candidate` — plausible, not yet decided either way.
 
+**Two external blockers account for most of what is `blocked` below**, and
+several `parked` entries name them as their revisit trigger:
+
+- **The assembled prototype.** Compass calibration gates three shipped
+  features (`COMPASS_CALIBRATED` in `config.py`), the buzzer cannot be judged
+  too loud until it can be heard in context, and two button positions are
+  unrecorded.
+- **A microphone.** The latency work — Whisper decode flags, the static-TTS
+  cache, and a deterministic fast path in front of the LLM — is not deferred,
+  it is simply unmeasured. Nothing there should be changed before
+  `intents.tests.manual.end_to_end_test` has produced per-stage numbers.
+
 ---
 
 ## Vision
@@ -33,8 +45,9 @@ give "a person ahead on your left, a chair to your right" with no new hardware
 and no new model. Deferred to keep the current iteration focused on latency and
 navigation, not because it is difficult.
 
-**Revisit when:** the latency and navigation tracks are closed, or if user
-testing shows people asking "where?" after a describe response.
+**Revisit when:** the navigation track closed on 2026-09-13, so this is now
+the strongest remaining vision item — the trigger has half fired. Still
+waiting on the latency track, which is blocked on hardware.
 
 ### Currency / banknote recognition
 **Status:** candidate · **Raised:** 2026-09-12
@@ -74,13 +87,20 @@ STT specifically.
 
 Navigation cues are hardcoded English in `navigation/monitor.py`
 (`_check_arrival`, `_check_off_route`, `_build_announce_cue`), violating the
-`messages.py` rule. Moving those three strings into `messages.py` is easy.
+`intents/messages.py` rule. Moving those three strings into `messages.py` is easy.
 
 The blocking part is `instr.text`, which comes from GraphHopper and is English
 prose ("Turn left onto Rizal Street"). GraphHopper has no Tagalog locale, so
 genuine Tagalog navigation requires synthesising instruction text locally from
 `RouteInstruction.direction` + `street_name` instead of passing GraphHopper's
 sentence through. That is a real piece of work, not a translation pass.
+
+**This got worse on 2026-09-13.** `nav.missed_turn` is properly translated but
+interpolates `cue.text` — GraphHopper's English — into its Tagalog sentence, so
+a Tagalog user hears "Mukhang nalampasan mo ang liko. Ang tagubilin ay: Turn
+left onto Rizal Street." Every new cue that quotes an instruction inherits the
+same seam, which is an argument for doing the synthesis sooner rather than
+later.
 
 **Blocked on:** deciding the local instruction-synthesis grammar for both
 languages.
@@ -108,6 +128,41 @@ is a plausible ceiling for a battery-powered pedestrian device.
 **Revisit when:** field testing shows users being offered absurd
 destinations often enough that declining each one is a nuisance.
 
+### Time remaining, not just distance
+**Status:** parked · **Raised:** 2026-09-13
+
+`navigation.progress` answers "how much further" with a distance and says
+nothing about time, even though "how much longer" is how people phrase it.
+
+Left out deliberately. The seconds would have to come from an assumed
+walking speed, and the only one available is GraphHopper's pedestrian
+profile at a brisk 5 km/h — which a cane user is unlikely to match. A
+confident wrong number would have somebody hurrying, and the failure is
+invisible: they cannot tell the estimate was optimistic until they are late.
+
+If revived, the honest version calibrates against the user's own observed
+pace over the current route rather than a constant, which needs distance
+history the monitor does not keep.
+
+**Revisit when:** enough real walks exist to derive a pace from, or a user
+asks for it and accepts a rough answer.
+
+### Listing saved places aloud
+**Status:** parked · **Raised:** 2026-09-13
+
+There is `place.save` and `place.delete` but no `place.list`. A user who
+forgets what they saved something as cannot ask; they re-save it under a
+name they do remember, which works but leaves an orphan.
+
+`SavedPlaces.labels()` already exists and returns them sorted, so the
+handler is a few lines. Parked because the list is spoken, and a user with a
+dozen places gets a dozen labels read at them with no way to skip — the same
+objection that kept the help response short. Worth doing with a cap, or not
+at all.
+
+**Revisit when:** anyone accumulates enough saved places to lose track, or
+`place.delete` is observed failing because the label was misremembered.
+
 ### Distance to a place other than the current destination
 **Status:** parked · **Raised:** 2026-09-13
 
@@ -132,6 +187,13 @@ recompute a route. The user's recourse is to cancel and re-issue the command.
 
 Accepted for the MVP: a wrong automatic reroute is worse than a warning the
 user can act on.
+
+**Sharpened on 2026-09-13.** Turn verification now catches a missed turn in
+about five seconds, against the fifteen to thirty that position-based
+deviation needs — so the wearable knows sooner, and still has nothing to
+offer but the instruction that was missed. That widens the gap between what
+it detects and what it can do about it, and makes this the most valuable
+navigation item left.
 
 ### Quieting the buzzer
 **Status:** parked · **Raised:** 2026-09-13
@@ -198,7 +260,10 @@ adds a second calibration artefact to keep in sync with the first. Try the
 standard sweep on the assembled unit before reaching for it.
 
 **Revisit when:** mounted calibration is done and heading error is still too
-large for turn-to-face guidance to be safe.
+large for turn-to-face guidance to be safe. As of 2026-09-13 three shipped
+features sit behind `COMPASS_CALIBRATED` — turn-to-face, the departure
+heading, and turn verification — so calibration quality is now the single
+gate on all of them rather than a nice-to-have.
 
 ### Compass tilt compensation and magnetic declination
 **Status:** parked · **Raised:** 2026-09-12
@@ -214,7 +279,10 @@ mounted calibration shows how much tilt error the assembled wearable actually
 has.
 
 **Revisit when:** post-calibration heading error on the assembled unit exceeds
-what turn-to-face guidance can tolerate.
+what turn-to-face guidance can tolerate. Turn-to-face is used standing still,
+which is the best case for an uncompensated compass; turn *verification* reads
+heading while walking, where torso sway is worse, so that is where tilt error
+will show up first.
 
 ---
 
@@ -223,17 +291,37 @@ what turn-to-face guidance can tolerate.
 ### Guardian-controlled saved places via the backend
 **Status:** parked · **Raised:** 2026-09-12
 
-Saved places start as voice-controlled and device-local, because the moment a
-user most needs "take me home" is also the moment they are most likely to have
-no data connection — and because the user is physically standing at the place
+Saved places shipped on 2026-09-13 as voice-controlled and device-local,
+because the moment a user most needs "take me home" is also the moment they are
+most likely to have no data connection — and because the user is physically standing at the place
 when they save it, which is exactly when the GPS fix is trustworthy.
 
 A guardian adding places from the dashboard is a reasonable second channel, but
 it means a backend endpoint, a sync path, and cache invalidation — cross-repo
 work with the backend developer.
 
-**Revisit when:** the voice-controlled version is working and the backend
-developer has capacity.
+**Revisit when:** the voice-controlled version has been used on the prototype
+and the backend developer has capacity.
+
+---
+
+## Hardware documentation
+
+### Emergency and repeat button positions
+**Status:** blocked · **Raised:** 2026-09-13
+
+`docs/hardware.md` records PTT as the **left** button but leaves the other
+two as *unrecorded*. That gap is load-bearing in one place: the spoken help
+response deliberately does not tell the user which button summons help,
+because naming a button we cannot locate is worse than not mentioning it.
+
+The `help.capabilities` message carries a comment saying to add that
+sentence once the layout is confirmed. `button.ptt_position` in
+`intents/messages.py` is the pattern to follow — the position is its own key in both
+languages, so a rebuilt enclosure is one edit.
+
+**Blocked on:** somebody looking at the assembled prototype and writing the
+two positions into the table.
 
 ---
 
@@ -242,8 +330,8 @@ developer has capacity.
 ### Full spoken capability listing
 **Status:** parked · **Raised:** 2026-09-12
 
-The help response is a short identity statement plus the three or four most
-useful things, not an exhaustive catalogue — reading twelve capabilities aloud
+`system.help` shipped on 2026-09-13 as a short identity statement plus the
+four most useful things, not an exhaustive catalogue — reading twelve capabilities aloud
 is roughly forty-five seconds the user will not sit through and will not
 remember.
 
