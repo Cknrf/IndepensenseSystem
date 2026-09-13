@@ -25,12 +25,34 @@ Three thresholds gate the cues per instruction:
 Both announce and haptic latch — each instruction only fires each cue
 once, so a user lingering at a turn doesn't get spam.
 
+Turn verification
+-----------------
+
+Advancement is proximity-only, so a user who walks straight past a corner
+still has the cursor moved on for them, and every later cue is measured
+against a leg they are not on. Off-route detection catches it, but only
+after 30 m of sustained deviation — 15-30 s of walking the wrong way.
+
+When `check()` is given a `heading`, the monitor also waits a few seconds
+after each left/right turn and compares the user's facing against the
+bearing of the next leg, emitting `missed_turn` when they do not match.
+That is a much faster signal than position, because heading changes at the
+corner while position takes tens of metres to diverge.
+
+It is strictly additive: without a heading — which is the case whenever
+the compass is uncalibrated — advancement, announces, haptics and arrival
+behave exactly as they did before it existed.
+
 Assumptions and known limitations
 ---------------------------------
 
-- The user is following the route. We do not detect off-route deviation.
+- The user is following the route. Off-route deviation is detected but
+  not recovered from.
 - We do NOT try to identify "past the turn" from a distance increase;
   that's fragile with GPS jitter. Advancement is strictly on proximity.
+- Turn verification says a turn was missed; it cannot say what to do
+  about it, because the wearable does not reroute. The user is told what
+  the instruction was and decides.
 - If the user never gets within 5 m of a turn (GPS bias, wide turn),
   the monitor gets stuck on that instruction and its remaining turns
   go unspoken. The user can voice "cancel navigation" to reset.
@@ -46,7 +68,14 @@ import time
 from dataclasses import dataclass
 
 from indepensense.intents.messages import round_speech_distance
-from indepensense.routing.base import Coordinate, Route, haversine_m
+from indepensense.navigation.orientation import heading_error
+from indepensense.routing.base import (
+    Coordinate,
+    Route,
+    RouteInstruction,
+    bearing_to,
+    haversine_m,
+)
 
 
 # Thresholds — imported by app.py via config; also inlined here as
@@ -64,6 +93,23 @@ _DEFAULT_OFF_ROUTE_DISTANCE_M = 30.0
 _DEFAULT_ON_ROUTE_RECOVERY_M = 15.0
 _DEFAULT_OFF_ROUTE_DURATION_S = 15.0
 
+# Turn verification. After the cursor passes a turn, wait this long for the
+# user to actually complete it before comparing their heading against the
+# next leg — checking immediately would flag everybody, since nobody has
+# pivoted by the time they reach the corner.
+_DEFAULT_TURN_VERIFY_DELAY_S = 5.0
+
+# How far off the next leg's bearing counts as "did not turn". Deliberately
+# generous: the question is whether a roughly-90° turn happened at all, not
+# whether it was taken tidily, and heading measured while walking carries
+# the sway of every stride. A tight threshold here would flag users who
+# turned perfectly well but cut the corner wide.
+_DEFAULT_TURN_VERIFY_TOLERANCE_DEG = 60.0
+
+# Below this, the next instruction is too close for the bearing between the
+# two to mean anything, so verification is skipped rather than guessed.
+_DEFAULT_TURN_VERIFY_MIN_LEG_M = 15.0
+
 
 @dataclass(frozen=True)
 class NavigationCue:
@@ -79,6 +125,11 @@ class NavigationCue:
                       route. `text` gives a spoken warning; the wearable
                       does NOT auto-reroute. Fires once per deviation
                       event (latched until user gets back on route).
+      - "missed_turn" — the compass says the user did not actually turn
+                      where the route said to. `direction` is the turn
+                      they should have made; `text` names it. Fires at
+                      most once per instruction, and only when a heading
+                      is supplied.
     """
     kind: str
     text: str | None = None
@@ -157,6 +208,9 @@ class NavigationMonitor:
         off_route_distance_m: float = _DEFAULT_OFF_ROUTE_DISTANCE_M,
         on_route_recovery_m: float = _DEFAULT_ON_ROUTE_RECOVERY_M,
         off_route_duration_s: float = _DEFAULT_OFF_ROUTE_DURATION_S,
+        turn_verify_delay_s: float = _DEFAULT_TURN_VERIFY_DELAY_S,
+        turn_verify_tolerance_deg: float = _DEFAULT_TURN_VERIFY_TOLERANCE_DEG,
+        turn_verify_min_leg_m: float = _DEFAULT_TURN_VERIFY_MIN_LEG_M,
     ):
         self._announce_distance_m = announce_distance_m
         self._haptic_distance_m = haptic_distance_m
@@ -164,6 +218,9 @@ class NavigationMonitor:
         self._off_route_distance_m = off_route_distance_m
         self._on_route_recovery_m = on_route_recovery_m
         self._off_route_duration_s = off_route_duration_s
+        self._turn_verify_delay_s = turn_verify_delay_s
+        self._turn_verify_tolerance_deg = turn_verify_tolerance_deg
+        self._turn_verify_min_leg_m = turn_verify_min_leg_m
 
         self._route: Route | None = None
         self._destination_name: str = ""
@@ -184,6 +241,11 @@ class NavigationMonitor:
         self._off_route_since: float | None = None
         self._off_route_warned: bool = False
 
+        # Turn verification: set when the cursor passes a left/right turn,
+        # cleared once the check has run. Holds (instruction, expected
+        # bearing after the turn, the time at which to check).
+        self._pending_turn: tuple[RouteInstruction, float, float] | None = None
+
     # ------------------------------------------------------------------ API
 
     def set_route(self, route: Route, destination_name: str) -> None:
@@ -195,6 +257,7 @@ class NavigationMonitor:
         self._haptic_fired.clear()
         self._off_route_since = None
         self._off_route_warned = False
+        self._pending_turn = None
 
     def clear(self) -> None:
         """Stop tracking. Subsequent `check()` calls return no cues."""
@@ -205,6 +268,7 @@ class NavigationMonitor:
         self._haptic_fired.clear()
         self._off_route_since = None
         self._off_route_warned = False
+        self._pending_turn = None
 
     def is_active(self) -> bool:
         return self._route is not None
@@ -212,6 +276,14 @@ class NavigationMonitor:
     def current_index(self) -> int:
         """The next instruction index we're waiting to advance past."""
         return self._current_index
+
+    def route(self) -> Route | None:
+        """The route being tracked, or None. Read-only by convention.
+
+        Exposed for turn-to-face guidance, which needs the polyline to work
+        out which way the user should be pointing before they set off.
+        """
+        return self._route
 
     def destination_name(self) -> str:
         """Where this route ends, as the user named it. Empty if inactive."""
@@ -259,6 +331,7 @@ class NavigationMonitor:
         self,
         position: Coordinate,
         now: float | None = None,
+        heading: float | None = None,
     ) -> list[NavigationCue]:
         """Given the user's current position, return cues to fire.
 
@@ -273,6 +346,14 @@ class NavigationMonitor:
         monotonic timestamp; if omitted the wall clock is used
         (tests inject explicit values to make deviation timing
         deterministic).
+
+        `heading` is the user's facing in degrees, or None when it is
+        unknown or untrustworthy. Supplying it enables turn verification:
+        having passed a turn, the monitor waits for it to be completed and
+        then checks whether the user is actually pointing down the next
+        leg, emitting `missed_turn` when they are not. Without it every
+        other behaviour here is unchanged — the cursor still advances on
+        proximity alone, exactly as before.
         """
         if self._route is None:
             return []
@@ -281,6 +362,14 @@ class NavigationMonitor:
             now = time.monotonic()
 
         cues: list[NavigationCue] = []
+
+        # Did the last turn actually happen? Checked before the cursor
+        # moves on, so a user who walked straight past a corner hears
+        # about it rather than being cued for a leg they are not on.
+        # Off-route detection is the backstop and takes 15-30 s longer.
+        missed = self._check_pending_turn(now, heading)
+        if missed is not None:
+            cues.append(missed)
 
         # Off-route detection runs alongside the turn-tracking below.
         # Kept as its own block for clarity; both consume `position`
@@ -339,6 +428,7 @@ class NavigationMonitor:
 
             # Advance to next instruction if we're at the turn point.
             if distance <= self._advance_distance_m:
+                self._arm_turn_verification(instr, now)
                 self._current_index += 1
                 continue
 
@@ -346,6 +436,81 @@ class NavigationMonitor:
             break
 
         return cues
+
+    def _arm_turn_verification(self, instr, now: float) -> None:
+        """Note that a turn was just passed, to be checked shortly.
+
+        Only left and right turns are worth verifying — "straight" cannot
+        be missed, and arrival is handled elsewhere.
+
+        The bearing to aim at is the one from this turn to the *next*
+        instruction, which is the direction the user should now be
+        walking. Taken between instructions rather than along the polyline
+        because that is the data already to hand; a leg shorter than
+        `turn_verify_min_leg_m` gives a bearing too noisy to judge, so
+        those are skipped rather than guessed at.
+        """
+        if instr.direction not in ("left", "right"):
+            self._pending_turn = None
+            return
+        if instr.location is None or self._route is None:
+            self._pending_turn = None
+            return
+
+        next_index = self._current_index + 1
+        if next_index >= len(self._route.instructions):
+            self._pending_turn = None
+            return
+        next_instr = self._route.instructions[next_index]
+        if next_instr.location is None:
+            self._pending_turn = None
+            return
+
+        leg_m = haversine_m(instr.location, next_instr.location)
+        if leg_m < self._turn_verify_min_leg_m:
+            self._pending_turn = None
+            return
+
+        expected = bearing_to(instr.location, next_instr.location)
+        self._pending_turn = (instr, expected, now + self._turn_verify_delay_s)
+
+    def _check_pending_turn(
+        self,
+        now: float,
+        heading: float | None,
+    ) -> NavigationCue | None:
+        """Compare the user's facing against the leg they should be on.
+
+        Returns a `missed_turn` cue when the heading says they carried
+        straight on, and None otherwise. Disarms either way, so this fires
+        at most once per turn — a user who knows they missed it does not
+        need telling twice.
+
+        Waits `turn_verify_delay_s` before judging, because nobody has
+        pivoted by the time they reach the corner. A heading that is
+        unavailable when the moment comes disarms without a verdict rather
+        than guessing: an absent compass must not manufacture a warning.
+        """
+        if self._pending_turn is None:
+            return None
+
+        instr, expected, verify_at = self._pending_turn
+        if now < verify_at:
+            return None
+
+        self._pending_turn = None
+        if heading is None:
+            return None
+
+        error = abs(heading_error(heading, expected))
+        if error <= self._turn_verify_tolerance_deg:
+            return None
+
+        return NavigationCue(
+            kind="missed_turn",
+            text=instr.text,
+            direction=instr.direction,
+        )
 
     def _check_arrival(self, position: Coordinate) -> NavigationCue | None:
         """Fire the arrival cue when within `advance_distance_m` of the

@@ -210,7 +210,7 @@ def test_polling_is_throttled_to_about_one_hertz(app):
         def is_active(self):
             return True
 
-        def check(self, position, now=None):
+        def check(self, position, now=None, heading=None):
             calls.append(position)
             return []
 
@@ -232,7 +232,7 @@ def test_a_raising_monitor_does_not_break_the_loop(app):
         def is_active(self):
             return True
 
-        def check(self, position, now=None):
+        def check(self, position, now=None, heading=None):
             raise ValueError("bad route state")
 
     app.nav_monitor = _BrokenMonitor()
@@ -246,7 +246,7 @@ def test_cues_from_the_monitor_reach_the_actuators(app):
         def is_active(self):
             return True
 
-        def check(self, position, now=None):
+        def check(self, position, now=None, heading=None):
             return [
                 NavigationCue(kind="announce", text="In 50 meters, turn right"),
                 NavigationCue(kind="haptic", direction="right"),
@@ -268,3 +268,96 @@ def test_warning_lock_is_released_after_a_cue(app):
     app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
     assert app._warning_lock.acquire(timeout=1.0)
     app._warning_lock.release()
+
+
+# --- missed turns ------------------------------------------------------------
+#
+# The monitor decides whether a turn was missed; this covers what `app.py`
+# does with the verdict.
+
+def test_a_missed_turn_is_spoken_and_pulsed(app):
+    """Both channels: the correction matters enough that a user who missed
+    the speech should still feel which side they should have gone."""
+    app._fire_navigation_cue(
+        NavigationCue(kind="missed_turn", text="Turn left onto Rizal Street",
+                      direction="left")
+    )
+
+    assert len(app.spoken) == 1
+    assert "Rizal Street" in app.spoken[0]
+    assert _wait_until(lambda: app.left_motor.events)
+
+
+def test_a_missed_turn_pulses_the_side_it_should_have_been(app):
+    app._fire_navigation_cue(
+        NavigationCue(kind="missed_turn", text="Turn right onto B", direction="right")
+    )
+
+    assert _wait_until(lambda: app.right_motor.events)
+    assert app.left_motor.events == []
+
+
+def test_a_missed_turn_is_deferred_while_the_user_is_talking(app):
+    """Same rule as every other spoken cue — talking over the user's own
+    command loses information for both."""
+    app._voice_active.set()
+
+    app._fire_navigation_cue(
+        NavigationCue(kind="missed_turn", text="Turn left", direction="left")
+    )
+
+    assert app.spoken == []
+
+
+def test_a_missed_turn_with_no_motor_still_speaks(app):
+    app.left_motor = None
+
+    app._fire_navigation_cue(
+        NavigationCue(kind="missed_turn", text="Turn left", direction="left")
+    )
+
+    assert len(app.spoken) == 1
+
+
+def test_the_heading_is_passed_to_the_monitor(app):
+    """Turn verification is off unless the monitor is given one, and the
+    app is the only thing that can supply it."""
+    seen = []
+
+    class _RecordingMonitor:
+        def is_active(self):
+            return True
+
+        def check(self, position, now=None, heading=None):
+            seen.append(heading)
+            return []
+
+    app.nav_monitor = _RecordingMonitor()
+    app.gps_cache = _StubCache(_fix())
+    app.trusted_heading = lambda: 137.0
+    app._last_nav_check = 0.0
+
+    app._check_navigation()
+
+    assert seen == [137.0]
+
+
+def test_an_uncalibrated_compass_passes_no_heading(app):
+    """Which leaves turn verification inert — today's behaviour."""
+    seen = []
+
+    class _RecordingMonitor:
+        def is_active(self):
+            return True
+
+        def check(self, position, now=None, heading=None):
+            seen.append(heading)
+            return []
+
+    app.nav_monitor = _RecordingMonitor()
+    app.gps_cache = _StubCache(_fix())
+    app._last_nav_check = 0.0
+
+    app._check_navigation()
+
+    assert seen == [None]

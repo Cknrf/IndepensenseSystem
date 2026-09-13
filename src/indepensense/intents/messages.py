@@ -145,6 +145,30 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Sa {distance}, {instruction}.",
     },
 
+    # Turn verification. Names the turn rather than issuing an order: the
+    # wearable cannot reroute, so "turn around" would be advice it has no
+    # basis for — the user may be mid-crossing, or may have a reason. What
+    # it can honestly do is say what it believes happened.
+    "nav.missed_turn": {
+        "en": "It looks like you missed the turn. The instruction was: {instruction}.",
+        "tl": "Mukhang nalampasan mo ang liko. Ang tagubilin ay: {instruction}.",
+    },
+
+    # Turn-to-face. Only two spoken lines in the whole interaction — the
+    # turning itself is haptic, because a spoken angle lags the movement it
+    # describes and competes with traffic. See navigation/orientation.py.
+    "nav.walk_straight_ahead": {
+        "en": "Walk straight ahead.",
+        "tl": "Dumiretso ka na po.",
+    },
+    # The give-up line. Says what to do rather than reporting a failure:
+    # the user is standing in the street and needs an instruction, not a
+    # diagnosis.
+    "nav.orientation_gave_up": {
+        "en": "Start walking, and I will guide you from there.",
+        "tl": "Maglakad na po kayo, at gagabayan ko kayo mula roon.",
+    },
+
     # Progress. Distance only, no time estimate: the remaining seconds
     # would have to come from an assumed walking speed, and GraphHopper's
     # pedestrian profile assumes a brisk 5 km/h that a cane user is

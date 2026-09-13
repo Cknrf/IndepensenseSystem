@@ -481,3 +481,180 @@ def test_the_destination_name_is_available_while_active():
 
     monitor.clear()
     assert monitor.destination_name() == ""
+
+
+# --- turn verification -------------------------------------------------------
+#
+# The cursor advances past a turn on proximity alone, so a user who walks
+# straight past a corner keeps getting cues for a leg they are not on until
+# off-route detection catches it 15-30 s later. With a heading, the monitor
+# can say so in about five.
+#
+# Additive by design: every assertion below about advancement, announces and
+# haptics elsewhere in this file still holds, because passing no heading
+# changes nothing.
+
+def _turning_route() -> Route:
+    """North for 100 m, then a left turn and 100 m west."""
+    start = Coordinate(lat=14.0000, lon=121.0000)
+    corner = Coordinate(lat=14.0009, lon=121.0000)
+    end = Coordinate(lat=14.0009, lon=120.9991)
+    return Route(
+        distance_m=200.0, duration_s=150.0,
+        instructions=[
+            RouteInstruction(text="Head north", distance_m=100.0,
+                             street_name="A", location=start, direction="straight"),
+            RouteInstruction(text="Turn left onto B", distance_m=100.0,
+                             street_name="B", location=corner, direction="left"),
+            RouteInstruction(text="Arrive", distance_m=0.0,
+                             street_name=None, location=end, direction="arrive"),
+        ],
+        points=[start, corner, end],
+    )
+
+
+def _at_corner(monitor, now=0.0, heading=None):
+    """Walk the user to the turn point so the cursor advances past it."""
+    corner = _turning_route().instructions[1].location
+    return monitor.check(corner, now=now, heading=heading)
+
+
+def test_carrying_straight_on_is_reported():
+    """Route turns left (west). The user is still heading north."""
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+
+    cues = monitor.check(
+        _turning_route().instructions[1].location, now=10.0, heading=0.0,
+    )
+
+    assert [c.kind for c in cues].count("missed_turn") == 1
+    missed = next(c for c in cues if c.kind == "missed_turn")
+    assert missed.direction == "left"
+    assert "B" in missed.text
+
+
+def test_actually_turning_is_not_reported():
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+
+    cues = monitor.check(
+        _turning_route().instructions[1].location, now=10.0, heading=270.0,
+    )
+
+    assert [c.kind for c in cues] == []
+
+
+def test_a_wide_turn_is_tolerated():
+    """The question is whether a turn happened at all, not whether it was
+    tidy. Heading measured while walking carries the sway of every stride,
+    and flagging a user who turned perfectly well would teach them to
+    ignore the warning."""
+    monitor = NavigationMonitor(
+        turn_verify_delay_s=5.0, turn_verify_tolerance_deg=60.0,
+    )
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+
+    cues = monitor.check(
+        _turning_route().instructions[1].location, now=10.0, heading=315.0,
+    )
+
+    assert [c.kind for c in cues] == []
+
+
+def test_nothing_is_judged_before_the_turn_has_had_time():
+    """Nobody has pivoted by the time they reach the corner. Checking
+    immediately would flag every user on every turn."""
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+
+    cues = monitor.check(
+        _turning_route().instructions[1].location, now=2.0, heading=0.0,
+    )
+
+    assert [c.kind for c in cues] == []
+
+
+def test_it_reports_at_most_once_per_turn():
+    """A user who knows they missed it does not need telling twice."""
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+    corner = _turning_route().instructions[1].location
+
+    first = monitor.check(corner, now=10.0, heading=0.0)
+    second = monitor.check(corner, now=11.0, heading=0.0)
+
+    assert [c.kind for c in first].count("missed_turn") == 1
+    assert [c.kind for c in second] == []
+
+
+def test_no_heading_never_reports_a_missed_turn():
+    """An absent or uncalibrated compass must not manufacture a warning."""
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+
+    cues = monitor.check(_turning_route().instructions[1].location, now=10.0)
+
+    assert [c.kind for c in cues] == []
+
+
+def test_a_straight_instruction_is_never_verified():
+    """"Carry on" cannot be missed."""
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(_turning_route(), "Home")
+    monitor.check(_turning_route().points[0], now=0.0, heading=0.0)
+
+    assert monitor._pending_turn is None
+
+
+def test_a_short_next_leg_is_not_verified():
+    """Under the minimum, the bearing between two instructions is too
+    noisy to judge a turn by — skipped rather than guessed at."""
+    start = Coordinate(lat=14.0000, lon=121.0000)
+    corner = Coordinate(lat=14.0009, lon=121.0000)
+    barely = Coordinate(lat=14.0009, lon=120.99995)      # ~5 m west
+    route = Route(
+        distance_m=105.0, duration_s=80.0,
+        instructions=[
+            RouteInstruction(text="Head north", distance_m=100.0, street_name="A",
+                             location=start, direction="straight"),
+            RouteInstruction(text="Turn left", distance_m=5.0, street_name="B",
+                             location=corner, direction="left"),
+            RouteInstruction(text="Arrive", distance_m=0.0, street_name=None,
+                             location=barely, direction="arrive"),
+        ],
+        points=[start, corner, barely],
+    )
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(route, "Home")
+    monitor.check(corner, now=0.0, heading=0.0)
+
+    assert monitor._pending_turn is None
+
+
+def test_cancelling_navigation_disarms_verification():
+    """Otherwise a stale turn could be reported against the next route."""
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+    assert monitor._pending_turn is not None
+
+    monitor.clear()
+
+    assert monitor._pending_turn is None
+
+
+def test_a_new_route_disarms_verification():
+    monitor = NavigationMonitor(turn_verify_delay_s=5.0)
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+
+    monitor.set_route(_turning_route(), "Work")
+
+    assert monitor._pending_turn is None

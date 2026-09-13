@@ -18,6 +18,10 @@ well-scoped background threads for I/O concerns:
     per press. Second press while voice is busy is ignored.
   - Voice thread (one at a time, per PTT session): record → STT →
     parse → execute → TTS → play. Emergency signal aborts mid-way.
+    Two sub-steps also run here and also block only this thread:
+    destination confirmation (speak the choice, wait for a press) and
+    turn-to-face orientation (pulse the user round to the route's
+    opening bearing). Both are bounded and both abort on emergency.
   - Emergency button callback: sets cancel flag AND runs the emergency
     handler directly. This preempts voice AND fires the alert without
     waiting for the voice thread to finish.
@@ -152,6 +156,11 @@ from indepensense.config import (
     OBSTACLE_DANGER_CM,
     OBSTACLE_WARNING_CM,
     OLLAMA_URL,
+    ORIENTATION_ALIGNED_TOLERANCE_DEG,
+    ORIENTATION_BANDS,
+    ORIENTATION_MIN_TARGET_DISTANCE_M,
+    ORIENTATION_RELEASE_TOLERANCE_DEG,
+    ORIENTATION_TIMEOUT_S,
     PHOTON_URL,
     PIPER_VOICES,
     PTT_BUTTON_GPIO,
@@ -198,8 +207,12 @@ from indepensense.intents.parser import OllamaIntentParser
 from indepensense.language import LanguageState
 from indepensense.messaging.mmcli_sms import MMCLISMSSender
 from indepensense.navigation.monitor import NavigationCue, NavigationMonitor
+from indepensense.navigation.orientation import (
+    OrientationGuide,
+    first_meaningful_point,
+)
 from indepensense.power.waveshare_ups_e import WaveshareUPSHatE
-from indepensense.routing.base import Coordinate
+from indepensense.routing.base import Coordinate, bearing_to
 from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.places import SavedPlaces
 from indepensense.routing.photon import PhotonGeocoder
@@ -1138,7 +1151,11 @@ class App:
 
         position = Coordinate(lat=fix.lat, lon=fix.lon)
         try:
-            cues = self.nav_monitor.check(position)
+            # Heading is None until the compass is calibrated, which turns
+            # turn verification off and leaves every other cue unchanged.
+            cues = self.nav_monitor.check(
+                position, heading=self.trusted_heading(),
+            )
         except Exception as exc:
             print(f"[nav] monitor error: {exc}", file=sys.stderr, flush=True)
             return
@@ -1189,6 +1206,31 @@ class App:
                 )
                 if not self._voice_active.is_set() and cue.text is not None:
                     self._announce(cue.text)
+            elif cue.kind == "missed_turn":
+                # The compass says they carried straight on. Say so and
+                # pulse the side they should have gone, so the correction
+                # is available through both channels. Off-route detection
+                # is still running underneath as the slower backstop.
+                if self._voice_active.is_set():
+                    print(
+                        f"[nav] deferred missed_turn (voice busy): {cue.text}",
+                        flush=True,
+                    )
+                    return
+                print(f"[nav] missed_turn: {cue.text}", flush=True)
+                motor = self._motor_for_direction(cue.direction)
+                if motor is not None:
+                    self._spawn_haptic(
+                        f"nav-missed-{cue.direction}",
+                        lambda m=motor: m.pulse(times=3, duration_s=0.15, gap_s=0.1),
+                    )
+                self._announce(
+                    messages.get(
+                        "nav.missed_turn",
+                        self.language.current,
+                        instruction=cue.text or "",
+                    )
+                )
             elif cue.kind == "off_route":
                 if self._voice_active.is_set():
                     print(
@@ -1598,6 +1640,18 @@ class App:
             if self._voice_cancel.is_set():
                 return
             play(response_path)
+
+            # Navigation just started: point the user the right way before
+            # they take a step. Deliberately after the response has been
+            # heard, so "Navigating to Jollibee, four hundred metres" lands
+            # first and the buzzing that follows has a context.
+            #
+            # Here rather than inside the executor because orienting needs
+            # the compass, the motors and the speaker — all app-level — and
+            # the route is already reachable through `nav_monitor`.
+            if (intent_result.intent is Intent.NAVIGATION_START
+                    and self.nav_monitor.is_active()):
+                self._orient_towards_route()
         except Exception as exc:
             print(f"[PTT] voice pipeline error: {exc}", file=sys.stderr, flush=True)
             # Speak a short error so the user isn't left wondering why
@@ -1612,6 +1666,118 @@ class App:
                 except Exception:
                     pass
             self._voice_active.clear()
+
+    def _orient_towards_route(self) -> None:
+        """Turn the user to face the start of the route before they walk.
+
+        GraphHopper opens with "Head north on Rizal Street", which a user
+        who cannot see has no way to act on — and every cue after it
+        assumes they set off roughly correctly. This is what makes that
+        assumption true.
+
+        Runs on the voice thread, right after `nav.started` is spoken, so
+        the 100 Hz loop keeps detecting falls and obstacles while the user
+        stands in the street turning around.
+
+        The turning itself is silent: a motor pulses on the side to turn
+        toward, faster as they come round. Only the finish is spoken. See
+        `navigation/orientation.py` for why rate-coded haptics rather than
+        a spoken angle.
+
+        Returns without doing anything when the compass cannot be trusted,
+        which is every run until `config.COMPASS_CALIBRATED` is set — so
+        this is inert today and the wearable behaves exactly as it did.
+
+        Four ways out, and none of them leave the user stuck:
+          - aligned: front pulse + "walk straight ahead"
+          - `ORIENTATION_TIMEOUT_S` elapsed: "start walking, I'll guide you"
+          - PTT pressed: the user already knows the way
+          - emergency: abandon everything
+        """
+        # A press means "I know which way I'm going" — borrow the button
+        # for the duration and hand it back, as the confirmation does.
+        skipped = threading.Event()
+
+        try:
+            # Everything from here is inside the guard, including the
+            # preconditions: a compass that raises on the very first read
+            # must cost the user their orientation cue, not surface as
+            # "something went wrong" over the route they just asked for.
+            if self.trusted_heading() is None:
+                return
+            route = self.nav_monitor.route()
+            if route is None or not route.points:
+                return
+
+            fix = self.gps_cache.latest_fix() if self.gps_cache is not None else None
+            if fix is None:
+                return
+            origin = Coordinate(lat=fix.lat, lon=fix.lon)
+
+            target = first_meaningful_point(
+                route.points, origin, ORIENTATION_MIN_TARGET_DISTANCE_M,
+            )
+            if target is None:
+                return
+            bearing = bearing_to(origin, target)
+
+            guide = OrientationGuide(
+                aligned_tolerance_deg=ORIENTATION_ALIGNED_TOLERANCE_DEG,
+                release_tolerance_deg=ORIENTATION_RELEASE_TOLERANCE_DEG,
+                bands=ORIENTATION_BANDS,
+            )
+
+            if self.ptt_button is not None:
+                self.ptt_button.on("pressed", skipped.set)
+
+            print(f"[orient] bearing to route start: {bearing:.0f}°", flush=True)
+            deadline = time.monotonic() + ORIENTATION_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if self._voice_cancel.is_set() or skipped.is_set():
+                    return
+
+                heading = self.trusted_heading()
+                if heading is None:
+                    # The compass dropped out mid-turn. Better to let them
+                    # walk than to buzz at them with nothing behind it.
+                    break
+
+                cue = guide.cue(heading, bearing)
+                if cue.aligned:
+                    print(f"[orient] aligned at {heading:.0f}°", flush=True)
+                    self._spawn_haptic(
+                        "orient-aligned",
+                        lambda: self._pulse_all_motors(duration_s=0.3),
+                    )
+                    self._announce(
+                        messages.get(
+                            "nav.walk_straight_ahead", self.language.current,
+                        )
+                    )
+                    return
+
+                motor = self._motor_for_direction(cue.direction)
+                if motor is not None:
+                    motor.pulse(times=1, duration_s=0.08)
+                # Sleeping on the cancel event rather than `time.sleep` so
+                # an emergency press is felt within the pulse gap rather
+                # than after it.
+                self._voice_cancel.wait(timeout=cue.pulse_interval_s)
+
+            print("[orient] gave up — letting them walk.", flush=True)
+            self._announce(
+                messages.get("nav.orientation_gave_up", self.language.current)
+            )
+        except Exception as exc:
+            # This is guidance, not safety. A compass or motor failure here
+            # must not cost the user the route they just asked for.
+            print(f"[orient] error: {exc}", file=sys.stderr, flush=True)
+        finally:
+            if self.ptt_button is not None:
+                try:
+                    self.ptt_button.on("pressed", self._on_ptt_press)
+                except Exception:
+                    pass
 
     def _confirm_destination(self, question: str) -> bool:
         """Speak `question`, then wait for a PTT press meaning "yes".

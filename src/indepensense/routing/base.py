@@ -37,6 +37,32 @@ def haversine_m(a: Coordinate, b: Coordinate) -> float:
     return 2 * r_earth_m * math.asin(math.sqrt(h))
 
 
+def bearing_to(origin: Coordinate, target: Coordinate) -> float:
+    """Initial compass bearing from `origin` to `target`, 0-360° from north.
+
+    The forward azimuth of the great circle — the direction to set off in,
+    which is not quite the direction you arrive from on a long path, but
+    identical at the scales a pedestrian cares about.
+
+    Shares its frame with the magnetometer's `heading_deg`: 0 is north, 90
+    is east, increasing clockwise. That is what lets the two be subtracted
+    to get a turn.
+
+    Degenerate case: `origin == target` has no meaningful bearing, and
+    `atan2(0, 0)` returns 0.0 rather than raising — the caller is expected
+    to pick a target far enough away to be meaningful. See
+    `ORIENTATION_MIN_TARGET_DISTANCE_M`.
+    """
+    lat1 = math.radians(origin.lat)
+    lat2 = math.radians(target.lat)
+    d_lon = math.radians(target.lon - origin.lon)
+
+    x = math.sin(d_lon) * math.cos(lat2)
+    y = (math.cos(lat1) * math.sin(lat2)
+         - math.sin(lat1) * math.cos(lat2) * math.cos(d_lon))
+    return math.degrees(math.atan2(x, y)) % 360.0
+
+
 @dataclass(frozen=True)
 class RouteInstruction:
     text: str

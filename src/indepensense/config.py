@@ -185,6 +185,45 @@ MAG_LEFT_AXIS = "+y"
 #   4. Set this True.
 COMPASS_CALIBRATED = False
 
+# Turn-to-face guidance: pointing the user the right way before they walk.
+#
+# Every number below is a starting point rather than a finding. Whether
+# 800 ms reads as "slower" than 400 ms to somebody wearing the vest, and
+# whether 15° is tight enough to set off usefully, are human-factors
+# questions that need a calibrated prototype and a person in a corridor.
+# They live here so that session is tuning, not rewriting.
+#
+# Skipped entirely while COMPASS_CALIBRATED is False.
+
+# How far down the route to aim. A point two metres ahead gives a bearing
+# that swings wildly with GPS jitter, and acting on it would spin the user
+# on the spot.
+ORIENTATION_MIN_TARGET_DISTANCE_M = 15.0
+
+# Close enough to start walking. Tighter than the compass can actually
+# resolve once mounted would be false precision, and a pedestrian converges
+# onto the path within the first few metres anyway.
+ORIENTATION_ALIGNED_TOLERANCE_DEG = 15.0
+
+# Once aligned, the band widens to this. Without the hysteresis a user who
+# drifts one degree past the boundary is told to turn back, overshoots, and
+# oscillates — the device nagging somebody who is already facing the right
+# way.
+ORIENTATION_RELEASE_TOLERANCE_DEG = 30.0
+
+# (error greater than N degrees, seconds between pulses). Widest first.
+ORIENTATION_BANDS = (
+    (90.0, 0.8),
+    (30.0, 0.4),
+    (0.0, 0.2),
+)
+
+# Give up after this long and let them start walking. It must never trap
+# somebody standing in the street: a compass that cannot settle, or a user
+# who does not understand the pulses, has to end with the wearable saying
+# so rather than buzzing indefinitely.
+ORIENTATION_TIMEOUT_S = 20.0
+
 # Waveshare UPS HAT (E) — battery + power management, also on I2C1 bus.
 # The HAT mounts under the Pi via pogo pins (no GPIO header conflict).
 # I²C address `0x2D` — do NOT confuse with a generic INA219 at 0x43.
