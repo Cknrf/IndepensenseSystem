@@ -40,7 +40,7 @@ How Claude collaborates on this thesis project.
 
    `app_mock.py` is development-only and never imported by production: `deploy/systemd/indepensense.service` starts `indepensense.app`. The separation is structural, not a runtime flag, so a misconfigured flag can never substitute a fake sensor on the real device.
 
-3. **Pi-only libraries are imported lazily, inside the function that needs them.** `serial`, `smbus2`, `gpiozero`, `picamera2`, `ultralytics`, `pytesseract`, `faster_whisper`, `piper` — never at module top level. This is what lets the real drivers be imported, introspected, and unit-tested on a Mac where those packages don't exist. Follow the existing comment style:
+3. **Pi-only libraries are imported lazily, inside the function that needs them.** `serial`, `smbus2`, `gpiozero`, `picamera2`, `ultralytics`, `pytesseract`, `faster_whisper`, `piper`, `transformers`, `torch` — never at module top level. This is what lets the real drivers be imported, introspected, and unit-tested on a Mac where those packages don't exist. Follow the existing comment style:
    ```python
    import serial  # lazy: only resolvable on the Pi
    ```

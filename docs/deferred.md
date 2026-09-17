@@ -102,6 +102,15 @@ left onto Rizal Street." Every new cue that quotes an instruction inherits the
 same seam, which is an argument for doing the synthesis sooner rather than
 later.
 
+**And worse again on 2026-09-17,** when Tagalog TTS moved from the Indonesian
+Piper voice to `facebook/mms-tts-tgl`. The old voice at least phonemised
+English through espeak-ng and produced something recognisable. MMS is a
+character-level model with a 43-character vocabulary trained only on Tagalog:
+it has no English phonology to fall back on, and any character outside that
+vocabulary is dropped silently. "Turn left onto Rizal Street" spoken by it is
+not accented English, it is Tagalog letter-sounds read off English spelling.
+The seam is now audible rather than merely inelegant.
+
 **Blocked on:** deciding the local instruction-synthesis grammar for both
 languages.
 

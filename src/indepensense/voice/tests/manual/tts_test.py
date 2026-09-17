@@ -1,17 +1,24 @@
-"""Manual test: synthesize a sentence with Piper and save as WAV.
+"""Manual test: synthesize a sentence and save as WAV.
 
 Run from repo root with:
     python -m indepensense.voice.tests.manual.tts_test
 
-See `docs/voice.md` for downloading the Piper voice file.
+English goes through Piper and Tagalog through MMS, so which engine
+this exercises depends on DEFAULT_LANGUAGE. See `docs/voice.md` for
+downloading both.
 The output WAV is saved under VOICE_TEST_DIR with a timestamped filename so
 you can copy it back to a Mac (or play with `aplay` on the Pi) and listen.
 """
 import time
 from datetime import datetime
 
-from indepensense.config import PIPER_VOICES, DEFAULT_LANGUAGE, VOICE_TEST_DIR
-from indepensense.voice.piper import PiperTTS
+from indepensense.config import (
+    DEFAULT_LANGUAGE,
+    MMS_VOICES,
+    PIPER_VOICES,
+    VOICE_TEST_DIR,
+)
+from indepensense.voice.router import build_tts
 
 SAMPLE_TEXT_EN = (
     "The quick brown fox jumps over the lazy dog. "
@@ -26,8 +33,8 @@ SAMPLE_TEXT_TL = (
 
 
 def main():
-    print(f"Loading Piper voices: {sorted(PIPER_VOICES)}")
-    tts = PiperTTS(voices=PIPER_VOICES)
+    print(f"Loading Piper {sorted(PIPER_VOICES)} + MMS {sorted(MMS_VOICES)}")
+    tts = build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES)
 
     text = SAMPLE_TEXT_EN if DEFAULT_LANGUAGE == "en" else SAMPLE_TEXT_TL
     output_path = VOICE_TEST_DIR / (

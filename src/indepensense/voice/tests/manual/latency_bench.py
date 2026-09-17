@@ -71,6 +71,7 @@ from indepensense.config import (
     NLU_TIMEOUT_S,
     NLU_WARMUP_TIMEOUT_S,
     OLLAMA_URL,
+    MMS_VOICES,
     PERF_LOG_DIR,
     PIPER_VOICES,
     SUPPORTED_LANGUAGES,
@@ -408,9 +409,9 @@ def main():
 
     tts = None
     if not args.no_tts:
-        print("  Loading Piper voices...")
-        from indepensense.voice.piper import PiperTTS
-        tts = PiperTTS(voices=PIPER_VOICES)
+        print("  Loading TTS voices (Piper + MMS)...")
+        from indepensense.voice.router import build_tts
+        tts = build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES)
 
     parser = None
     if not args.no_nlu:

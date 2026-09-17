@@ -85,7 +85,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 **Voice Interaction**
 - Push-to-talk speech input (Whisper STT)
 - LLM-based intent classification (Qwen 3 1.7B via Ollama), with a Mistral cloud fallback for questions no intent covers
-- Natural-language responses (Piper TTS)
+- Natural-language responses (Piper TTS for English, MMS-TTS for Tagalog)
 - Speech can be interrupted — the repeat button stops the wearable mid-sentence, which matters when OCR is reading a menu
 - Spoken help, so a user who cannot read a manual can ask what the device does
 - Speaker volume by voice, with a floor the user cannot go below
@@ -140,7 +140,7 @@ That file contains:
 - **Language:** Python 3.13
 - **OS:** Raspberry Pi OS (Trixie / Debian 13) on device, macOS for development
 - **Computer Vision:** Ultralytics YOLOv8 (medium, Open Images V7 weights), Tesseract OCR
-- **Voice:** faster-whisper (STT), Piper (TTS), Ollama + Qwen 3 1.7B (NLU)
+- **Voice:** faster-whisper (STT), Piper + Meta MMS-TTS (TTS), Ollama + Qwen 3 1.7B (NLU)
 - **Hardware Interface:** GPIO (gpiozero), I²C, UART
 - **Database:** handled by the backend repository
 
@@ -159,7 +159,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 |---|---|
 | `sensors/` | Sensor drivers: DYP-A22 ultrasonic, MPU6050 IMU, QMC5883P magnetometer, GPS via SIM7600 |
 | `vision/` | Camera capture, YOLOv8 object detection, Tesseract OCR |
-| `voice/` | Push-to-talk flow, Whisper STT, Piper TTS, speaker volume |
+| `voice/` | Push-to-talk flow, Whisper STT, Piper (English) + MMS (Tagalog) TTS behind one router, speaker volume |
 | `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching, help, saved places, volume), bilingual response catalogue, cloud LLM fallback |
 | `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing, remaining-distance, compass turn verification, and turn-to-face orientation logic |
 | `routing/` | GraphHopper + Photon HTTP clients, local candidate ranking, geo helpers (distance and bearing), and the user's own saved places |
@@ -266,7 +266,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | Component | Command |
 |---|---|
 | STT — microphone → text | `python -m indepensense.voice.tests.manual.stt_test` |
-| TTS — text → speaker | `python -m indepensense.voice.tests.manual.tts_test` |
+| TTS — text → speaker | `python -m indepensense.voice.tests.manual.tts_test` — uses the engine for `DEFAULT_LANGUAGE`: Piper for `en`, MMS for `tl` |
 | Full echo — mic → text → speech | `python -m indepensense.voice.tests.manual.echo_test` |
 
 ### Power
@@ -378,7 +378,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | MPU6050 returns all zeros mid-test | Loose wire (very common after drop tests) — reseat SDA, SCL, VCC, GND |
 | Camera not detected | Ribbon cable inserted backwards, or camera not enabled in `raspi-config` |
 | No audio output | USB audio device isn't the default sink — check `aplay -l` and adjust the ALSA default |
-| Whisper / Piper / Ollama slow to start | First boot loads models into RAM (~30–60 s). Subsequent starts are fast. |
+| Whisper / Piper / MMS / Ollama slow to start | First boot loads models into RAM (~30–60 s). Subsequent starts are fast. |
 | PTT button raises `PinInvalidState` | Do not set `active_state=True` when `pull_up=False` — the pull sets the polarity already |
 | YOLO very slow | Expected during `continuous_detect_test`. In production, YOLO only runs on-demand per voice command |
 | Voice commands don't classify correctly | Check `ollama list` — the Qwen model may not be loaded; the warmup service takes ~1–2 min on cold boot |

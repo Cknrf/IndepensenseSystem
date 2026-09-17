@@ -2,8 +2,9 @@
 
 IndepenSense uses two local neural models for its voice assistant:
 
-- **Piper** for text-to-speech (announcing obstacles, navigation guidance,
-  responding to queries).
+- **Piper** for English text-to-speech (announcing obstacles, navigation
+  guidance, responding to queries).
+- **Meta MMS-TTS** for Tagalog text-to-speech.
 - **faster-whisper** for speech-to-text (transcribing user commands).
 
 Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
@@ -13,9 +14,11 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 
 | Item | Value |
 |---|---|
-| TTS engine | Piper, ONNX runtime |
+| TTS engine (English) | Piper, ONNX runtime |
+| TTS engine (Tagalog) | MMS-TTS (VITS, 36.3M params), transformers + torch |
 | TTS voice (English) | `en_US-lessac-medium` (~70 MB) |
-| TTS voice (Tagalog) | `id_ID-news_tts-medium` (~60 MB), used as phonetic substitute |
+| TTS voice (Tagalog) | `facebook/mms-tts-tgl` (~145 MB), natively trained |
+| TTS voice (Tagalog) licence | CC-BY-NC 4.0 — academic use only |
 | STT engine | faster-whisper (CTranslate2 backend) |
 | STT model (English) | `tiny` (~75 MB), `int8` quantized |
 | STT model (Tagalog) | `small` (~460 MB), `int8` quantized |
@@ -24,6 +27,7 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 | Test artifacts at | `data/test/voice/` |
 | Speaker volume | `wpctl` on the default PipeWire sink, 20-100%, persisted to `var/volume` |
 | Output ownership | one announcer thread for all main-loop speech; see below |
+| Engine selection | `MultiEngineTTS` (`voice/router.py`), one engine per language |
 
 ## Why these choices
 
@@ -31,17 +35,46 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
   Festival are robotic and would weaken a thesis demo.
 - **`en_US-lessac-medium`.** Reliable English voice, medium quality, ~70 MB.
   Other voices at https://github.com/rhasspy/piper/blob/master/VOICES.md.
-- **Indonesian voice as Tagalog substitute.** Piper does not currently
-  provide a native Filipino/Tagalog voice. `id_ID-news_tts-medium` was
-  chosen after A/B testing against Spanish (`es_MX` and `es_ES`) voices
-  because Indonesian and Filipino are both Austronesian languages with
-  matching 5-vowel systems, producing intelligible Tagalog output despite
-  the audible Indonesian accent. Tagalog TTS via a natively-trained model
-  is deferred to future work using Meta MMS-TTS.
-- **Multi-voice `PiperTTS`.** The driver loads one Piper voice per
-  configured language at construction time and picks per call. Loading a
-  voice takes several seconds; loading both upfront removes latency at the
-  cost of ~140 MB extra RAM.
+- **MMS-TTS for Tagalog, replacing the Indonesian stand-in.** Piper
+  publishes no Filipino/Tagalog voice. Until 2026-09-17 the `tl` slot held
+  `id_ID-news_tts-medium`, picked after A/B testing against Spanish
+  (`es_MX`, `es_ES`) voices because Indonesian and Filipino are both
+  Austronesian with matching 5-vowel systems. It was intelligible, but two
+  things were wrong with it:
+
+  1. The accent was audibly Indonesian, not Filipino.
+  2. Worse, Piper phonemises through espeak-ng using the *voice's*
+     language, so digits in a message were expanded with Indonesian number
+     rules — "90 metro" was spoken "sembilan puluh metro". That is not an
+     accent, it is the wrong language on the most safety-relevant word in
+     a navigation cue.
+
+  `facebook/mms-tts-tgl` is trained on Tagalog itself. The second problem
+  is fixed independently, by spelling numbers out before synthesis — see
+  **Tagalog numerals** below.
+
+- **Two engines behind one interface.** English stays on Piper (better
+  quality, permissive licence) and Tagalog moves to MMS, so the
+  per-language map moved out of `PiperTTS` and up into `MultiEngineTTS`
+  (`voice/router.py`). Callers still see the plain `TTSEngine` protocol.
+  Both engines load at startup rather than on demand: loading either takes
+  seconds, and a lazy load would put that in front of the user on every
+  language switch. Cost is ~215 MB resident.
+
+- **The CC-BY-NC licence is a real constraint.** Piper's voices are
+  permissively licensed; MMS-TTS is CC-BY-NC 4.0. Non-commercial academic
+  use is squarely within it, and it is attributed here and in the thesis,
+  but a commercial build of IndepenSense would need a different Tagalog
+  voice. Recorded rather than glossed over.
+
+- **transformers/torch rather than an ONNX export.** MMS is a VITS model
+  and could be exported to ONNX to run on the onnxruntime Piper already
+  pulls in (~1.3x faster, per the sherpa-onnx project). We did not: torch
+  is already installed for YOLO, so the transformers path costs one new
+  package and no conversion step. sherpa-onnx publishes pre-converted
+  `vits-mms` models for only eight languages and Tagalog is not among
+  them, so the export would have to be maintained by us. Worth revisiting
+  only if measured TTS latency turns out to matter.
 - **faster-whisper over the original Whisper.** ~4× faster on CPU and ~50% less
   memory for the same accuracy. Same model weights via HuggingFace.
 - **Per-language Whisper model size.** Whisper's non-English performance
@@ -80,38 +113,90 @@ Without `libportaudio2` you will see `OSError: PortAudio library not found`
 when importing `sounddevice`. Without `libsndfile1` most WAV reads/writes
 will fail.
 
-## Download the Piper voices
+## Download the TTS voices
 
-Piper voice files are not pip-installed. Use Piper's built-in downloader
-(handles URL resolution and redirects reliably):
+Neither voice is pip-installed. Both live under `models/voices/`, which is
+gitignored.
+
+### English — Piper
+
+Use Piper's built-in downloader (handles URL resolution and redirects
+reliably):
 
 ```bash
 cd <project-root>
 mkdir -p models/voices
 cd models/voices
 
-# English (default)
 python3 -m piper.download_voices en_US-lessac-medium
-
-# Indonesian (used as Tagalog substitute)
-python3 -m piper.download_voices id_ID-news_tts-medium
 ```
 
-After download:
+To browse other available voices: `python3 -m piper.download_voices --list`.
+
+### Tagalog — MMS-TTS
+
+Downloaded as a local snapshot rather than resolved from the Hub at
+runtime, so a Pi with no network still starts and the model in use is the
+one that was tested:
+
+```bash
+cd <project-root>/models/voices
+pip install huggingface_hub          # if not already present
+python3 -c "
+from huggingface_hub import snapshot_download
+snapshot_download('facebook/mms-tts-tgl', local_dir='mms-tts-tgl')
+"
+```
+
+After both downloads:
 
 ```
 models/voices/
 ├── en_US-lessac-medium.onnx           # ~63 MB
 ├── en_US-lessac-medium.onnx.json      # ~5 KB
-├── id_ID-news_tts-medium.onnx         # ~60 MB
-└── id_ID-news_tts-medium.onnx.json    # ~5 KB
+└── mms-tts-tgl/                       # ~145 MB
+    ├── config.json
+    ├── model.safetensors
+    ├── tokenizer_config.json
+    └── vocab.json
 ```
 
-To browse other available voices:
+If `models/voices/mms-tts-tgl/` is missing, startup aborts with a
+`FileNotFoundError` naming the path — the same failure mode as a missing
+Piper voice.
 
-```bash
-python3 -m piper.download_voices --list
-```
+## Tagalog numerals
+
+MMS is a **character-level** model: its vocabulary is 43 characters and it
+has no text frontend at all. Two consequences shape how messages are
+written.
+
+**Numbers must already be words.** Piper expands "90" via espeak-ng; MMS
+does not. Digits are technically in the vocabulary, but the MMS-lab corpus
+spells numbers out, so they are effectively untrained and their
+pronunciation is unpredictable. `intents/messages.py` therefore spells
+every Tagalog numeral out before it reaches the engine —
+`tagalog_number(90)` is `"siyamnapu"`. English keeps its digits, because
+espeak-ng handles them correctly for the English voice.
+
+**Native numerals, not Spanish-derived.** Filipinos commonly use the
+Spanish-derived set for measurements ("nobenta metro", "dos"). Both are
+idiomatic; native was chosen so the catalogue stays in one register rather
+than mixing two.
+
+**Tagalog links numerals to nouns.** "dalawa upuan" is ungrammatical — it
+must be "dalawang upuan". The linker has three forms selected by the
+numeral's final sound (`-ng` after a vowel, `-g` after `-n`, separate word
+`na` otherwise), so the number changes the shape of the sentence around
+it. `tagalog_counter` produces the linked form that templates interpolate.
+`intents/tests/unit/test_tagalog_numbers.py` asserts the spelling of every
+rule, including the `daan`/`raan` alternation in the hundreds.
+
+**Sentence punctuation is dropped.** No period, comma or question mark is
+in the vocabulary, so a three-sentence message would render as one
+run-on breath. `MmsTTS` splits on sentence boundaries and inserts 250 ms
+of real silence between them, which is the phrasing espeak-ng gives Piper
+for free.
 
 ## Whisper models — automatic on first use
 

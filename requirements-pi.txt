@@ -28,6 +28,15 @@ torch==2.6.0
 torchvision==0.21.0
 ultralytics>=8.0
 
+# Tagalog text-to-speech: Meta MMS-TTS (`facebook/mms-tts-tgl`), a VITS
+# checkpoint run through transformers' `VitsModel`. It rides on the torch
+# install above rather than adding a second inference runtime, which is why
+# this is the cheap option — transformers is the only new package.
+#
+# The weights are downloaded separately (see docs/voice.md) and loaded from
+# a local directory, so nothing here reaches the network at runtime.
+transformers>=4.33
+
 # Tesseract OCR — printed-text reader for the `vision.read` intent.
 # The binary + language packs come from apt:
 #   sudo apt install -y tesseract-ocr tesseract-ocr-tgl

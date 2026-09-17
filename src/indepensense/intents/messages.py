@@ -15,7 +15,7 @@ wearable going silent mid-sentence.
 On the Tagalog
 --------------
 
-Two deliberate choices a reader should know about.
+Three deliberate choices a reader should know about.
 
 **Object labels stay in English.** YOLO emits COCO class names
 ("person", "traffic light"), and Manila speech code-switches freely —
@@ -26,15 +26,25 @@ everything else falls through to English on purpose, not by omission.
 
 **Tagalog nouns are not inflected for number.** English needs
 "a chair" / "2 chairs"; Tagalog uses the bare noun with a counter
-("isang upuan", "2 upuan"). So the scene description takes a different
-code path per language rather than a shared pluraliser — see
+("isang upuan", "dalawang upuan"). So the scene description takes a
+different code path per language rather than a shared pluraliser — see
 `count_label`.
+
+**Tagalog numbers are spelled out; English ones are not.** A digit is
+pronounced by the TTS engine's own text frontend, in the language that
+engine thinks it is speaking — which for Tagalog is never Tagalog. See
+the `tagalog_number` section below for what that was doing to navigation
+cues. Spelling the numeral out also drags in grammar English does not
+have: a Tagalog numeral must be *linked* to the noun it counts, and the
+linker's form depends on the number, so "{value} metro" is "siyamnapung
+metro" but "apat na raang metro".
 """
 import math
 import sys
 
-# Languages this catalogue covers. Keep in step with `config.PIPER_VOICES`,
-# `config.WHISPER_MODELS` and `config.OCR_LANGUAGES`.
+# Languages this catalogue covers. Keep in step with `config.PIPER_VOICES`
+# plus `config.MMS_VOICES` (TTS is split across two engines — see
+# voice/router.py), `config.WHISPER_MODELS` and `config.OCR_LANGUAGES`.
 LANGUAGES = ("en", "tl")
 
 FALLBACK_LANGUAGE = "en"
@@ -61,7 +71,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "distance.one_kilometer": {
         "en": "1 kilometer",
-        "tl": "1 kilometro",
+        "tl": "isang kilometro",
     },
 
     # --- hardware the user is told to touch ---------------------------------
@@ -528,6 +538,141 @@ _TL_LABELS: dict[str, str] = {
     "traffic light": "traffic light",
 }
 
+
+# --- Tagalog numerals -------------------------------------------------------
+#
+# Numbers reach the user as digits inside a template ("{value} metro"), and
+# what turns a digit into a sound is the TTS engine's own text frontend --
+# which speaks the *voice's* language, not ours. The `tl` slot is filled by
+# an Indonesian Piper voice, so espeak-ng expands "90" with Indonesian
+# number rules and the wearable says "sembilan puluh metro" in the middle of
+# a Tagalog sentence. That is not an accent, it is the wrong language on the
+# most safety-relevant word in a navigation cue.
+#
+# Spelling the number out here makes the output independent of whichever
+# engine speaks it, which also removes the problem from the MMS-TTS switch:
+# that model is character-level with no number expansion at all.
+#
+# Native Tagalog numerals were chosen over the Spanish-derived set
+# ("nobenta", "dos") that Filipinos often use for measurements. Both are
+# idiomatic; native keeps the catalogue in one register rather than mixing
+# two, and is the form a Tagalog-speaking examiner will expect to see
+# justified.
+
+_TL_ONES = (
+    "sero", "isa", "dalawa", "tatlo", "apat",
+    "lima", "anim", "pito", "walo", "siyam",
+)
+
+# 11-19 are a table rather than "labing" + unit because the final -ng
+# assimilates to the following consonant (labin-, labim-, labing-) and the
+# spelling is conventional, not derivable. A table is also what a reader
+# can check against a dictionary.
+_TL_TEENS = (
+    "sampu", "labing-isa", "labindalawa", "labintatlo", "labing-apat",
+    "labinlima", "labing-anim", "labimpito", "labingwalo", "labinsiyam",
+)
+
+# Multiples of ten. The stems are irregular (tatlo -> tatlum, apat ->
+# apatna), so these are spelled out too.
+_TL_TENS = (
+    "", "sampu", "dalawampu", "tatlumpu", "apatnapu",
+    "limampu", "animnapu", "pitumpu", "walumpu", "siyamnapu",
+)
+
+_TL_VOWELS = "aeiou"
+
+
+def tagalog_ligature(word: str) -> str:
+    """Attach the linker that binds a Tagalog modifier to what it modifies.
+
+    Tagalog does not juxtapose a number and a noun the way English does:
+    "dalawa upuan" is ungrammatical, it must be "dalawang upuan". The
+    linker has three forms chosen by the modifier's final sound — "-ng"
+    after a vowel, "-g" after -n, and a separate word "na" after any other
+    consonant.
+
+    This is why the number cannot simply be substituted into "{value}
+    metro" as a word: the grammar of the sentence changes with the number
+    spoken in it.
+    """
+    if word.endswith(tuple(_TL_VOWELS)):
+        return word + "ng"
+    if word.endswith("n"):
+        return word + "g"
+    return word + " na"
+
+
+def tagalog_number(n: int) -> str:
+    """Spell a non-negative integer in native Tagalog numerals.
+
+    Covers 0-9999, which bounds every number this system speaks: distances
+    under a kilometre are spoken in metres (so at most 999), distances above
+    it are converted to kilometres first, and object counts are single
+    digits. Beyond that the value is returned as digits — the wearable
+    keeps talking, and nothing in the current system can reach it.
+    """
+    if n < 0 or n > 9999:
+        return str(n)
+    if n < 10:
+        return _TL_ONES[n]
+    if n < 20:
+        return _TL_TEENS[n - 10]
+    if n < 100:
+        tens, ones = divmod(n, 10)
+        if ones == 0:
+            return _TL_TENS[tens]
+        # Every tens word ends in -u, so the enclitic "'t" always applies;
+        # there is no consonant case here needing a separate " at ".
+        return f"{_TL_TENS[tens]}'t {_TL_ONES[ones]}"
+    if n < 1000:
+        return _tl_group(n, 100, "daan", "raan", "sandaan")
+    return _tl_group(n, 1000, "libo", "libo", "sanlibo")
+
+
+def _tl_group(n: int, size: int, noun: str, after_na: str, one: str) -> str:
+    """Render `n` as "<count> <noun> at <remainder>" for hundreds/thousands.
+
+    `one` is the fused word for a single group ("sandaan", "sanlibo") — a
+    lexical irregularity, not "isang daan".
+
+    `after_na` is the form the noun takes when the count's linker is the
+    separate word "na": "daan" lenites to "raan" (apat na raan, not apat na
+    daan) because Tagalog softens d to r between vowels. "libo" has no such
+    alternation, so it passes the same form twice rather than the rule
+    being inferred from the spelling.
+    """
+    count, remainder = divmod(n, size)
+    if count == 1:
+        head = one
+    else:
+        linked = tagalog_ligature(tagalog_number(count))
+        head = f"{linked} {after_na if linked.endswith(' na') else noun}"
+    if remainder == 0:
+        return head
+    return f"{head} at {tagalog_number(remainder)}"
+
+
+def tagalog_counter(value: int | float) -> str:
+    """Spell a number as the linked modifier of the noun that follows it.
+
+    This is the form that goes into a "{value} <noun>" template: the caller
+    writes "{value} metro" and gets "siyamnapung metro".
+
+    Decimals are spoken "<whole> punto <fraction>" — 8.2 km is "walo punto
+    dalawang kilometro". The whole part takes no linker because a decimal
+    is read as a sequence of numbers rather than as one number modifying
+    another; only the last word before the noun is linked. Exactly one
+    decimal place can occur: `speak_distance` rounds to 100 m before
+    dividing by 1000, so the fraction is always a single digit.
+    """
+    if isinstance(value, float) and value != int(value):
+        whole, fraction = f"{value:.1f}".split(".")
+        fraction_word = tagalog_ligature(tagalog_number(int(fraction)))
+        return f"{tagalog_number(int(whole))} punto {fraction_word}"
+    return tagalog_ligature(tagalog_number(int(value)))
+
+
 # Vowels that take "an" instead of "a" in English.
 _ENGLISH_VOWELS = "aeiou"
 
@@ -560,15 +705,13 @@ def english_plural(label: str, count: int) -> str:
 def count_label(label: str, count: int, language: str) -> str:
     """Render "<count> <label>" with that language's number grammar.
 
-    English inflects the noun. Tagalog does not — it uses the bare noun
-    with a counter, and "isang" for one. This is why scene description
-    cannot share a single pluraliser across languages.
+    English inflects the noun and leaves the numeral as a digit. Tagalog
+    does neither: the noun stays bare and the numeral is spelled out and
+    linked to it ("dalawang upuan"). This is why scene description cannot
+    share a single pluraliser across languages.
     """
     if language == "tl":
-        translated = _TL_LABELS.get(label, label)
-        if count == 1:
-            return f"isang {translated}"
-        return f"{count} {translated}"
+        return f"{tagalog_counter(count)} {_TL_LABELS.get(label, label)}"
     return english_plural(label, count)
 
 
@@ -623,10 +766,14 @@ def speak_distance(metres: float, language: str) -> str:
     The unit word comes from the catalogue above rather than being
     concatenated here, so Tagalog is a translation rather than a special
     case, and the one-kilometre singular stays correct in English.
+
+    English keeps the digits — espeak-ng expands them correctly for the
+    English voice. Tagalog cannot, for the reasons set out above
+    `tagalog_number`, so the value goes in already spelled out.
     """
     rounded_m = round_speech_distance(metres)
     if rounded_m < _KILOMETRE_M:
-        return get("distance.meters", language, value=rounded_m)
+        return get("distance.meters", language, value=_speech_value(rounded_m, language))
 
     km = rounded_m / 1000.0
     if rounded_m >= _WHOLE_KILOMETRE_M:
@@ -639,7 +786,14 @@ def speak_distance(metres: float, language: str) -> str:
 
     if value == 1:
         return get("distance.one_kilometer", language)
-    return get("distance.kilometers", language, value=value)
+    return get("distance.kilometers", language, value=_speech_value(value, language))
+
+
+def _speech_value(value: int | float, language: str) -> str:
+    """The form a number takes inside a template, for the given language."""
+    if language == "tl":
+        return tagalog_counter(value)
+    return str(value)
 
 
 def join_items(items: list[str], language: str) -> str:

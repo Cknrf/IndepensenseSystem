@@ -85,14 +85,15 @@ def test_tagalog_does_not_inflect_nouns():
     """Tagalog marks number with a counter, not by changing the noun.
     Pluralising the English way would invent words that don't exist."""
     assert messages.count_label("chair", 1, "tl") == "isang upuan"
-    assert messages.count_label("chair", 3, "tl") == "3 upuan"
-    assert messages.count_label("person", 4, "tl") == "4 tao"
+    assert messages.count_label("chair", 3, "tl") == "tatlong upuan"
+    assert messages.count_label("person", 4, "tl") == "apat na tao"
 
 
 def test_untranslated_labels_fall_through_to_english():
     """Deliberate: Manila speech code-switches, and forcing a Tagalog
-    coinage for every COCO class would sound worse than the English word."""
-    assert messages.count_label("skateboard", 2, "tl") == "2 skateboard"
+    coinage for every COCO class would sound worse than the English word.
+    The counter is still Tagalog — only the noun code-switches."""
+    assert messages.count_label("skateboard", 2, "tl") == "dalawang skateboard"
 
 
 def test_join_uses_the_right_conjunction():
@@ -176,14 +177,23 @@ def test_long_distances_drop_the_decimal_entirely():
 
 
 def test_tagalog_uses_its_own_unit_words():
-    assert messages.speak_distance(412, "tl") == "400 metro"
-    assert messages.speak_distance(8200, "tl") == "8.2 kilometro"
+    assert messages.speak_distance(412, "tl") == "apat na raang metro"
+    assert messages.speak_distance(8200, "tl") == "walo punto dalawang kilometro"
 
 
 def test_tagalog_does_not_inflect_the_singular():
     """Tagalog nouns are not inflected for number, so one kilometre reads
-    the same as any other count — unlike English."""
-    assert messages.speak_distance(1000, "tl") == "1 kilometro"
+    the same as any other count — unlike English, where the unit changes."""
+    assert messages.speak_distance(1000, "tl") == "isang kilometro"
+    assert messages.speak_distance(2000, "tl") == "dalawang kilometro"
+
+
+def test_english_distances_stay_as_digits():
+    """espeak-ng expands digits correctly for the English voice, so there
+    is nothing to gain from spelling them out — and a regression here would
+    mean the Tagalog path had leaked into English."""
+    assert messages.speak_distance(412, "en") == "400 meters"
+    assert messages.speak_distance(8200, "en") == "8.2 kilometers"
 
 
 def test_every_language_renders_every_magnitude():

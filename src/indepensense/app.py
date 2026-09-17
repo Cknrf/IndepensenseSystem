@@ -146,6 +146,7 @@ from indepensense.config import (
     MAG_SCALE_X,
     MAG_SCALE_Y,
     MAG_SCALE_Z,
+    MMS_VOICES,
     MPU6050_ADDRESS,
     MPU6050_I2C_BUS,
     NLU_MODEL,
@@ -238,7 +239,8 @@ from indepensense.voice.audio import (
     record_until_button,
     stop_playback,
 )
-from indepensense.voice.piper import PiperTTS
+from indepensense.voice.base import TTSEngine
+from indepensense.voice.router import MultiEngineTTS, build_tts
 from indepensense.voice.volume import VolumeState
 from indepensense.voice.whisper import FasterWhisperSTT
 
@@ -506,7 +508,7 @@ class App:
         self.imu: MPU6050 | None = None
         self.detector: ThresholdFallDetector | None = None
         self.stt: FasterWhisperSTT | None = None
-        self.tts: PiperTTS | None = None
+        self.tts: TTSEngine | None = None
         self.parser: OllamaIntentParser | None = None
         self.places: SavedPlaces | None = None
         self.volume: VolumeState | None = None
@@ -605,7 +607,7 @@ class App:
         print("  Loading Whisper models...", flush=True)
         self.stt = self._open_stt()
 
-        print("  Loading Piper voices...", flush=True)
+        print("  Loading TTS voices (Piper + MMS)...", flush=True)
         self.tts = self._open_tts()
 
         # Started as soon as TTS exists so anything that wants to speak
@@ -1921,8 +1923,15 @@ class App:
     def _open_stt(self) -> FasterWhisperSTT:
         return FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
 
-    def _open_tts(self) -> PiperTTS:
-        return PiperTTS(voices=PIPER_VOICES)
+    def _open_tts(self) -> MultiEngineTTS:
+        """English through Piper, Tagalog through MMS, behind one interface.
+
+        Both are loaded up front rather than on first use. Loading either
+        takes seconds, and the first thing that speaks is the startup
+        greeting — a lazy load would put that cost in front of the user
+        every time they switched language instead.
+        """
+        return build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES)
 
     def _open_parser(self) -> OllamaIntentParser:
         return OllamaIntentParser(

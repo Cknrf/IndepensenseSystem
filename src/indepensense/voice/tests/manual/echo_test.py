@@ -13,14 +13,15 @@ import time
 from datetime import datetime
 
 from indepensense.config import (
-    PIPER_VOICES,
     DEFAULT_LANGUAGE,
+    MMS_VOICES,
+    PIPER_VOICES,
     VOICE_TEST_DIR,
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
 )
 from indepensense.voice.audio import play, record
-from indepensense.voice.piper import PiperTTS
+from indepensense.voice.router import build_tts
 from indepensense.voice.whisper import FasterWhisperSTT
 
 RECORDING_DURATION_S = 25.0
@@ -31,9 +32,9 @@ def main():
     input_path = VOICE_TEST_DIR / f"{timestamp}_input.wav"
     echo_path = VOICE_TEST_DIR / f"{timestamp}_echo.wav"
 
-    print(f"Loading Whisper models {WHISPER_MODELS} and Piper voices {sorted(PIPER_VOICES)}...")
+    print(f"Loading Whisper {WHISPER_MODELS}, Piper {sorted(PIPER_VOICES)}, MMS {sorted(MMS_VOICES)}...")
     stt = FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
-    tts = PiperTTS(voices=PIPER_VOICES)
+    tts = build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES)
 
     input(f"Ready. Press Enter to start recording {RECORDING_DURATION_S:.0f} seconds. ")
     print("Recording... speak now.")

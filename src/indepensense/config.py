@@ -382,14 +382,23 @@ GEOCODE_CANDIDATE_LIMIT = 10
 
 # Voice — see docs/voice.md for model downloads.
 #
-# Piper does not yet ship a native Filipino/Tagalog voice. As a workaround the
-# Indonesian voice `id_ID-news_tts-medium` is used to synthesise Tagalog text
-# (both are Austronesian languages with matching vowel systems). Language
-# switching between English and Tagalog is not wired up yet — the multi-voice
-# structure is in place so it can be enabled later without refactoring.
+# TTS is two engines, not one. Piper has no Filipino/Tagalog voice, so the
+# `tl` slot was an Indonesian voice standing in on shared Austronesian
+# phonology — intelligible but audibly not Tagalog, and its espeak-ng
+# frontend read digits out as Indonesian numbers. Tagalog now uses Meta's
+# natively-trained `facebook/mms-tts-tgl`. `MultiEngineTTS` in
+# voice/router.py is what puts the two behind one interface.
+#
+# Together these two dicts must cover `intents.messages.LANGUAGES`.
 PIPER_VOICES = {
     "en": PROJECT_ROOT / "models" / "voices" / "en_US-lessac-medium.onnx",
-    "tl": PROJECT_ROOT / "models" / "voices" / "id_ID-news_tts-medium.onnx",
+}
+
+# One MMS checkpoint per language, as a local snapshot of the Hugging Face
+# repo. Licensed CC-BY-NC 4.0 — fine for academic use, but a commercial
+# build would need a differently-licensed Tagalog voice.
+MMS_VOICES = {
+    "tl": PROJECT_ROOT / "models" / "voices" / "mms-tts-tgl",
 }
 WHISPER_MODEL_DIR = PROJECT_ROOT / "models" / "whisper"
 
