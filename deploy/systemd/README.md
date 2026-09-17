@@ -35,6 +35,33 @@ For dev work you may prefer to leave `indepensense.service` disabled and
 run the app by hand (`python -m indepensense.app`) so you can iterate.
 Enable it once you're ready to demo boot-to-wearable.
 
+### Audio needs one extra step — read this before demoing
+
+The wearable talks through **PipeWire, which is a per-user session
+service**. Running the app by hand works because a login shell already has
+`XDG_RUNTIME_DIR` pointing at the session. A systemd *system* service does
+not, so without the two steps below the wearable boots, reads every sensor,
+classifies every command — **and says nothing at all**. It is a silent
+failure, and by far the easiest way to lose a demo.
+
+`indepensense.service` already sets the variable. The other half is making
+sure the session it points at exists without anybody logging in:
+
+```bash
+sudo loginctl enable-linger cknrf
+```
+
+Verify after a reboot, with no keyboard attached and nobody logged in:
+
+```bash
+ls /run/user/1000/pipewire-0          # the socket must exist
+journalctl -u indepensense | grep -i "could not set sink volume"
+```
+
+An empty grep and an audible greeting mean it is working. If the greeting
+is silent, this is the first thing to check — before suspecting the audio
+device, the Piper voices, or the code.
+
 ## Verify
 
 Check status:

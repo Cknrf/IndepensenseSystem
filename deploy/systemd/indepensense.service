@@ -13,6 +13,18 @@ Group=cknrf
 SupplementaryGroups=dialout i2c gpio
 WorkingDirectory=/home/cknrf/Desktop/thesis/IndepensenseSystem
 Environment="PYTHONUNBUFFERED=1"
+# Where PipeWire's socket lives. Without this the wearable starts, reads
+# every sensor, classifies every command — and is completely silent,
+# because `sounddevice` and `wpctl` both look for `$XDG_RUNTIME_DIR/pipewire-0`
+# and a system service inherits no session environment. Running the app by
+# hand hides the problem: a login shell already has this set.
+#
+# `%U` expands to the numeric UID of `User=` above, so this stays correct
+# if the account ever changes.
+#
+# It is only half the fix — the directory exists only while that user has a
+# session. See `loginctl enable-linger` in this directory's README.
+Environment="XDG_RUNTIME_DIR=/run/user/%U"
 ExecStart=/home/cknrf/Desktop/thesis/IndepensenseSystem/.venv/bin/python -m indepensense.app
 Restart=on-failure
 RestartSec=5
