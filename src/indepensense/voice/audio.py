@@ -9,11 +9,51 @@ headphones (AirPods) is an OS-level concern, not a Python concern.
 Both `record` and `play` are blocking. Callers that need concurrency (e.g. a
 polling loop that must keep reading sensors while audio plays) should invoke
 them from a separate thread.
+
+Thread safety
+-------------
+Every function here creates its own `sounddevice` stream and is the only
+thing that ever closes it. None of them use the module-level `sd.play`,
+`sd.rec` or `sd.stop`.
+
+That rule exists because ignoring it crashed the wearable. `sounddevice`
+keeps *one* global playback context: `sd.play()` begins by calling the
+global `sd.stop()`, which stops **and closes** whatever stream that global
+currently points at, and `sd.stop()` does the same when called directly.
+Three of our threads reach playback — the announcer, a voice thread, and
+gpiozero's button callbacks — so a PTT chime could close the announcer's
+live stream, leaving the announcer to close the same PortAudio stream a
+second time on its way out. That is a double free in C, and it aborted the
+process: `double free or corruption (out)`.
+
+A lock alone would not have fixed it, because `stop_playback` has to
+interrupt a thread that holds the lock. Owning the stream does: playback is
+serialised by `_playback_lock`, and stopping is a flag the *playing* thread
+reads, not a call another thread makes into PortAudio. No thread can close a
+stream it did not open, by construction rather than by discipline.
 """
 import threading
 from pathlib import Path
 
 DEFAULT_SAMPLERATE_HZ = 16000   # Whisper expects 16 kHz mono; Piper output is resampled at playback time
+
+# Frames per `write` call. This is the granularity at which playback notices
+# `stop_playback`, so it sets the stop latency: 512 frames is ~23 ms at
+# 22050 Hz, far below what anyone perceives as a delay when they ask the
+# wearable to be quiet. Smaller would risk under-runs (audible clicks) for
+# no benefit the user could hear.
+_BLOCK_FRAMES = 512
+
+# Serialises playback. Two concurrent output streams on one device do not
+# crash — they talk over each other, which for this wearable is the same
+# failure the announcer exists to prevent. Held for the length of an
+# utterance, so callers queue rather than overlap.
+_playback_lock = threading.Lock()
+
+# Set by `stop_playback`, read by whichever thread is inside the write loop.
+# Cleared at the start of each playback so a stale request cannot silence
+# the next utterance.
+_stop_requested = threading.Event()
 
 # Set while `play` has speech on the speaker. Tracked here rather than asked
 # of PortAudio because `sounddevice` exposes no reliable "is anything
@@ -47,19 +87,34 @@ def record(
     Records into a numpy int16 array from the default input device, then
     writes as 16-bit PCM WAV. This matches what faster-whisper prefers for
     input.
+
+    Reads an owned `InputStream` rather than calling `sd.rec`, which routes
+    through the same module-level context `sd.play` does — recording would
+    then close a stream the speaker was still using. The two sibling
+    recorders below already worked this way; this one was the last caller of
+    sounddevice's global state.
     """
+    import numpy as np
     import sounddevice as sd
     import soundfile as sf
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    frames = int(duration_s * samplerate)
-    audio = sd.rec(
-        frames,
+    remaining = int(duration_s * samplerate)
+    blocks: list = []
+
+    stream = sd.InputStream(
         samplerate=samplerate,
         channels=channels,
         dtype="int16",
-        blocking=True,
+        blocksize=_BLOCK_FRAMES,
     )
+    with stream:
+        while remaining > 0:
+            data, _overflowed = stream.read(min(_BLOCK_FRAMES, remaining))
+            blocks.append(data.copy())
+            remaining -= len(data)
+
+    audio = np.concatenate(blocks, axis=0)
     sf.write(str(output_path), audio, samplerate, subtype="PCM_16")
 
 
@@ -212,53 +267,87 @@ def wait_for_button_press(button, prompt: str | None = None) -> None:
     got_press.wait()
 
 
+def _write_blocks(audio, samplerate: int) -> None:
+    """Push an audio array to the speaker, one block at a time.
+
+    The whole of this module's output path. The stream is created, written
+    and closed inside this one function, which is what makes the ownership
+    rule in the module docstring true: nothing else holds a reference to it.
+
+    `audio` is 2-D, `(frames, channels)` — `always_2d=True` on the read side
+    and an explicit reshape for the chime, so the channel count is something
+    we read off the data rather than assume.
+
+    Checks `_stop_requested` between blocks and `abort()`s rather than
+    `stop()`s on the way out: `stop()` drains the buffer, which would keep
+    talking for a few dozen milliseconds after the user asked for silence.
+    """
+    import sounddevice as sd
+
+    channels = audio.shape[1]
+    stream = sd.OutputStream(
+        samplerate=samplerate,
+        channels=channels,
+        dtype="float32",
+        blocksize=_BLOCK_FRAMES,
+    )
+    # `with` starts the stream and closes it exactly once, on every exit
+    # path including an exception. That single close is the invariant the
+    # old `sd.play` global broke.
+    with stream:
+        for start in range(0, len(audio), _BLOCK_FRAMES):
+            if _stop_requested.is_set():
+                stream.abort()
+                return
+            stream.write(audio[start:start + _BLOCK_FRAMES])
+
+
 def play(audio_path: Path) -> None:
     """Play a WAV file through the default output device.
 
-    Reads the file's actual sample rate (Piper voices are typically 22050 Hz)
-    and hands both the array and rate to sounddevice so it doesn't need to
-    resample.
+    Reads the file's actual sample rate (Piper voices are 22050 Hz, MMS
+    16000 Hz) and plays at it, so nothing has to resample.
+
+    Blocking, and serialised against every other caller: if the announcer is
+    mid-sentence, a second `play` waits rather than cutting it off.
     """
-    import sounddevice as sd
     import soundfile as sf
 
-    audio, samplerate = sf.read(str(audio_path))
-    _playing.set()
-    try:
-        sd.play(audio, samplerate=samplerate, blocking=True)
-    finally:
-        # Cleared even when `stop_playback` aborted us, so a cut-off
-        # announcement doesn't leave the wearable believing it is still
-        # talking — every later stop press would then be swallowed.
-        _playing.clear()
+    # Read outside the lock — file I/O doesn't need serialising, and holding
+    # the lock across it would make every queued utterance wait on a disk read.
+    audio, samplerate = sf.read(str(audio_path), dtype="float32", always_2d=True)
+
+    with _playback_lock:
+        _stop_requested.clear()
+        _playing.set()
+        try:
+            _write_blocks(audio, samplerate)
+        finally:
+            # Cleared even when `stop_playback` cut us short, so a truncated
+            # announcement doesn't leave the wearable believing it is still
+            # talking — every later stop press would then be swallowed.
+            _playing.clear()
 
 
 def stop_playback() -> None:
-    """Abort whatever is currently playing, from any thread.
+    """Cut short whatever is currently playing, from any thread.
 
-    `play` and `play_chime` block on `sd.play(..., blocking=True)`, which
-    internally waits on the stream. `sd.stop()` aborts that stream, so the
-    blocked call returns early — this is PortAudio's intended way to
-    interrupt playback and the only one available to us, since the playing
-    thread is by definition not running Python while it waits.
+    Sets a flag; the thread inside `_write_blocks` sees it at the next block
+    boundary (~23 ms) and aborts its own stream. That indirection is the
+    whole point — see the module docstring. Calling into PortAudio from here
+    is what produced the double free, because the playing thread would then
+    close a stream this one had already closed.
 
-    Deliberately global rather than per-stream: `sounddevice` keeps one
-    default output stream, and every caller here uses it. A critical alert
-    needs to cut off whatever is speaking without knowing who started it.
+    Only affects playback already in progress. Anything queued behind the
+    lock starts fresh, and dropping *pending* speech is the announcer's job
+    (`Announcer.clear`), not this function's.
 
-    Safe to call when nothing is playing — `sd.stop()` is a no-op then.
-    Never raises; interrupting speech must not itself become a failure.
+    Safe to call when nothing is playing: the flag is cleared by the next
+    playback before it writes anything. Cannot raise — it touches no audio
+    library at all, which is also why it works unchanged on a dev machine
+    with no audio stack installed.
     """
-    try:
-        import sounddevice as sd
-    except Exception as exc:
-        # No audio stack (dev machine without the extras) — nothing to stop.
-        print(f"[audio] cannot stop playback: {exc}", flush=True)
-        return
-    try:
-        sd.stop()
-    except Exception as exc:
-        print(f"[audio] stop failed: {exc}", flush=True)
+    _stop_requested.set()
 
 
 def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
@@ -274,10 +363,12 @@ def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
     is deliberately kept at 30% peak so the chime is noticeable but not
     startling.
 
-    Blocking, ~120 ms by default. Cheap to generate (<10 ms of CPU).
+    Blocking, ~120 ms by default. Cheap to generate (<10 ms of CPU). Takes
+    the same playback lock as `play`: the chime runs on gpiozero's button
+    callback thread, and it overlapping the announcer is precisely what
+    crashed the wearable before the stream became ours.
     """
     import numpy as np
-    import sounddevice as sd
 
     samplerate = 22050
     n_samples = int(samplerate * duration_s)
@@ -298,5 +389,11 @@ def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
         wave[:fade_samples] *= np.linspace(0.0, 1.0, fade_samples)
         wave[-fade_samples:] *= np.linspace(1.0, 0.0, fade_samples)
 
-    audio = (wave * 32767).astype(np.int16)
-    sd.play(audio, samplerate=samplerate, blocking=True)
+    # Mono, but shaped (frames, 1) — `_write_blocks` reads the channel count
+    # off the array rather than assuming one.
+    audio = wave.astype(np.float32).reshape(-1, 1)
+
+    with _playback_lock:
+        _stop_requested.clear()
+        # Deliberately does not set `_playing` — see the comment on that flag.
+        _write_blocks(audio, samplerate)

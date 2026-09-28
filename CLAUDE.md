@@ -32,6 +32,8 @@ How Claude collaborates on this thesis project.
 
    Two sub-steps run on the **voice thread** and block only it: destination confirmation and turn-to-face orientation. Both are bounded, both abort on an emergency press, and both borrow the PTT button and hand it back in a `finally`.
 
+   **Every `sounddevice` stream is owned by the function that created it, and nothing else closes it.** `voice/audio.py` never calls the module-level `sd.play`, `sd.rec` or `sd.stop` — those route through one global context that `sd.play` *closes* on entry, so a PTT chime on gpiozero's callback thread closed the announcer's live stream and the announcer then closed it again. That is a double free in C: the process aborted with `double free or corruption (out)` and no Python traceback. Playback is serialised by a lock in `audio.py`, and `stop_playback()` sets a flag the *playing* thread reads rather than calling into PortAudio from outside. A lock alone would not do — stopping has to interrupt the thread holding it.
+
 2. **Hardware abstraction.** Every device has a `Protocol` interface in its module's `base.py`, a real driver (e.g. `dyp_a22.py`), and a mock (`mock.py`). Application code depends on the protocol, never the concrete driver.
 
    In `app.py` this is enforced by a single rule: **every device is constructed in an `_open_*` / `_try_open_*` factory method and nowhere else.** `start()` calls the factories but never a driver constructor. That is what lets `app_mock.py` subclass `App`, override only the factories, and run the whole runtime on a Mac with the loop, threads and decision logic inherited untouched. Add a device, add a factory — an inline constructor in `start()` silently drops it out of mock coverage.
