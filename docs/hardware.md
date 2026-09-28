@@ -18,6 +18,7 @@ here, then read that component's section.
 Pin 1  (3V3)              DYP-A22 TOP          VCC   — also feeds the 3.3 V rail
 Pin 2  (5V)               MPU6050              VCC   — and the motors' 5 V rail
 Pin 3  (GPIO 2 / SDA)     shared I2C1          SDA   — MPU6050, compass, UPS HAT
+Pin 4  (5V)               Perfboard
 Pin 5  (GPIO 3 / SCL)     shared I2C1          SCL   — MPU6050, compass, UPS HAT
 Pin 6  (GND)              DYP-A22 TOP          GND
 Pin 8  (GPIO 14 / TX)     DYP-A22 TOP          RX
@@ -74,16 +75,7 @@ destroyed by copying the MPU6050's Pin 2.
        GND (39) (40) GPIO21
 ```
 
-Pin 1 (3.3V ultrasonic sensor and compass) 
-Pin 2 (5V from perfboard)
-Pin 3 (SDA for mpu and compass)
-Pin 4 (5V mpu)
-Pin 5 (SCL for mpu and compass)
-Pin 6 (GND ultrasonic 1)
-Pin 7 (none)
-Pin 8 (TX ultrasonic 1 Yellow)
-Pin 9 (GND for mpu)
-Pin 10 
+
 
 
 
