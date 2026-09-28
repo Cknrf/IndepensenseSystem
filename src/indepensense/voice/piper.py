@@ -1,17 +1,14 @@
 """Piper text-to-speech driver.
 
 The driver holds one or more ONNX voices keyed by language code and picks
-which voice to use for each synthesis call. This keeps the door open for
-switching between English and Filipino output without reloading models —
-loading a voice takes several seconds, so we do it once at construction and
-select per call thereafter.
+which voice to use for each synthesis call. Loading a voice takes several
+seconds, so we do it once at construction and select per call thereafter.
 
-Piper does not currently publish a Filipino/Tagalog voice. In this project
-the `tl` slot is filled with an Indonesian voice (`id_ID-news_tts-medium`).
-Indonesian and Filipino are both Austronesian, share the same 5-vowel
-system, and produce intelligible Tagalog output even though the accent is
-not native. This is documented as a workaround in `docs/voice.md`; a
-switch to Meta MMS-TTS is future work.
+Piper publishes no Filipino/Tagalog voice, so in this project it speaks
+English only — Tagalog goes to `MmsTTS`, and `MultiEngineTTS` in
+`router.py` is what puts the two behind one interface. The per-language
+map is kept here anyway: it costs nothing, and it is what lets the router
+hand this driver a language code without caring which engine it reached.
 """
 import wave
 from pathlib import Path
