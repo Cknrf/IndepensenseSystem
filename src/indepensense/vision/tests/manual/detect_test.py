@@ -12,8 +12,6 @@ import time
 from indepensense.config import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
-    CAMERA_SENSOR_MODE_HEIGHT,
-    CAMERA_SENSOR_MODE_WIDTH,
     CAMERA_WIDTH,
     YOLO_CONFIDENCE_THRESHOLD,
     YOLO_MODEL_PATH,
@@ -30,13 +28,7 @@ def main():
         model_path=YOLO_MODEL_PATH,
         confidence_threshold=YOLO_CONFIDENCE_THRESHOLD,
     )
-    camera = PiCamera(
-        width=CAMERA_WIDTH,
-        height=CAMERA_HEIGHT,
-        fps=CAMERA_FPS,
-        sensor_mode_width=CAMERA_SENSOR_MODE_WIDTH,
-        sensor_mode_height=CAMERA_SENSOR_MODE_HEIGHT,
-    )
+    camera = PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
     print(f"Running detection on {NUM_FRAMES} frames at {CAMERA_WIDTH}x{CAMERA_HEIGHT}")
     try:
         for i in range(NUM_FRAMES):

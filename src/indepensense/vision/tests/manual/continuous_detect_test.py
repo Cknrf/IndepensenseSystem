@@ -21,8 +21,6 @@ from collections import Counter
 from indepensense.config import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
-    CAMERA_SENSOR_MODE_HEIGHT,
-    CAMERA_SENSOR_MODE_WIDTH,
     CAMERA_WIDTH,
     YOLO_CONFIDENCE_THRESHOLD,
     YOLO_MODEL_PATH,
@@ -41,13 +39,7 @@ def main():
         confidence_threshold=YOLO_CONFIDENCE_THRESHOLD,
     )
     print(f"Opening camera at {CAMERA_WIDTH}x{CAMERA_HEIGHT}...")
-    camera = PiCamera(
-        width=CAMERA_WIDTH,
-        height=CAMERA_HEIGHT,
-        fps=CAMERA_FPS,
-        sensor_mode_width=CAMERA_SENSOR_MODE_WIDTH,
-        sensor_mode_height=CAMERA_SENSOR_MODE_HEIGHT,
-    )
+    camera = PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
 
     print(f"Continuous detection running (confidence threshold "
           f"{YOLO_CONFIDENCE_THRESHOLD}). Ctrl-C to stop.\n")

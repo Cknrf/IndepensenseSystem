@@ -25,8 +25,6 @@ import time
 from indepensense.config import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
-    CAMERA_SENSOR_MODE_HEIGHT,
-    CAMERA_SENSOR_MODE_WIDTH,
     CAMERA_WIDTH,
     YOLO_CONFIDENCE_THRESHOLD,
     YOLO_MODEL_PATH,
@@ -51,13 +49,7 @@ def main():
     )
 
     print(f"Opening camera at {CAMERA_WIDTH}x{CAMERA_HEIGHT}...")
-    camera = PiCamera(
-        width=CAMERA_WIDTH,
-        height=CAMERA_HEIGHT,
-        fps=CAMERA_FPS,
-        sensor_mode_width=CAMERA_SENSOR_MODE_WIDTH,
-        sensor_mode_height=CAMERA_SENSOR_MODE_HEIGHT,
-    )
+    camera = PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
 
     print("Live detection running. Press 'q' in the window to quit.")
 
