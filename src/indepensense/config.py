@@ -326,8 +326,8 @@ CAMERA_FPS = 15
 #
 # Set both to None to let picamera2 choose, which is only right if you no
 # longer care about field of view.
-CAMERA_SENSOR_MODE_WIDTH = 2304
-CAMERA_SENSOR_MODE_HEIGHT = 1296
+CAMERA_SENSOR_MODE_WIDTH = None
+CAMERA_SENSOR_MODE_HEIGHT = None
 TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 
 # Where `tools/system_performance` writes its CSV logs.
