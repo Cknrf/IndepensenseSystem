@@ -13,6 +13,8 @@ from datetime import datetime
 from indepensense.config import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
+    CAMERA_SENSOR_MODE_HEIGHT,
+    CAMERA_SENSOR_MODE_WIDTH,
     CAMERA_WIDTH,
     TEST_RECORDING_DIR,
 )
@@ -27,7 +29,14 @@ def main():
     filename = datetime.now().strftime("%B-%d-%Y_%H-%M-%S") + ".mp4"
     output_path = TEST_RECORDING_DIR / filename
 
-    camera = PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
+    camera = PiCamera(
+        width=CAMERA_WIDTH,
+        height=CAMERA_HEIGHT,
+        fps=CAMERA_FPS,
+        sensor_mode_width=CAMERA_SENSOR_MODE_WIDTH,
+        sensor_mode_height=CAMERA_SENSOR_MODE_HEIGHT,
+    )
+    print(f"Sensor crop: {camera.sensor_crop()}")
     print(f"Recording {DURATION_SECONDS}s to {output_path}")
     try:
         camera.start_recording(str(output_path))

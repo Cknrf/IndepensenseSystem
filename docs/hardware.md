@@ -552,6 +552,45 @@ python -m indepensense.vision.tests.manual.continuous_detect_test   # slow by de
 Resolution and model size are `CAMERA_WIDTH` / `CAMERA_HEIGHT` and
 `YOLO_MODEL_PATH` in `indepensense.config`.
 
+### Field of view is set by the sensor mode, not the resolution
+
+The fitted part is the **Wide** variant — `--list-cameras` reports
+`imx708_wide`, 120° diagonal. It advertises three modes, and they do not
+all see the same amount of the world:
+
+| Mode | Sensor window | FPS ceiling |
+|---|---|---|
+| 1536×864 | `(768, 432)/3072×1728` — **centre crop** | 120 |
+| 2304×1296 | `(0, 0)/4608×2592` — full sensor | 56 |
+| 4608×2592 | `(0, 0)/4608×2592` — full sensor | 14 |
+
+Left to choose, `picamera2` takes the smallest mode that satisfies the
+requested output, so a 1280×720 request landed on 1536×864 — the cropped
+one. That cost roughly a third of the frame in each dimension (about
+102°→79° horizontal, 70°→50° vertical) on a module bought for its wide
+lens, and it is invisible in the output: a cropped frame looks like a
+perfectly good frame.
+
+`CAMERA_SENSOR_MODE_WIDTH` / `CAMERA_SENSOR_MODE_HEIGHT` pin the mode to
+2304×1296, the cheapest full-sensor option. Output stays 1280×720, so YOLO
+cost and OCR pixel density are unchanged; only the field of view grows.
+4608×2592 sees exactly the same field for 4× the ISP work, so it is not
+worth using.
+
+**Verify rather than assume** — `capture_test` and `record_test` print the
+crop the ISP actually applied:
+
+```
+Sensor crop: (0, 0, 4608, 2592)     # full lens, correct
+Sensor crop: (768, 432, 3072, 1728) # cropped, mode not pinned
+```
+
+If more *vertical* coverage is still wanted after this, the remaining lever
+is physical: mounting the camera rotated 90° puts the sensor's long axis
+vertical, trading peripheral width for ground-to-head reach. That changes
+`CAMERA_WIDTH`/`CAMERA_HEIGHT` to 720×1280 and is a mount change, not a
+config change.
+
 ## SIM7600G-H 4G dongle (cellular + GPS) — USB
 
 Plugs into a USB port. The dongle form factor was chosen precisely because

@@ -6,14 +6,27 @@ Run from repo root with:
 """
 import time
 
-from indepensense.config import CAMERA_FPS, CAMERA_HEIGHT, CAMERA_WIDTH
+from indepensense.config import (
+    CAMERA_FPS,
+    CAMERA_HEIGHT,
+    CAMERA_SENSOR_MODE_HEIGHT,
+    CAMERA_SENSOR_MODE_WIDTH,
+    CAMERA_WIDTH,
+)
 from indepensense.vision.picamera import PiCamera
 
 NUM_FRAMES = 10
 
 
 def main():
-    camera = PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
+    camera = PiCamera(
+        width=CAMERA_WIDTH,
+        height=CAMERA_HEIGHT,
+        fps=CAMERA_FPS,
+        sensor_mode_width=CAMERA_SENSOR_MODE_WIDTH,
+        sensor_mode_height=CAMERA_SENSOR_MODE_HEIGHT,
+    )
+    print(f"Sensor crop: {camera.sensor_crop()}")
     print(f"Capturing {NUM_FRAMES} frames at {CAMERA_WIDTH}x{CAMERA_HEIGHT} @ {CAMERA_FPS} fps")
     try:
         for i in range(NUM_FRAMES):

@@ -110,6 +110,8 @@ from indepensense.config import (
     BUZZER_GPIO,
     CAMERA_FPS,
     CAMERA_HEIGHT,
+    CAMERA_SENSOR_MODE_HEIGHT,
+    CAMERA_SENSOR_MODE_WIDTH,
     CAMERA_WIDTH,
     CLOUD_LLM_API_KEY_ENV,
     CLOUD_LLM_ENABLED,
@@ -2164,7 +2166,13 @@ class App:
 
     def _try_open_camera(self) -> PiCamera | None:
         try:
-            return PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)
+            return PiCamera(
+                width=CAMERA_WIDTH,
+                height=CAMERA_HEIGHT,
+                fps=CAMERA_FPS,
+                sensor_mode_width=CAMERA_SENSOR_MODE_WIDTH,
+                sensor_mode_height=CAMERA_SENSOR_MODE_HEIGHT,
+            )
         except Exception as exc:
             print(
                 f"  Camera unavailable ({exc}). vision.describe will report unavailable.",

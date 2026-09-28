@@ -302,6 +302,32 @@ MOCK_ULTRASONIC_PERIOD_S = 5.0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 15
+
+# Which sensor mode to read, independent of the output size above.
+#
+# This is not a second resolution setting — it decides how much of the lens
+# you get. `rpicam-hello --list-cameras` on the imx708_wide reports:
+#
+#     1536x864   [120.13 fps - (768, 432)/3072x1728 crop]   <- centre crop
+#     2304x1296  [ 56.03 fps - (0, 0)/4608x2592 crop]       <- full sensor
+#     4608x2592  [ 14.35 fps - (0, 0)/4608x2592 crop]       <- full sensor
+#
+# Left to itself picamera2 picks the smallest mode that can satisfy the
+# requested output, which for 1280×720 is 1536×864 — the one that reads a
+# centred 3072×1728 window out of the 4608×2592 array. That silently threw
+# away a third of the frame in each dimension: roughly 102°→79° horizontal
+# and 70°→50° vertical, on a module bought specifically for its 120°
+# diagonal. Nothing in the image looks wrong; there is simply less of it.
+#
+# 2304×1296 is the cheapest full-sensor mode. 4608×2592 sees exactly the
+# same field for 4× the ISP work and a 14 fps ceiling, so it buys nothing.
+# The 56 fps ceiling here is far above CAMERA_FPS; the real cost is a
+# slightly longer downscale to 1280×720 on every frame.
+#
+# Set both to None to let picamera2 choose, which is only right if you no
+# longer care about field of view.
+CAMERA_SENSOR_MODE_WIDTH = 2304
+CAMERA_SENSOR_MODE_HEIGHT = 1296
 TEST_RECORDING_DIR = PROJECT_ROOT / "data" / "test" / "recordings"
 
 # Where `tools/system_performance` writes its CSV logs.
