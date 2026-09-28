@@ -92,6 +92,21 @@ OBSTACLE_WARNING_CM = 100.0      # early notice — obstacle within reach
 OBSTACLE_DANGER_CM = 50.0        # imminent — user should stop
 OBSTACLE_COOLDOWN_S = 2.0        # per sensor: don't fire the same tier again
 
+# Bench mute for the obstacle buzzer. The active buzzer is deliberately
+# loud — it has to cut through street noise — which makes indoor desk
+# testing unpleasant for everyone in the room. With this False the TOP
+# sensor's warning and danger tiers fire their vibration patterns as
+# normal and simply skip the beep; nothing else about the tiering,
+# cooldowns or logging changes, so the obstacle path is still fully
+# exercised while testing.
+#
+# This only silences obstacle warnings. The emergency alert keeps its
+# beep unconditionally — a safety signal must not be mutable by a
+# convenience flag.
+#
+# MUST be True for any demo, field test or deployment.
+OBSTACLE_BUZZER_ENABLED = False
+
 # MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus).
 # Accelerometer + gyroscope only; heading comes from the separate
 # QMC5883P below. (The MPU9250 bought as an upgrade turned out to be a

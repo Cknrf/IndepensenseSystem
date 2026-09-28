@@ -305,7 +305,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 |---|---|
 | GraphHopper + Photon end-to-end lookup | `python -m indepensense.routing.tests.manual.end_to_end_test` |
 | Voice → intent → handler end-to-end | `python -m indepensense.intents.tests.manual.end_to_end_test` — add `--keyboard` when the PTT/SOS buttons aren't wired. A navigation command takes **three** presses: start, stop, then confirm the destination |
-| LLM intent-classification probe (66 test prompts, scored per language group) | `python -m indepensense.intents.tests.manual.llm_probe` |
+| LLM intent-classification probe (91 test prompts — 45 English, 25 Tagalog, 21 adversarial — scored per language group) | `python -m indepensense.intents.tests.manual.llm_probe` |
 | Cloud LLM probe — real Mistral calls, latency and answer quality | `python -m indepensense.intents.tests.manual.cloud_probe` |
 
 ### System Profiling
@@ -387,6 +387,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | "Louder" changes nothing | `wpctl` missing, or PipeWire is routing through a different node than `@DEFAULT_AUDIO_SINK@` (common over Bluetooth). `wpctl status` shows the real default |
 | Navigation never starts, always says "cancelled" | The destination confirmation timed out. It wants a **PTT press** within `DESTINATION_CONFIRM_TIMEOUT_S` after the place is read back |
 | The device talks over itself | Should be impossible — every main-loop utterance goes through the announcer, which is single-threaded. If it happens, something is calling `play()` directly |
+| Obstacles vibrate but never beep | `OBSTACLE_BUZZER_ENABLED` is `False` in `config.py` — the bench mute for indoor testing. Set it back to `True` before any demo or field test |
 | Saved places vanish after a reboot | `var/places.json` unwritable, or the process runs as a user without write access to `var/` |
 
 ## Voice Commands

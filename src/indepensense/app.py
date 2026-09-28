@@ -59,6 +59,10 @@ Two DYP-A22 sensors mounted on the cane, both forward-facing:
 Two thresholds: 100 cm (warning) and 50 cm (danger). 2 s cooldown per
 (sensor, tier) so a lingering obstacle doesn't spam.
 
+`config.OBSTACLE_BUZZER_ENABLED` mutes the TOP sensor's beep for indoor
+bench testing — vibration, tiering and cooldowns are untouched. It must
+be True on the deployed device.
+
 Shutdown
 --------
 
@@ -153,6 +157,7 @@ from indepensense.config import (
     NLU_PROMPT_PATH,
     NLU_TIMEOUT_S,
     NLU_WARMUP_TIMEOUT_S,
+    OBSTACLE_BUZZER_ENABLED,
     OBSTACLE_COOLDOWN_S,
     OBSTACLE_DANGER_CM,
     OBSTACLE_WARNING_CM,
@@ -1371,17 +1376,20 @@ class App:
           TOP + danger   → all 3 motors + two rapid beeps
           BOTTOM + warn  → front motor pulse (silent — cane covers this)
           BOTTOM + danger→ all 3 motors (silent)
+
+        Both TOP beeps are suppressed when `OBSTACLE_BUZZER_ENABLED` is
+        False (bench mute); the vibration half of each pattern still plays.
         """
         with self._warning_lock:
             try:
                 if sensor_name == "top" and tier == "warning":
                     if self.front_motor is not None:
                         self.front_motor.pulse(times=1, duration_s=0.25)
-                    if self.buzzer is not None:
+                    if OBSTACLE_BUZZER_ENABLED and self.buzzer is not None:
                         self.buzzer.beep(times=1, duration_s=0.1)
                 elif sensor_name == "top" and tier == "danger":
                     self._pulse_all_motors(duration_s=0.4)
-                    if self.buzzer is not None:
+                    if OBSTACLE_BUZZER_ENABLED and self.buzzer is not None:
                         self.buzzer.beep(times=2, duration_s=0.08, gap_s=0.05)
                 elif sensor_name == "bottom" and tier == "warning":
                     if self.front_motor is not None:

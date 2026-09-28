@@ -19,6 +19,7 @@ import time
 
 import pytest
 
+from indepensense import app as app_module
 from indepensense.app_mock import MockApp
 from indepensense.config import (
     OBSTACLE_COOLDOWN_S,
@@ -47,6 +48,19 @@ class _FixedUltrasonic:
 
     def close(self):
         pass
+
+
+@pytest.fixture(autouse=True)
+def buzzer_unmuted(monkeypatch):
+    """Assert the deployed feedback matrix, not whatever the bench mute
+    happens to be set to.
+
+    `config.OBSTACLE_BUZZER_ENABLED` is a convenience flag that gets flipped
+    off during indoor testing. Without this fixture the meaning of every
+    beep assertion below would silently change with it. The one test that
+    cares about the muted case turns it off itself.
+    """
+    monkeypatch.setattr(app_module, "OBSTACLE_BUZZER_ENABLED", True)
 
 
 @pytest.fixture
@@ -193,6 +207,20 @@ def test_top_danger_uses_all_motors_and_two_beeps(app):
     assert beeps and beeps[0][1] == 2
     for motor in (app.front_motor, app.left_motor, app.right_motor):
         assert motor.events, "all three motors should fire on danger"
+
+
+def test_bench_mute_drops_the_beep_but_keeps_the_vibration(app, monkeypatch):
+    """Muting the buzzer must not mute the warning — the haptic half of
+    every TOP pattern still has to fire, or indoor testing would be
+    exercising a code path the deployed device never runs."""
+    monkeypatch.setattr(app_module, "OBSTACLE_BUZZER_ENABLED", False)
+
+    app._play_warning_pattern("top", "warning")
+    app._play_warning_pattern("top", "danger")
+
+    assert app.buzzer.events == []
+    for motor in (app.front_motor, app.left_motor, app.right_motor):
+        assert motor.events
 
 
 def test_bottom_warning_is_silent(app):
