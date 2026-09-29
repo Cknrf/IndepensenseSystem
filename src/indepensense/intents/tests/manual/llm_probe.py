@@ -276,12 +276,20 @@ GROUPS = ("english", "tagalog", "adversarial")
 
 
 def free_ram_mb() -> int:
-    """Return currently-free RAM in MB from /proc/meminfo."""
-    with open("/proc/meminfo") as f:
-        for line in f:
-            if line.startswith("MemAvailable:"):
-                kb = int(line.split()[1])
-                return kb // 1024
+    """Return currently-free RAM in MB, or -1 where that isn't knowable.
+
+    `/proc/meminfo` is Linux-only. Returning -1 on a Mac rather than raising
+    keeps the probe runnable off-device: the RAM figures are context for the
+    Pi's memory budget, while the accuracy scores — which are a property of
+    the model and the prompt, not the host — are worth collecting anywhere.
+    """
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except OSError:
+        return -1
     return -1
 
 
