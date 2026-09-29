@@ -298,13 +298,22 @@ def main() -> None:
 
     print(f"\nModel: {args.model}")
     # RAM is the number most likely to reject this design, not latency.
-    # e5-small is ~470 MB of fp32 weights landing on a Pi that already
-    # pins Qwen 3 1.7B with `keep_alive: -1` and loads YOLO, MMS-TTS and
-    # faster-whisper. Measured as a delta around construction rather than
-    # quoted from the checkpoint size, because what matters is the
-    # resident cost with the runtime's allocator and any lazily-built
-    # buffers included.
-    ram_before = free_ram_mb()
+    #
+    # Measured in two steps, because the single figure is misleading. A
+    # bare process loading e5 pays for the torch runtime as well as the
+    # weights, and in the real app torch is ALREADY resident — YOLO and
+    # MMS-TTS both require it. Charging the runtime to the fast path
+    # would overstate its marginal cost by several hundred MB and could
+    # reject a design that actually fits.
+    #
+    # `torch_mb`    — the runtime, shared with YOLO and MMS-TTS.
+    # `marginal_mb` — the weights and buffers, i.e. what this layer
+    #                 genuinely adds to a system that already runs them.
+    #                 THIS is the number for the memory budget.
+    ram_start = free_ram_mb()
+    import torch  # noqa: F401 - imported here purely to attribute its RSS
+    ram_torch = free_ram_mb()
+
     t0 = time.time()
     matcher = EmbeddingMatcher(
         model_name=args.model,
@@ -312,16 +321,19 @@ def main() -> None:
         score_threshold=args.score,
         margin_threshold=args.margin,
     )
-    ram_after = free_ram_mb()
+    ram_loaded = free_ram_mb()
     load_s = time.time() - t0
     print(f"  Loaded and encoded the bank in {load_s:.1f}s.")
-    if ram_before >= 0 and ram_after >= 0:
-        print(
-            f"  RAM: {ram_before} MB free before, {ram_after} MB after "
-            f"(matcher costs ~{ram_before - ram_after} MB resident)."
-        )
-        print("       Compare against free RAM with Ollama already warm — this")
-        print("       has to fit alongside a pinned Qwen 3 1.7B, YOLO and MMS-TTS.")
+
+    if ram_start >= 0 and ram_loaded >= 0:
+        torch_mb = ram_start - ram_torch
+        marginal_mb = ram_torch - ram_loaded
+        print(f"  RAM: {ram_start} MB free at start, {ram_loaded} MB after loading.")
+        print(f"       torch runtime      ~{torch_mb:4d} MB  (shared with YOLO + MMS-TTS)")
+        print(f"       e5 weights+buffers ~{marginal_mb:4d} MB  <- the marginal cost")
+        print(f"       total in isolation ~{ram_start - ram_loaded:4d} MB")
+        print("       Run this with Ollama warm; the budget that matters is what")
+        print("       remains once Qwen 3 1.7B is pinned with keep_alive: -1.")
     else:
         print("  RAM: not measurable off-Linux; re-run on the Pi for the budget figure.")
     if load_s > 60:
