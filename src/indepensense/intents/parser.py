@@ -80,6 +80,11 @@ from indepensense.intents.base import Intent, IntentResult
 # intent needs a longer reply, this moves with the schema that changed it.
 _MAX_OUTPUT_TOKENS = 128
 
+# How much of a bad model reply to put in the log. Enough to recognise the
+# shape of the failure, short enough that a runaway generation cannot flood
+# the journal on a device with an SD card for a disk.
+_LOG_EXCERPT_CHARS = 200
+
 
 class OllamaIntentParser:
     def __init__(
@@ -165,6 +170,7 @@ class OllamaIntentParser:
                 parameters={},
                 raw_transcript=transcript,
                 raw_llm_response="",
+                failure="transport",
             )
 
         return parse_llm_response(raw, transcript)
@@ -175,21 +181,42 @@ def parse_llm_response(raw: str, transcript: str) -> IntentResult:
 
     Pulled out as a pure function so it can be unit-tested without an LLM
     or an Ollama server.
+
+    Both degraded paths below log to stderr before returning. Silence here
+    is what made the last round of debugging expensive: a malformed reply
+    and a legitimate "I don't understand" produced byte-identical results,
+    so `journalctl` gave no way to tell a model that was misbehaving from
+    users asking things the model correctly declined. See `IntentResult`
+    for why only one of the two blocks the cloud fallback.
     """
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
+        print(
+            f"[parser] malformed JSON from model, treating as unknown: "
+            f"{raw[:_LOG_EXCERPT_CHARS]!r}",
+            file=sys.stderr,
+        )
         return IntentResult(
             intent=Intent.UNKNOWN,
             parameters={},
             raw_transcript=transcript,
             raw_llm_response=raw,
+            failure="malformed",
         )
 
     intent_name = payload.get("intent", "unknown")
     try:
         intent = Intent(intent_name)
     except ValueError:
+        # Readable answer, unsupported label — a decline, not a failure, so
+        # this still reaches the cloud. Logged because a name the prompt
+        # never offered means the prompt or the model has drifted.
+        print(
+            f"[parser] model returned an intent name that does not exist: "
+            f"{intent_name!r}",
+            file=sys.stderr,
+        )
         intent = Intent.UNKNOWN
 
     raw_params = payload.get("parameters") or {}

@@ -7,28 +7,3 @@ So the least we can do about here, is to have some sort of the message, or even 
 - Let's have an intent for shutdown of the PI, but since this is critical, there would be verification/confirmation message first, if the user confirmed or agreed or say yes, then proceed to shutdown. And let's have a goodbye message as well for this to be played
 
 
-upon running the command: 
-(.venv) cknrf@cknrf:~/Desktop/thesis/IndepensenseSystem $ python - <<'PY'
-import requests
-from indepensense.config import NLU_PROMPT_PATH, NLU_MODEL, OLLAMA_URL
-d = requests.post(f"{OLLAMA_URL}/api/generate", json={
-    "model": NLU_MODEL,
-    "system": NLU_PROMPT_PATH.read_text(),
-    "prompt": "take me to SM Seaside",
-    "stream": False, "format": "json", "think": False, "keep_alive": -1,
-    "options": {"temperature": 0.0, "num_predict": 128},
-}, timeout=180).json()
-ns = 1e9
-print("prompt tokens :", d.get("prompt_eval_count"), " (context window is 4096)")
-print("output tokens :", d.get("eval_count"))
-print(f"prompt eval   : {d.get('prompt_eval_duration',0)/ns:.2f}s")
-print(f"generation    : {d.get('eval_duration',0)/ns:.2f}s")
-print(f"total         : {d.get('total_duration',0)/ns:.2f}s")
-print("response      :", d.get("response"))
-PY
-prompt tokens : 2050  (context window is 4096)
-output tokens : 24
-prompt eval   : 38.56s
-generation    : 5.89s
-total         : 45.01s
-response      : {"intent": "navigation.start", "parameters": {"location": "SM Seaside", "nearest": false}}

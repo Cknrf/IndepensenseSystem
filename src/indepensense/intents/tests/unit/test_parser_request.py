@@ -123,10 +123,9 @@ def test_the_system_prompt_is_sent_with_every_query(parser, monkeypatch):
 # --- failure ------------------------------------------------------------------
 
 def test_a_transport_failure_becomes_unknown(parser, monkeypatch):
-    """Documents today's behaviour, including the part that is a problem:
-    a timeout is indistinguishable from the model saying it did not
-    understand, so `_handle_unknown` forwards the transcript to the cloud
-    even though the local model never ran."""
+    """The intent still degrades to `UNKNOWN` — every caller switches on
+    `Intent`, and a failure is not a thing the user asked for. What tells
+    the two apart is `failure`, asserted further down."""
     _fake_requests(monkeypatch, raises=_FakeRequestException("read timed out"))
 
     result = parser.parse("take me to the hospital")
@@ -142,3 +141,54 @@ def test_a_transport_failure_does_not_raise_on_the_voice_thread(parser, monkeypa
     _fake_requests(monkeypatch, raises=_FakeRequestException("connection refused"))
 
     parser.parse("what time is it")     # must not raise
+
+
+# --- failure is distinguishable from a decline --------------------------------
+
+def test_a_transport_failure_is_marked_as_one(parser, monkeypatch):
+    """`unknown` alone cannot carry this: the executor has to tell "the
+    model declined" from "the model never answered" before deciding
+    whether the cloud may see the transcript."""
+    _fake_requests(monkeypatch, raises=_FakeRequestException("read timed out"))
+
+    assert parser.parse("take me to the hospital").failure == "transport"
+
+
+def test_malformed_json_is_marked_as_a_failure(parser, monkeypatch):
+    """A reply arrived but we cannot read it, so we hold no classification
+    and cannot know the utterance was not a command."""
+    sent = _fake_requests(monkeypatch)
+
+    def _post(url, json=None, timeout=None):
+        sent["json"] = json
+
+        class _Bad:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"response": "I think the user wants directions"}
+
+        return _Bad()
+
+    monkeypatch.setattr(sys.modules["requests"], "post", _post)
+
+    assert parser.parse("take me to the hospital").failure == "malformed"
+
+
+def test_a_good_reply_carries_no_failure(parser, monkeypatch):
+    _fake_requests(monkeypatch, response_json={"intent": "system.time"})
+
+    result = parser.parse("what time is it")
+    assert result.intent is Intent.SYSTEM_TIME
+    assert result.failure is None
+
+
+def test_a_genuine_unknown_carries_no_failure(parser, monkeypatch):
+    """The model ran and declined. This is the case the cloud exists for,
+    so it must stay distinguishable from the two above."""
+    _fake_requests(monkeypatch, response_json={"intent": "unknown"})
+
+    result = parser.parse("how tall is Mount Apo")
+    assert result.intent is Intent.UNKNOWN
+    assert result.failure is None

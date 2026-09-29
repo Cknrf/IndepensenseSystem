@@ -45,11 +45,32 @@ class IntentResult:
 
     `raw_llm_response` is retained for debugging and audit — if a downstream
     surprise appears, we can inspect exactly what the LLM produced.
+
+    `failure` separates "the model declined" from "the model never usably
+    answered". Both used to arrive as a bare `UNKNOWN`, which made a 30 s
+    Ollama timeout indistinguishable from a genuine "I don't understand" —
+    and since `unknown` is the cloud fallback's trigger, an Ollama hiccup
+    during "take me to the hospital" forwarded that sentence to a chatbot.
+    `intents/cloud.py` justifies the whole fallback on the premise that the
+    cloud only sees utterances the local model already declined; this field
+    is what makes the premise true.
+
+    - `None` — the model answered. `UNKNOWN` here means it really did
+      decline, and the cloud may take the question.
+    - `"transport"` — the request failed or timed out. There is no output.
+    - `"malformed"` — a reply arrived but was not valid JSON.
+
+    The last two both mean *we hold no usable classification*, so we cannot
+    know the utterance was not a real command. Neither may reach the cloud.
+    An intent name outside the enum is deliberately **not** a failure: that
+    is a readable answer that maps to nothing we support, which is a
+    decline.
     """
     intent: Intent
     parameters: dict[str, Any] = field(default_factory=dict)
     raw_transcript: str = ""
     raw_llm_response: str = ""
+    failure: str | None = None
 
 
 class IntentParser(Protocol):

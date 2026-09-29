@@ -1636,7 +1636,16 @@ class App:
             # A cloud answer takes seconds. A sighted user watches a
             # spinner; this user hears nothing and cannot tell whether
             # the wearable is thinking or dead. Say so before the wait.
-            if intent_result.intent is Intent.UNKNOWN and self.cloud is not None:
+            #
+            # `failure is None` mirrors the executor's own gate: a parse
+            # failure never reaches the cloud, so promising a wait that is
+            # not coming would have the wearable say "let me think" and
+            # then immediately "I didn't catch that".
+            if (
+                intent_result.intent is Intent.UNKNOWN
+                and intent_result.failure is None
+                and self.cloud is not None
+            ):
                 self._speak_thinking()
                 if self._voice_cancel.is_set():
                     return

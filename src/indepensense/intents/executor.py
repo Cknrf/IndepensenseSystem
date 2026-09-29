@@ -794,7 +794,25 @@ class IntentExecutor:
         model stays deliberately conservative and the cloud picks up what
         it defers, rather than competing with it for real commands. See
         `intents/cloud.py`.
+
+        A parse *failure* is not a decline and never reaches the cloud. If
+        Ollama timed out or returned unreadable JSON, the local model never
+        got to claim the utterance, so forwarding it would mean a chance of
+        sending "take me to the hospital" to a chatbot — the one thing the
+        `unknown`-only entry point exists to prevent. The user hears the
+        same "I didn't catch that" either way: the distinction is for the
+        system, and inventing a separate spoken message would leak internal
+        state to somebody who can only act on it by trying again anyway.
         """
+        if result.failure is not None:
+            print(
+                f"[executor] not forwarding to cloud — parse failed "
+                f"({result.failure})",
+                file=sys.stderr,
+                flush=True,
+            )
+            return messages.get("generic.unknown_intent", self._lang)
+
         if self._cloud is None:
             return messages.get("generic.unknown_intent", self._lang)
 

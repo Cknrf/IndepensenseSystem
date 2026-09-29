@@ -76,6 +76,34 @@ def test_only_unknown_intents_are_forwarded():
     assert cloud.asked == []
 
 
+@pytest.mark.parametrize("failure", ["transport", "malformed"])
+def test_a_parse_failure_is_not_forwarded(failure):
+    """The premise of the whole fallback is that the cloud only ever sees
+    what the local model declined. A timeout or unreadable JSON means the
+    model never usably answered, so the utterance might have been a real
+    command — observed on the Pi, where a 30 s Ollama timeout sent "how
+    tall is Mount Apo" to Mistral and would have sent a navigation command
+    just the same."""
+    cloud = MockCloudAnswerer()
+    executor = _executor(cloud=cloud)
+    result = IntentResult(
+        Intent.UNKNOWN, {}, "take me to the hospital", "", failure=failure,
+    )
+
+    assert executor.execute(result) == messages.get("generic.unknown_intent", "en")
+    assert cloud.asked == []
+
+
+def test_a_genuine_decline_is_still_forwarded():
+    """The guard must not close the door on the case the feature exists
+    for: the model ran, understood it was not a command, and said so."""
+    cloud = MockCloudAnswerer()
+    executor = _executor(cloud=cloud)
+
+    executor.execute(_unknown("how tall is Mount Apo"))
+    assert cloud.asked == [("how tall is Mount Apo", "en")]
+
+
 def test_empty_transcript_is_not_forwarded():
     """Sending an empty string would spend a paid API call to be told
     nothing."""
