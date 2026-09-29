@@ -85,7 +85,7 @@ def test_the_cap_leaves_room_for_the_largest_real_reply(monkeypatch):
     largest = json.dumps({
         "intent": "navigation.start",
         "parameters": {
-            "destination": "Southwestern University PHINMA Urgello Campus",
+            "location": "Southwestern University PHINMA Urgello Campus",
             "nearest": False,
         },
     })
