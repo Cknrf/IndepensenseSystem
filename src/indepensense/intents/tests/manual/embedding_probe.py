@@ -59,7 +59,11 @@ from indepensense.intents.embeddings import (
     Match,
     parse_bank,
 )
-from indepensense.intents.tests.manual.llm_probe import GROUPS, TEST_CASES
+from indepensense.intents.tests.manual.llm_probe import (
+    GROUPS,
+    TEST_CASES,
+    free_ram_mb,
+)
 
 # Intents the matcher is designed never to answer. A case expecting one
 # of these is scored as a correct escalation, not a miss. `unknown` is
@@ -293,6 +297,14 @@ def main() -> None:
     check_overlap(bank_path)
 
     print(f"\nModel: {args.model}")
+    # RAM is the number most likely to reject this design, not latency.
+    # e5-small is ~470 MB of fp32 weights landing on a Pi that already
+    # pins Qwen 3 1.7B with `keep_alive: -1` and loads YOLO, MMS-TTS and
+    # faster-whisper. Measured as a delta around construction rather than
+    # quoted from the checkpoint size, because what matters is the
+    # resident cost with the runtime's allocator and any lazily-built
+    # buffers included.
+    ram_before = free_ram_mb()
     t0 = time.time()
     matcher = EmbeddingMatcher(
         model_name=args.model,
@@ -300,7 +312,24 @@ def main() -> None:
         score_threshold=args.score,
         margin_threshold=args.margin,
     )
-    print(f"  Loaded and encoded the bank in {time.time() - t0:.1f}s.")
+    ram_after = free_ram_mb()
+    load_s = time.time() - t0
+    print(f"  Loaded and encoded the bank in {load_s:.1f}s.")
+    if ram_before >= 0 and ram_after >= 0:
+        print(
+            f"  RAM: {ram_before} MB free before, {ram_after} MB after "
+            f"(matcher costs ~{ram_before - ram_after} MB resident)."
+        )
+        print("       Compare against free RAM with Ollama already warm — this")
+        print("       has to fit alongside a pinned Qwen 3 1.7B, YOLO and MMS-TTS.")
+    else:
+        print("  RAM: not measurable off-Linux; re-run on the Pi for the budget figure.")
+    if load_s > 60:
+        print(
+            f"  NOTE: {load_s:.0f}s is slow enough to suggest the weights were "
+            "downloaded on\n        this run. Re-run to get the cached cold-start "
+            "figure, which is what\n        startup actually pays."
+        )
 
     # Per-query latency on a warm model — the number the whole design is
     # trying to buy. Measured after a throwaway call so the first-call
