@@ -42,7 +42,7 @@ How Claude collaborates on this thesis project.
 
    `app_mock.py` is development-only and never imported by production: `deploy/systemd/indepensense.service` starts `indepensense.app`. The separation is structural, not a runtime flag, so a misconfigured flag can never substitute a fake sensor on the real device.
 
-3. **Pi-only libraries are imported lazily, inside the function that needs them.** `serial`, `smbus2`, `gpiozero`, `picamera2`, `ultralytics`, `pytesseract`, `faster_whisper`, `piper`, `transformers`, `torch` — never at module top level. This is what lets the real drivers be imported, introspected, and unit-tested on a Mac where those packages don't exist. Follow the existing comment style:
+3. **Pi-only libraries are imported lazily, inside the function that needs them.** `serial`, `smbus2`, `gpiozero`, `picamera2`, `ultralytics`, `pytesseract`, `faster_whisper`, `piper`, `transformers`, `torch`, `sentence_transformers` — never at module top level. This is what lets the real drivers be imported, introspected, and unit-tested on a Mac where those packages don't exist. Follow the existing comment style:
    ```python
    import serial  # lazy: only resolvable on the Pi
    ```
@@ -57,7 +57,12 @@ How Claude collaborates on this thesis project.
 
    Sentence *structure* may differ per language, not just wording — Tagalog does not inflect nouns for number, so scene description branches per language rather than sharing a pluraliser. Put that kind of grammar in `messages.py`, not in the handler.
 
-7. **Tests nested per module:**
+7. **Intent parsing is two-stage, and the split is static.**
+   `TieredIntentParser` runs an embedding matcher before the LLM. What the fast path may answer is decided by the *intent*, not by confidence: an embedding is one vector per utterance, so it can name an intent but never extract a span from it. Intents with a free-text parameter always escalate; intents with none, or with a closed enum foldable into the label, are answerable. The fast path never returns `unknown` — that is the cloud fallback's trigger and stays with the LLM.
+
+   Adding an intent means deciding which side it falls on. `parse_bank` enforces it: an open-span intent given its own section in `prompts/nlu_examples.md` fails on load rather than silently becoming answerable.
+
+8. **Tests nested per module:**
    - `src/indepensense/<module>/tests/unit/` — pytest, no hardware, must pass on a Mac
    - `src/indepensense/<module>/tests/manual/` — human-run scripts that need real hardware
 
@@ -82,6 +87,7 @@ Domains: `sensors`, `vision`, `voice`, `intents`, `navigation`, `routing`, `feed
 Outside `src/`:
 
 - `prompts/nlu_system.md` — the LLM intent-classification system prompt. **Prompt changes go here, not into Python.** Loaded via `config.NLU_PROMPT_PATH`. After editing it, re-run the probe: `llm_probe` exercises 98 prompts across English, Tagalog and adversarial groups, reported per group — a blended score would hide a model that aces English and fails Tagalog.
+- `prompts/nlu_examples.md` — the labelled example bank for the embedding fast path. Same discipline as the system prompt: **content goes here, not into Python.** Loaded via `config.NLU_EMBEDDING_BANK_PATH`. Section headings are class labels and are validated on load, so a typo fails loudly instead of silently shrinking the bank. After editing it, re-run `embedding_probe` — and `--check-overlap` first, because the held-out test set lives in `llm_probe` and a copied phrasing turns the accuracy number into memorisation.
 - `docs/` — hardware wiring, voice pipeline, GraphHopper, Photon, SIM7600.
 - `deploy/systemd/` — unit files for `indepensense`, `graphhopper`, `photon`, `ollama-warmup`.
 

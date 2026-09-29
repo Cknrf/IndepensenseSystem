@@ -66,12 +66,22 @@ class IntentResult:
     An intent name outside the enum is deliberately **not** a failure: that
     is a readable answer that maps to nothing we support, which is a
     decline.
+
+    `source` names the engine that produced this result — `"embedding"`
+    for the semantic fast path, `"llm"` for the local model. Two engines
+    now answer utterances and nothing else on this object distinguishes
+    them, which would make a journald line describing a wrong action
+    unattributable to the thing that produced it. It is also the raw
+    material for the fast path's hit rate, which is a measured result
+    rather than a claim. Defaults to `"llm"` so every existing
+    construction site keeps meaning what it already meant.
     """
     intent: Intent
     parameters: dict[str, Any] = field(default_factory=dict)
     raw_transcript: str = ""
     raw_llm_response: str = ""
     failure: str | None = None
+    source: str = "llm"
 
 
 class IntentParser(Protocol):

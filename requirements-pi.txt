@@ -37,6 +37,19 @@ ultralytics>=8.0
 # a local directory, so nothing here reaches the network at runtime.
 transformers>=4.33
 
+# Semantic fast path for intent classification — `intfloat/multilingual-e5-small`
+# encoded via sentence-transformers. See intents/embeddings.py and
+# config.NLU_EMBEDDING_MODEL for why this model and not XLM-RoBERTa.
+#
+# Like MMS-TTS above, this rides on the torch + transformers install
+# rather than adding a second inference runtime, so the marginal cost is
+# the 118M-parameter checkpoint (~470 MB fp32) and nothing else.
+#
+# Weights download on first construction and are cached under
+# ~/.cache/huggingface. Pull them once with network available before the
+# wearable is expected to work offline.
+sentence-transformers>=3.0
+
 # Tesseract OCR — printed-text reader for the `vision.read` intent.
 # The binary + language packs come from apt:
 #   sudo apt install -y tesseract-ocr tesseract-ocr-tgl

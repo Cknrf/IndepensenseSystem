@@ -344,6 +344,38 @@ them. That is deliberate: Manila speech code-switches, so "Nakikita ko
 ang 2 tao at isang chair" sounds natural while forcing a Tagalog coinage
 for every COCO class would not.
 
+## Semantic fast path
+
+Intent parsing runs in two stages. `TieredIntentParser` asks an embedding
+matcher first and only calls the LLM when the matcher declines, which it
+does for the majority of utterances but not the important ones.
+
+The split is **static, not confidence-based**. A sentence embedding is
+one vector for the whole utterance, so it can name the intent but never
+extract a span of it. Intents with a free-text parameter —
+`navigation.start`'s destination, `place.save`/`place.delete`'s label —
+are therefore escalated by construction, however confident the match.
+Intents with no parameters, or with a closed enum that can be folded into
+the label (`device.status:battery`, `system.volume:down`), are fully
+answerable from the label alone.
+
+Two thresholds gate a hit: cosine similarity to the nearest labelled
+example, and the *margin* to the nearest example of a different decision.
+The margin does nearly all the work — `embedding_probe --sweep` showed
+e5's similarity scores compressed into a narrow high band where any
+absolute threshold below 0.88 filters nothing.
+
+Measured on the 98 held-out prompts: **86% of the answerable utterances
+skip the LLM, at 100% precision**, Tagalog (84%) tracking English (87%).
+Matching costs ~20-30 ms against the LLM's 1-2 s.
+
+The fast path never answers `unknown`. That is the cloud fallback's
+trigger below, and a false `unknown` would forward a real command to a
+chatbot — so "nothing cleared the bar" escalates to the LLM rather than
+being asserted as a decline. `prompts/nlu_examples.md` holds the example
+bank; roughly a third of it is negative examples, which is what keeps
+near-misses like "I speak Tagalog at home" off `system.language`.
+
 ## Cloud LLM fallback
 
 The local NLU is deliberately biased toward `unknown` — a wearable that

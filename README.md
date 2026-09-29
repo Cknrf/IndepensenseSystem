@@ -309,6 +309,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | Voice → intent → handler end-to-end | `python -m indepensense.intents.tests.manual.end_to_end_test` — add `--keyboard` when the PTT/SOS buttons aren't wired. A navigation command takes **three** presses: start, stop, then confirm the destination |
 | LLM intent-classification probe (98 test prompts — 47 English, 26 Tagalog, 25 adversarial — scored per language group) | `python -m indepensense.intents.tests.manual.llm_probe` |
 | Cloud LLM probe — real Mistral calls, latency and answer quality | `python -m indepensense.intents.tests.manual.cloud_probe` |
+| Embedding fast-path probe — coverage and precision of the semantic matcher against the same 98 prompts, per language group | `python -m indepensense.intents.tests.manual.embedding_probe` — add `--sweep` to grid over both thresholds, `--check-overlap` to verify the example bank is disjoint from the test set, `--model <name>` to compare encoders. Runs on a Mac; no hardware needed |
 
 ### System Profiling
 

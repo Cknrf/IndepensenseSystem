@@ -155,6 +155,10 @@ from indepensense.config import (
     MMS_VOICES,
     MPU6050_ADDRESS,
     MPU6050_I2C_BUS,
+    NLU_EMBEDDING_BANK_PATH,
+    NLU_EMBEDDING_MARGIN_THRESHOLD,
+    NLU_EMBEDDING_MODEL,
+    NLU_EMBEDDING_SCORE_THRESHOLD,
     NLU_MODEL,
     NLU_PROMPT_PATH,
     NLU_TIMEOUT_S,
@@ -208,12 +212,14 @@ from indepensense.feedback.gpio_button import GPIOButton
 from indepensense.feedback.gpio_buzzer import GPIOBuzzer
 from indepensense.feedback.gpio_vibration import GPIOVibrationMotor
 from indepensense.intents import messages
-from indepensense.intents.base import Intent, IntentResult
+from indepensense.intents.base import Intent, IntentParser, IntentResult
 from indepensense.intents.cloud import OfflineGuard
 from indepensense.credential import load_device_credential
 from indepensense.intents.mistral import MistralAnswerer
 from indepensense.intents.executor import IntentExecutor
+from indepensense.intents.embeddings import EmbeddingMatcher, build_matcher
 from indepensense.intents.parser import OllamaIntentParser
+from indepensense.intents.tiered import TieredIntentParser, describe
 from indepensense.language import LanguageState
 from indepensense.messaging.mmcli_sms import MMCLISMSSender
 from indepensense.navigation.monitor import NavigationCue, NavigationMonitor
@@ -518,7 +524,7 @@ class App:
         self.detector: ThresholdFallDetector | None = None
         self.stt: FasterWhisperSTT | None = None
         self.tts: TTSEngine | None = None
-        self.parser: OllamaIntentParser | None = None
+        self.parser: IntentParser | None = None
         self.places: SavedPlaces | None = None
         self.volume: VolumeState | None = None
         # Owns all speech that originates on the main loop. See `Announcer`.
@@ -1647,7 +1653,7 @@ class App:
 
             intent_result = self.parser.parse(transcript.text)
             print(
-                f"[PTT] Intent: {intent_result.intent.value} "
+                f"[PTT] Intent: {describe(intent_result)} "
                 f"params={intent_result.parameters}",
                 flush=True,
             )
@@ -2088,14 +2094,44 @@ class App:
         """
         return build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES)
 
-    def _open_parser(self) -> OllamaIntentParser:
-        return OllamaIntentParser(
-            model=NLU_MODEL,
-            ollama_url=OLLAMA_URL,
-            prompt_path=NLU_PROMPT_PATH,
-            timeout_s=NLU_TIMEOUT_S,
-            warmup=True,
-            warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
+    def _open_parser(self) -> TieredIntentParser:
+        """The intent parser: semantic fast path in front of the LLM.
+
+        `_open_*` rather than `_try_open_*` because the LLM stage is not
+        optional — a wearable that cannot classify speech has no voice
+        interface at all. The *fast path* is optional, and that is
+        handled one level down by `_try_open_embedding_matcher`.
+        """
+        return TieredIntentParser(
+            matcher=self._try_open_embedding_matcher(),
+            llm=OllamaIntentParser(
+                model=NLU_MODEL,
+                ollama_url=OLLAMA_URL,
+                prompt_path=NLU_PROMPT_PATH,
+                timeout_s=NLU_TIMEOUT_S,
+                warmup=True,
+                warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
+            ),
+        )
+
+    def _try_open_embedding_matcher(self) -> EmbeddingMatcher | None:
+        """Semantic fast path, or None to send every utterance to the LLM.
+
+        `_try_open_*` because failing to load it degrades the device to
+        exactly the behaviour it had before this layer existed: slower,
+        fully correct. Aborting startup over a missing model file would
+        trade a working device for a dead one.
+
+        Constructed here rather than lazily on first use. The bank is
+        encoded at build time, and that cost belongs in startup next to
+        the Ollama warmup rather than in front of the user's first
+        command — which is the cost this whole layer exists to remove.
+        """
+        return build_matcher(
+            model_name=NLU_EMBEDDING_MODEL,
+            bank_path=NLU_EMBEDDING_BANK_PATH,
+            score_threshold=NLU_EMBEDDING_SCORE_THRESHOLD,
+            margin_threshold=NLU_EMBEDDING_MARGIN_THRESHOLD,
         )
 
     def _open_volume(self) -> VolumeState:

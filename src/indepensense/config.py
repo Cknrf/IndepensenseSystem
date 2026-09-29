@@ -644,6 +644,54 @@ NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 NLU_TIMEOUT_S = 30.0
 NLU_WARMUP_TIMEOUT_S = 90.0
 
+# Semantic fast path in front of the LLM — see intents/embeddings.py for
+# the full rationale and prompts/nlu_examples.md for the example bank.
+#
+# Model choice — `intfloat/multilingual-e5-small` over XLM-RoBERTa:
+# XLM-R is a masked-LM encoder, not a sentence encoder. Its pooled output
+# is poor under cosine similarity without sentence-level fine-tuning (the
+# same result that produced SBERT from BERT), and at 278M parameters it
+# would cost more RAM than e5 to do the job worse. e5-small is 118M
+# parameters, 384-dimensional, sentence-trained, and covers XLM-R's 100
+# languages including Tagalog. It runs on the torch + transformers install
+# that YOLO and MMS-TTS already require, so it adds no second inference
+# runtime — the same argument that selected MMS-TTS for Tagalog speech.
+#
+# Both thresholds must be cleared before the fast path answers, and they
+# measure different things. `SCORE` is cosine similarity to the nearest
+# labelled example: "does this resemble anything we know?". `MARGIN` is
+# the gap to the nearest example of a *different* decision: "is the
+# choice contested?".
+#
+# Values chosen from `embedding_probe --sweep` over the 98 held-out
+# prompts (measured on a Mac; re-run on the Pi for latency, the accuracy
+# is hardware-independent). At score 0.86 / margin 0.02:
+#
+#     group          cases  answerable  coverage  capture  precision
+#     english           47          32     59.6%    87.5%     100.0%
+#     tagalog           26          19     61.5%    84.2%     100.0%
+#     adversarial       25           8     28.0%    87.5%     100.0%
+#     OVERALL           98          59     52.0%    86.4%     100.0%
+#
+# Read `capture` rather than `coverage`: 39 of the 98 prompts have an
+# open text slot, so escalating them is correct and coverage can never
+# approach 100%. The fast path takes 86% of the work it is allowed to
+# take, at no cost in precision, and Tagalog tracks English closely
+# enough that the priority language is not being carried by the other.
+#
+# The sweep produced one finding worth keeping: **the score threshold is
+# nearly inert for this model.** e5's cosine values are compressed into a
+# narrow high band, so every point between 0.80 and 0.88 gives an
+# identical result and the margin does all the filtering. 0.86 sits in
+# the middle of that flat region rather than at its edge, so a shift in
+# phrasing distribution does not fall off a cliff. Margin 0.01 would buy
+# 2 points of coverage and cost the first wrong answer — not a trade
+# worth making on a device where a wrong action is worse than no action.
+NLU_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+NLU_EMBEDDING_BANK_PATH = PROJECT_ROOT / "prompts" / "nlu_examples.md"
+NLU_EMBEDDING_SCORE_THRESHOLD = 0.86
+NLU_EMBEDDING_MARGIN_THRESHOLD = 0.02
+
 # Internet connectivity probe. The heartbeat sender uses this before
 # each POST to populate `internet_status` honestly (rather than
 # hardcoded True). Cloudflare's 1.1.1.1 is the target — direct IP so
