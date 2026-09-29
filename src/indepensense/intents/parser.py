@@ -49,6 +49,9 @@ survives beyond commit history:
   itself restarts. Costs ~1.4 GB of RAM permanently on Qwen 2.5 1.5B; Qwen 3
   1.7B is a larger parameter count so expect somewhat more — confirm with
   `llm_probe` on the Pi before assuming the budget still holds.
+- **A capped `num_predict`.** See `_MAX_OUTPUT_TOKENS`. Bounds the worst
+  case so a model that never stops generating fails in a second rather
+  than eating the whole per-query timeout.
 - **stderr logging on failure.** When the HTTP call fails we log the exact
   exception before returning UNKNOWN. Early builds swallowed these errors
   silently, which cost hours during debugging when the model weights had
@@ -60,6 +63,22 @@ import sys
 from pathlib import Path
 
 from indepensense.intents.base import Intent, IntentResult
+
+# Hard ceiling on generated tokens per query.
+#
+# The reply this parser wants is one small JSON object — the largest real
+# one (`navigation.start` with a place name) is under 40 tokens. 128 leaves
+# three times that headroom and still bounds the worst case, which is what
+# this is for: without a cap a model that fails to emit a stop token
+# generates until the context window fills, and on a Pi 5 CPU that is well
+# past `NLU_TIMEOUT_S`. The user then waits the full timeout and gets
+# `unknown` — the slowest possible way to say "I didn't understand".
+#
+# Not in `config.py` on purpose. This is dictated by the response schema the
+# driver itself defines, so it is the chip-datasheet case rather than the
+# tunable case; `_warmup`'s own 32 is here for the same reason. If a future
+# intent needs a longer reply, this moves with the schema that changed it.
+_MAX_OUTPUT_TOKENS = 128
 
 
 class OllamaIntentParser:
@@ -129,7 +148,10 @@ class OllamaIntentParser:
             "stream": False,
             "format": "json",
             "think": False,             # see module docstring
-            "options": {"temperature": 0.0},
+            "options": {
+                "temperature": 0.0,
+                "num_predict": _MAX_OUTPUT_TOKENS,
+            },
             "keep_alive": -1,           # keep model resident between queries
         }
         try:

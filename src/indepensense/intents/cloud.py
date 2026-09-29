@@ -39,9 +39,10 @@ their voice.
 Implementing a provider
 -----------------------
 
-No concrete provider is wired yet — the choice is deliberately deferred,
-so this module holds the contract and `MockCloudAnswerer` satisfies it.
-A real driver needs to:
+The provider in use is `MistralAnswerer` (`intents/mistral.py`), opened by
+`_try_open_cloud_answerer` in `app.py`. This module holds the contract
+rather than the implementation, so swapping providers touches one factory
+method. A replacement needs to:
 
   - implement `CloudAnswerer.answer(question, language) -> CloudAnswer`
   - never raise; return `reason="error"` instead
@@ -54,7 +55,9 @@ A real driver needs to:
   - read its key from the environment, never from a committed file
   - lazy-import its SDK inside the method, per the project convention
 
-Then override `_try_open_cloud_answerer` in `app.py`.
+Then point `_try_open_cloud_answerer` in `app.py` at it. `OfflineGuard`
+below wraps whatever that returns, so the offline path does not need
+reimplementing per provider.
 """
 import sys
 

@@ -558,10 +558,11 @@ FALL_STILLNESS_DURATION_S = 2.0
 # unsure about, and "take me to the hospital" reaching a chatbot instead
 # of navigation is a failure this device cannot afford.
 #
-# No provider is chosen yet. `CLOUD_LLM_ENABLED` stays False until a
-# driver exists, so the wearable answers exactly as it does today. The
-# API key belongs in the environment, never in this file — config.py is
-# committed.
+# With the flag True and a provider wired, the API key is what actually
+# decides whether this path is live: an unset `INDEPENSENSE_CLOUD_API_KEY`
+# makes `_try_open_cloud_answerer` return None and the wearable answers
+# unknown utterances exactly as it did before. The key belongs in the
+# environment, never in this file — config.py is committed.
 #
 # `CLOUD_MAX_RESPONSE_CHARS` is a backstop, not the real control. The
 # answer is spoken by Piper, so a provider returning three paragraphs is
