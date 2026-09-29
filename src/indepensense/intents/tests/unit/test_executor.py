@@ -988,3 +988,97 @@ def test_a_heading_of_zero_survives_the_executor():
     ))
 
     assert router.last_heading == 0.0
+
+
+# --- system.shutdown ----------------------------------------------------------
+# Powering off is the one action a user cannot undo by speaking again: there is
+# no device left to ask. These pin the guards rather than the happy path.
+
+def _shutdown_executor(confirmer=None, shutdown=None, **kwargs):
+    from indepensense.intents.executor import IntentExecutor
+    from indepensense.language import LanguageState
+    from indepensense.routing.mock import MockGeocoder, MockRouter
+    return IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        language=LanguageState("en", ("en", "tl")),
+        confirmer=confirmer,
+        shutdown=shutdown,
+        **kwargs,
+    )
+
+
+def _shutdown_intent():
+    from indepensense.intents.base import Intent, IntentResult
+    return IntentResult(Intent.SYSTEM_SHUTDOWN, {}, "shut down", "")
+
+
+def test_a_confirmed_shutdown_is_armed_and_says_goodbye():
+    from indepensense.intents import messages
+    fired = []
+    executor = _shutdown_executor(confirmer=lambda q: True, shutdown=lambda: fired.append(1))
+
+    response = executor.execute(_shutdown_intent())
+
+    assert fired == [1]
+    assert response == messages.get("shutdown.goodbye", "en")
+
+
+def test_a_declined_shutdown_does_not_arm_anything():
+    """Silence is the decline, and it must leave the wearable running."""
+    from indepensense.intents import messages
+    fired = []
+    executor = _shutdown_executor(confirmer=lambda q: False, shutdown=lambda: fired.append(1))
+
+    response = executor.execute(_shutdown_intent())
+
+    assert fired == []
+    assert response == messages.get("shutdown.cancelled", "en")
+
+
+def test_the_user_is_asked_before_anything_happens():
+    """The confirmation question must actually reach the user — an executor
+    that armed first and asked second would be worse than not asking."""
+    from indepensense.intents import messages
+    asked = []
+
+    def _confirm(question):
+        asked.append(question)
+        return False
+
+    _shutdown_executor(confirmer=_confirm, shutdown=lambda: None).execute(_shutdown_intent())
+
+    assert asked == [messages.get("shutdown.confirm", "en")]
+
+
+def test_a_missing_confirmer_refuses_rather_than_proceeding():
+    """`navigation.start` treats a missing confirmer as "go ahead", because
+    the cost is a wrong walk. Here the cost is a dead device, so the default
+    is inverted: no way to ask means no shutdown."""
+    from indepensense.intents import messages
+    fired = []
+    executor = _shutdown_executor(confirmer=None, shutdown=lambda: fired.append(1))
+
+    response = executor.execute(_shutdown_intent())
+
+    assert fired == []
+    assert response == messages.get("shutdown.cancelled", "en")
+
+
+def test_no_shutdown_hook_says_so_instead_of_pretending():
+    """Claiming "goodbye" and then staying on would leave the user believing
+    a running device was off, and finding it flat later."""
+    from indepensense.intents import messages
+    executor = _shutdown_executor(confirmer=lambda q: True, shutdown=None)
+
+    assert executor.execute(_shutdown_intent()) == messages.get("shutdown.failed", "en")
+
+
+def test_the_goodbye_follows_the_active_language():
+    from indepensense.intents import messages
+    from indepensense.language import LanguageState
+    language = LanguageState("tl", ("en", "tl"))
+    executor = _shutdown_executor(confirmer=lambda q: True, shutdown=lambda: None)
+    executor._language = language
+
+    assert executor.execute(_shutdown_intent()) == messages.get("shutdown.goodbye", "tl")

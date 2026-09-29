@@ -156,6 +156,10 @@ ENGLISH_CASES = [
     ("Forget the place saved as work",   "place.delete", {"label": "work"}),
     ("Take me home",                     "navigation.start", {"location": "home"}),
 
+    # --- system.shutdown ---
+    ("Shut down the device",             "system.shutdown", {}),
+    ("Turn off IndepenSense",            "system.shutdown", {}),
+
     # --- system.help ---
     ("What can you do",                  "system.help", {}),
     ("What can I ask you",               "system.help", {}),
@@ -201,6 +205,8 @@ TAGALOG_CASES = [
     ("Ano ang kaya mong gawin",                       "system.help",         {}),
     ("Paano ito gamitin",                             "system.help",         {}),
 
+    ("Patayin mo ang IndepenSense",                   "system.shutdown",     {}),
+
     # --- unknown, bound for the cloud fallback ---
     ("Gaano katangkad ang Bundok Apo",                "unknown",             {}),
     ("Ilang araw na lang bago mag-Pasko",             "unknown",             {}),
@@ -213,6 +219,16 @@ TAGALOG_CASES = [
 # these should all resolve as expected. English-only for now — the Tagalog
 # equivalents are a known gap (see module docstring).
 ADVERSARIAL_CASES = [
+    # system.shutdown near-misses. Powering off is irreversible for the
+    # user, so the phrases one word away from it matter as much as the
+    # intent itself. The confirmation step is the real guard, but a
+    # classifier that reaches for shutdown on "shut up" would ask the
+    # question constantly and train the user to dismiss it.
+    ("shut up",                          "unknown", {}),
+    ("tumahimik ka",                     "unknown", {}),
+    ("turn the volume off",              "system.volume", {"direction": "down"}),
+    ("stop the trip",                    "navigation.stop", {}),
+
     # "time" in non-time-query context → unknown, not system.time
     ("sometime tomorrow",                "unknown", {}),
     ("one at a time please",             "unknown", {}),

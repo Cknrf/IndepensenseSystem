@@ -445,6 +445,36 @@ WHISPER_INITIAL_PROMPTS: dict[str, str] = {
 
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 
+# Pre-rendered speech played before the models are loaded.
+#
+# Startup takes 2-3 minutes — Whisper, two TTS engines, and the Ollama
+# warmup — and to a blind user silence is indistinguishable from a device
+# that failed to boot. The wearable has to say something immediately, but
+# it cannot *synthesise* anything yet: TTS is one of the things still
+# loading. So the greeting is rendered once, to a file, and replayed from
+# disk on every later boot. Playback needs only `soundfile` + PortAudio,
+# both available at the first line of `start()`.
+#
+# Filenames embed a hash of the message text, so editing
+# `messages.get("system.starting")` invalidates the old recording instead
+# of leaving the wearable saying something that is no longer in the source.
+# Gitignored and regenerated on demand rather than committed — a binary in
+# git that must stay in step with a string in Python is a drift waiting to
+# happen.
+STARTUP_AUDIO_DIR = PROJECT_ROOT / "data" / "audio"
+
+# How the wearable powers itself off for `system.shutdown`.
+#
+# `systemctl poweroff` rather than `shutdown -h now` because it is one
+# fixed argv with no time argument to get wrong, which makes the sudoers
+# rule it needs exact:
+#
+#   cknrf ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
+#
+# A tuple, not a shell string — nothing here goes near a shell, so there
+# is no quoting to get wrong and no way for a transcript to influence it.
+SHUTDOWN_COMMAND = ("sudo", "-n", "/usr/bin/systemctl", "poweroff")
+
 # Language the wearable starts in, and the set it can switch between.
 #
 # Tagalog is the default because it is the system's priority language and

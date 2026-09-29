@@ -62,6 +62,24 @@ An empty grep and an audible greeting mean it is working. If the greeting
 is silent, this is the first thing to check — before suspecting the audio
 device, the Piper voices, or the code.
 
+### Powering off by voice
+
+The `system.shutdown` intent runs `sudo systemctl poweroff`, and the
+service account has no password. One narrow rule grants exactly that
+one command and nothing else:
+
+```bash
+echo "cknrf ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff" \
+  | sudo tee /etc/sudoers.d/indepensense-poweroff
+sudo chmod 0440 /etc/sudoers.d/indepensense-poweroff
+sudo visudo -c -f /etc/sudoers.d/indepensense-poweroff   # must say "parsed OK"
+```
+
+Always check with `visudo -c` before trusting it — a malformed file in
+`/etc/sudoers.d/` can lock `sudo` out entirely. Without this rule the
+wearable asks for confirmation, hears it, and then says it could not
+turn itself off, which is the intended failure rather than a silent one.
+
 ## Verify
 
 Check status:

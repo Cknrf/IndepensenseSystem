@@ -96,8 +96,10 @@ constructor inline in `start()` silently drops it out of mock coverage.
 failure aborts startup. `_try_open_*` means degraded operation is
 acceptable — it logs, returns None, and every caller handles None.
 """
+import hashlib
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -188,6 +190,8 @@ from indepensense.config import (
     VIBRATION_RIGHT_GPIO,
     OCR_LANGUAGES,
     OCR_MAX_CHARS,
+    SHUTDOWN_COMMAND,
+    STARTUP_AUDIO_DIR,
     VOICE_TEST_DIR,
     VOLUME_DEFAULT_PERCENT,
     VOLUME_MAX_PERCENT,
@@ -588,6 +592,10 @@ class App:
         # "top:warning", "bottom:danger", etc.
         self._obstacle_last_fired: dict[str, float] = {}
 
+        # Set by the executor once the user confirms a shutdown; acted on
+        # by the voice thread after the goodbye has finished playing.
+        self._shutdown_requested = False
+
         # Mutex around warning playback so two overlapping warnings
         # don't race on the buzzer or motor state.
         self._warning_lock = threading.Lock()
@@ -596,6 +604,12 @@ class App:
 
     def start(self) -> None:
         print("Initialising IndepenSense runtime...", flush=True)
+
+        # Before anything slow: tell the user the device is awake. Startup
+        # is 2-3 minutes and every second of it is silent otherwise, which
+        # to somebody who cannot see the terminal is indistinguishable from
+        # a wearable that failed to boot.
+        self._play_startup_notice()
 
         print("  Opening MPU6050...", flush=True)
         self.imu = self._open_imu()
@@ -687,6 +701,7 @@ class App:
             # Bound method, resolved at call time — `self.ptt_button` is
             # still None right now and gets opened a few lines below.
             confirmer=self._confirm_destination,
+            shutdown=self._request_shutdown,
             places=self.places,
             volume=self.volume,
             heading=self.trusted_heading,
@@ -757,6 +772,10 @@ class App:
             flush=True,
         )
         self._speak_greeting()
+        # Now that TTS exists, make sure the next boot can speak at second
+        # zero. Deliberately last: it costs a synthesis per language and
+        # the user is already up and running by this point.
+        self._render_startup_notice()
 
     def run(self) -> None:
         """Main 100 Hz sensor loop. Blocks until shutdown.
@@ -1660,6 +1679,13 @@ class App:
                 return
             play(response_path)
 
+            # The goodbye has now been heard, so it is safe to cut power.
+            # Before `play()` would truncate it mid-word; from the user's
+            # side that is indistinguishable from the device crashing.
+            if self._shutdown_requested:
+                self._perform_shutdown()
+                return
+
             # Navigation just started: point the user the right way before
             # they take a step. Deliberately after the response has been
             # heard, so "Navigating to Jollibee, four hundred metres" lands
@@ -1855,6 +1881,118 @@ class App:
             return True
         print("[nav] destination confirmation timed out — cancelling.", flush=True)
         return False
+
+    def _startup_audio_path(self, language: str) -> Path:
+        """Where the pre-rendered "starting up" clip for `language` lives.
+
+        The message text is hashed into the filename, so editing
+        `system.starting` in `messages.py` points this at a file that does
+        not exist yet and the stale recording is simply never played again.
+        Without that, the wearable would keep speaking a sentence that is
+        no longer anywhere in the source — the kind of drift that costs an
+        afternoon to find.
+        """
+        text = messages.get("system.starting", language)
+        digest = hashlib.sha256(text.encode()).hexdigest()[:8]
+        return STARTUP_AUDIO_DIR / f"startup_{language}_{digest}.wav"
+
+    def _play_startup_notice(self) -> None:
+        """Play the pre-rendered startup message. Never raises.
+
+        Runs as the first thing in `start()`, before any model is loaded —
+        which is the whole point, and also the constraint: TTS is not
+        available yet, so this can only replay something rendered on a
+        previous boot. The very first boot after installation (or after
+        the message text changes) is therefore silent here, and
+        `_render_startup_notice` fixes that for every boot after.
+
+        Playback is blocking, and deliberately so: it is a few seconds at
+        the head of a 2-3 minute startup, and letting model loading talk
+        over the greeting would defeat it.
+        """
+        path = self._startup_audio_path(self.language.current)
+        if not path.exists():
+            print(
+                f"  (no startup clip yet at {path.name} — it will be "
+                f"rendered at the end of this boot)",
+                flush=True,
+            )
+            return
+        try:
+            play(path)
+        except Exception as exc:
+            print(f"[startup] could not play notice: {exc}", file=sys.stderr, flush=True)
+
+    def _render_startup_notice(self) -> None:
+        """Render the startup clip for every language, if missing. Never raises.
+
+        Every language, not just the active one, because the user can
+        switch with a voice command and the next boot must greet them in
+        whatever they chose — by which point TTS is again unavailable.
+
+        Stale clips for the same language are removed, so an edited
+        message leaves one file rather than a growing pile of recordings
+        of sentences nobody says any more.
+        """
+        for language in self.language.supported:
+            path = self._startup_audio_path(language)
+            if path.exists():
+                continue
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self.tts.synthesize(
+                    messages.get("system.starting", language), path, language=language,
+                )
+                for stale in path.parent.glob(f"startup_{language}_*.wav"):
+                    if stale != path:
+                        stale.unlink()
+                print(f"  Rendered startup clip for '{language}'.", flush=True)
+            except Exception as exc:
+                print(
+                    f"[startup] could not render '{language}' notice: {exc}",
+                    file=sys.stderr, flush=True,
+                )
+
+    def _request_shutdown(self) -> None:
+        """Arm the power-off. Called by the executor after the user confirms.
+
+        Only sets a flag. The goodbye still has to be synthesised and
+        played by `_voice_pipeline`, and cutting power before it finishes
+        would leave the user unsure the device heard them at all.
+        """
+        print("[shutdown] confirmed — powering off after the goodbye.", flush=True)
+        self._shutdown_requested = True
+
+    def _perform_shutdown(self) -> None:
+        """Actually power the machine off. Never raises.
+
+        Split from `_request_shutdown` so the goodbye is spoken first, and
+        kept out of the executor because the executor must stay free of
+        anything that touches this host.
+
+        Needs one sudoers line (see `config.SHUTDOWN_COMMAND`). A failure
+        is spoken rather than swallowed: a user who asked to turn the
+        device off and heard "goodbye" would otherwise walk away believing
+        a still-running wearable was off, and find it flat later.
+        """
+        print(f"[shutdown] running {' '.join(SHUTDOWN_COMMAND)}", flush=True)
+        try:
+            completed = subprocess.run(
+                SHUTDOWN_COMMAND, capture_output=True, text=True, timeout=10,
+            )
+            if completed.returncode == 0:
+                return
+            detail = (completed.stderr or completed.stdout or "").strip()[:200]
+            print(
+                f"[shutdown] failed (exit {completed.returncode}): {detail}",
+                file=sys.stderr, flush=True,
+            )
+        except Exception as exc:
+            print(f"[shutdown] failed: {exc}", file=sys.stderr, flush=True)
+
+        self._shutdown_requested = False
+        self._announce(messages.get("shutdown.failed", self.language.current),
+                       critical=True)
 
     def _speak_greeting(self) -> None:
         """Announce readiness in the active language. Never raises.

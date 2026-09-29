@@ -216,6 +216,22 @@ class MockApp(App):
     def _try_open_ocr(self) -> MockOCR:
         return MockOCR()
 
+    # -- not a device factory, but it must not be inherited ------------------
+
+    def _perform_shutdown(self) -> None:
+        """Print instead of powering off the development machine.
+
+        The only override here that is not an `_open_*` factory, and it
+        earns the exception: every other piece of hardware has a mock
+        because the real one is absent on a Mac, whereas
+        `systemctl poweroff` would work perfectly — on the developer's
+        laptop, mid-session. The confirmation flow, the goodbye and the
+        flag all still run, so `end_to_end_test` exercises the whole path
+        and stops one call short of the consequence.
+        """
+        print("[mock] shutdown requested — not powering off.", flush=True)
+        self._shutdown_requested = False
+
 
 def main() -> None:
     print("=" * 68, flush=True)

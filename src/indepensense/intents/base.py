@@ -30,6 +30,7 @@ class Intent(Enum):
     SYSTEM_LANGUAGE = "system.language"
     SYSTEM_HELP = "system.help"
     SYSTEM_VOLUME = "system.volume"
+    SYSTEM_SHUTDOWN = "system.shutdown"
     PLACE_SAVE = "place.save"
     PLACE_DELETE = "place.delete"
     UNKNOWN = "unknown"

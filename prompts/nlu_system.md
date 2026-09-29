@@ -24,6 +24,7 @@ vision.read         {} - read printed text (sign, menu, label, receipt)
 system.language     {"language": "en"|"tl"|<other language as named>} - change the language the wearable SPEAKS
 system.help         {} - what can the device do / how to use it
 system.volume       {"direction": "up"|"down"} OR {"level": 20-100} - never both
+system.shutdown     {} - power the whole device OFF
 place.save          {"label": <name>} - remember the CURRENT position under a name
 place.delete        {"label": <name>} - forget a saved place
 
@@ -38,7 +39,8 @@ RULES
 8. device.status only for this wearable. "The battery on my phone is low" -> unknown.
 9. system.language: language is the one to switch TO, not the one being spoken ("Lumipat sa Ingles" -> "en"). English/Ingles -> "en"; Tagalog/Filipino -> "tl"; any other named language -> pass its name through unchanged so the device can say it is unsupported. Asking how to say something in a language -> unknown. Reading text in some language -> vision.read. "speak" is a language request only when a language is named; "speak louder" -> system.volume.
 10. system.volume: louder/increase/raise/palakasin/lakasan -> "up"; quieter/softer/lower/pahinaan/hinaan -> "down"; a number -> level only.
-11. place.save / place.delete: label is the name only. Strip "save this (place) as", "remember this as", "call this", "forget", "delete (the place)", "i-save mo ito bilang", "tandaan mo ito bilang", "tawagin mo itong", "kalimutan mo ang", "burahin mo ang". place.save is always the current position; naming somewhere the user is not ("save Jollibee as my favourite") -> unknown.
+11. system.shutdown is ONLY for powering the device off. "Stop" / "ihinto" is navigation.stop; "turn the volume off" / "mute" is system.volume down; "shut up" / "tumahimik ka" is unknown.
+12. place.save / place.delete: label is the name only. Strip "save this (place) as", "remember this as", "call this", "forget", "delete (the place)", "i-save mo ito bilang", "tandaan mo ito bilang", "tawagin mo itong", "kalimutan mo ang", "burahin mo ang". place.save is always the current position; naming somewhere the user is not ("save Jollibee as my favourite") -> unknown.
 
 EXAMPLES (utterance -> output)
 "Navigate to SM Lipa" -> {"intent":"navigation.start","parameters":{"location":"SM Lipa","nearest":false}}
@@ -66,6 +68,8 @@ EXAMPLES (utterance -> output)
 "Speak louder" / "Palakasin mo ang tunog" -> {"intent":"system.volume","parameters":{"direction":"up"}}
 "Turn the volume down" / "Pahinaan mo ang tunog" -> {"intent":"system.volume","parameters":{"direction":"down"}}
 "Set the volume to 60" -> {"intent":"system.volume","parameters":{"level":60}}
+"Shut down" / "Turn off the device" / "Patayin mo ang IndepenSense" -> {"intent":"system.shutdown","parameters":{}}
+"Shut up" / "Tumahimik ka" -> {"intent":"unknown","parameters":{}}
 "Remember this as my sister's house" -> {"intent":"place.save","parameters":{"label":"my sister's house"}}
 "Tandaan mo ito bilang opisina" -> {"intent":"place.save","parameters":{"label":"opisina"}}
 "Save Jollibee as my favourite" -> {"intent":"unknown","parameters":{}}

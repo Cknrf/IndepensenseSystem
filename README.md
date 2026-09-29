@@ -88,6 +88,8 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Natural-language responses (Piper TTS for English, MMS-TTS for Tagalog)
 - Speech can be interrupted — the repeat button stops the wearable mid-sentence, which matters when OCR is reading a menu
 - Spoken help, so a user who cannot read a manual can ask what the device does
+- Speaks as soon as it is powered on — startup takes 2-3 minutes, and a pre-rendered announcement plays before any model loads so silence is never mistaken for a device that failed to boot
+- Voice shutdown, gated behind a spoken question and a confirming button press
 - Speaker volume by voice, with a floor the user cannot go below
 
 **Guardian System**
@@ -305,7 +307,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 |---|---|
 | GraphHopper + Photon end-to-end lookup | `python -m indepensense.routing.tests.manual.end_to_end_test` |
 | Voice → intent → handler end-to-end | `python -m indepensense.intents.tests.manual.end_to_end_test` — add `--keyboard` when the PTT/SOS buttons aren't wired. A navigation command takes **three** presses: start, stop, then confirm the destination |
-| LLM intent-classification probe (91 test prompts — 45 English, 25 Tagalog, 21 adversarial — scored per language group) | `python -m indepensense.intents.tests.manual.llm_probe` |
+| LLM intent-classification probe (98 test prompts — 47 English, 26 Tagalog, 25 adversarial — scored per language group) | `python -m indepensense.intents.tests.manual.llm_probe` |
 | Cloud LLM probe — real Mistral calls, latency and answer quality | `python -m indepensense.intents.tests.manual.cloud_probe` |
 
 ### System Profiling
@@ -414,6 +416,7 @@ than magic words — the full rules and the Tagalog equivalents live in
 | `system.language` | "Switch to English" · "Lumipat sa Ingles" | Confirms in the language switched *to* |
 | `system.volume` | "Louder" · "Set the volume to 60" | Floor of 20%; the buzzer is unaffected |
 | `system.help` | "What can you do" | |
+| `system.shutdown` | "Shut down" · "Patayin mo ang IndepenSense" | Asks first — a **PTT press** within the confirm window powers the Pi off; silence cancels. Needs the sudoers rule in [`deploy/systemd/README.md`](deploy/systemd/README.md) |
 | `emergency.trigger` | "Help" · "Tulong" | Also the emergency button. A bare cry for help is always an emergency, never a request for the help intent |
 | *(anything else)* | — | Forwarded to the cloud LLM when online, otherwise "I didn't catch that" |
 

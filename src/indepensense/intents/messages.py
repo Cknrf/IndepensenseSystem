@@ -104,6 +104,37 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "IndepenSense is ready. I am speaking English.",
         "tl": "Handa na ang IndepenSense. Tagalog ang ginagamit ko.",
     },
+    # Spoken from a pre-rendered file at the very first line of `start()`,
+    # before any model is loaded — see `config.STARTUP_AUDIO_DIR`. It has
+    # to name the wait explicitly: a blind user cannot see a progress
+    # indicator, and two silent minutes reads as a device that never woke.
+    "system.starting": {
+        "en": "IndepenSense is starting up. This takes about two minutes. "
+              "I will tell you when I am ready.",
+        "tl": "Nagsisimula na ang IndepenSense. Aabutin ito ng mga dalawang "
+              "minuto. Sasabihin ko po kapag handa na ako.",
+    },
+
+    # --- shutdown -----------------------------------------------------------
+    # Powering off is the one action the wearable cannot undo for its user:
+    # afterwards there is no device left to ask for help with, which is why
+    # it is the only intent besides navigation that asks before acting.
+    "shutdown.confirm": {
+        "en": "Do you want to turn off IndepenSense? Press the button to confirm.",
+        "tl": "Gusto mo bang patayin ang IndepenSense? Pindutin ang butones para sang-ayunan.",
+    },
+    "shutdown.goodbye": {
+        "en": "Turning off now. Goodbye, and stay safe.",
+        "tl": "Papatayin ko na po. Paalam, at mag-ingat ka.",
+    },
+    "shutdown.cancelled": {
+        "en": "Shutdown cancelled. I am still here.",
+        "tl": "Kanselado ang pagpatay. Nandito pa rin po ako.",
+    },
+    "shutdown.failed": {
+        "en": "I could not turn myself off. Please power the device off by hand.",
+        "tl": "Hindi ko po mapatay ang sarili ko. Pakipatay na lang po ang device nang manu-mano.",
+    },
 
     # --- navigation ---------------------------------------------------------
     "nav.no_destination_heard": {

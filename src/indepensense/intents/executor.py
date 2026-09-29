@@ -230,6 +230,11 @@ class IntentExecutor:
         # speech and a button press, which this class must stay free of —
         # tests pass a lambda, `app.py` passes the real thing.
         confirmer: Callable[[str], bool] | None = None,
+        # Arms the power-off. Called only after the user has confirmed,
+        # and must NOT power the device off itself — the goodbye has not
+        # been spoken yet at that point. `app.py` sets a flag here and
+        # acts on it once playback finishes; tests pass a recorder.
+        shutdown: Callable[[], None] | None = None,
         # Places the user named themselves. None disables saving and
         # falls back to geocoding every destination, which is what the
         # wearable did before this existed.
@@ -262,6 +267,7 @@ class IntentExecutor:
         )
         self._cloud = cloud
         self._confirmer = confirmer
+        self._shutdown = shutdown
         self._places = places
         self._volume = volume
         self._heading = heading
@@ -305,6 +311,7 @@ class IntentExecutor:
             Intent.NAVIGATION_LOCATION: self._handle_navigation_location,
             Intent.NAVIGATION_PROGRESS: self._handle_navigation_progress,
             Intent.EMERGENCY_TRIGGER:   self._handle_emergency_trigger,
+            Intent.SYSTEM_SHUTDOWN:     self._handle_system_shutdown,
             Intent.DEVICE_STATUS:       self._handle_device_status,
             Intent.SYSTEM_TIME:         self._handle_system_time,
             Intent.VISION_DESCRIBE:     self._handle_vision_describe,
@@ -484,6 +491,48 @@ class IntentExecutor:
         if self._telemetry.send_alert(event):
             return messages.get("emergency.sent", self._lang)
         return messages.get("emergency.queued", self._lang)
+
+    def _handle_system_shutdown(self, result: IntentResult) -> str:
+        """Confirm, then arm the power-off. Never powers off directly.
+
+        Shutdown is the only non-navigation intent that asks first. The
+        reason is asymmetry: every other misfire is recoverable by saying
+        something else, whereas a wrong power-off leaves a blind user
+        holding a dead cane on a street, with no device left to ask for
+        help. The classifier is good but not perfect — `"shut up"` and
+        `"turn the volume off"` live one word away from this intent — so
+        the confirmation is the actual safety mechanism, not the
+        classifier.
+
+        Reuses the same confirmer as `navigation.start`: the question is
+        spoken, a PTT press within the timeout means yes, and silence
+        means no. Silence-as-decline fails in the right direction here for
+        the same reason it does there — a user who did not hear the
+        question, or is not holding the device, keeps their wearable.
+
+        Returning the goodbye rather than powering off is deliberate. The
+        caller still has to synthesise and play that sentence, and a
+        device that cuts power mid-word would leave the user unsure
+        whether it heard them at all.
+        """
+        if self._shutdown is None:
+            # No hook wired (tests, or a host that cannot power itself
+            # off). Say so rather than claiming a shutdown that will not
+            # happen.
+            return messages.get("shutdown.failed", self._lang)
+
+        if self._confirmer is None:
+            # Unlike navigation, a missing confirmer must NOT mean "go
+            # ahead" — that would turn every misclassification into a
+            # power-off. Refuse instead.
+            print("[shutdown] no confirmer wired — refusing.", file=sys.stderr, flush=True)
+            return messages.get("shutdown.cancelled", self._lang)
+
+        if not self._confirmer(messages.get("shutdown.confirm", self._lang)):
+            return messages.get("shutdown.cancelled", self._lang)
+
+        self._shutdown()
+        return messages.get("shutdown.goodbye", self._lang)
 
     def _handle_device_status(self, result: IntentResult) -> str:
         field = result.parameters.get("status_field", "")
