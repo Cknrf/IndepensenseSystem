@@ -6,4 +6,3 @@ So the least we can do about here, is to have some sort of the message, or even 
 - Let's have now the service for the app.py, what I mean by this, is to automatically start the program without manually running it.
 - Let's have an intent for shutdown of the PI, but since this is critical, there would be verification/confirmation message first, if the user confirmed or agreed or say yes, then proceed to shutdown. And let's have a goodbye message as well for this to be played
 
-

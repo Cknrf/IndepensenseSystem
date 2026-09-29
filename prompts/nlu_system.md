@@ -43,7 +43,7 @@ EXAMPLES (utterance -> output)
 "Help me find the store" -> {"intent":"navigation.start","parameters":{"location":"store","nearest":false}}
 "Cancel navigation" / "Ihinto ang navigation" -> {"intent":"navigation.stop","parameters":{}}
 "Say that again" / "Ulitin mo yung sinabi" -> {"intent":"navigation.repeat","parameters":{}}
-"Where am I" / "Nasaan ako" -> {"intent":"navigation.location","parameters":{}}
+"Where am I" / "Nasaan ako" / "What's my current address" / "Tell me my location" -> {"intent":"navigation.location","parameters":{}}
 "How much further" / "Gaano pa kalayo" / "Malayo pa ba" -> {"intent":"navigation.progress","parameters":{}}
 "How far is Jollibee from here" -> {"intent":"unknown","parameters":{}}
 "Help" / "Tulong" / "I need help now" -> {"intent":"emergency.trigger","parameters":{}}
@@ -58,10 +58,11 @@ EXAMPLES (utterance -> output)
 "How do you say hello in Tagalog" -> {"intent":"unknown","parameters":{}}
 "What can you do" / "Paano ito gamitin" -> {"intent":"system.help","parameters":{}}
 "Speak louder" / "Palakasin mo ang tunog" -> {"intent":"system.volume","parameters":{"direction":"up"}}
+"Turn the volume down" / "Pahinaan mo ang tunog" -> {"intent":"system.volume","parameters":{"direction":"down"}}
 "Set the volume to 60" -> {"intent":"system.volume","parameters":{"level":60}}
 "Remember this as my sister's house" -> {"intent":"place.save","parameters":{"label":"my sister's house"}}
 "Tandaan mo ito bilang opisina" -> {"intent":"place.save","parameters":{"label":"opisina"}}
 "Save Jollibee as my favourite" -> {"intent":"unknown","parameters":{}}
 "Forget the place saved as home" -> {"intent":"place.delete","parameters":{"label":"home"}}
 "Kalimutan mo ang bahay" -> {"intent":"place.delete","parameters":{"label":"bahay"}}
-"Play some music" / "thank you" / "okay" / "the weather is nice today" -> {"intent":"unknown","parameters":{}}
+"Play some music" / "thank you" / "okay" / "the weather is nice today" / "sometime tomorrow" / "one at a time please" / "in a bit" / "any time" / "How tall is Mount Apo" / "What is the capital of Japan" / "How many days until Christmas" / "Ilang araw bago mag-Pasko" / "Gaano katangkad ang Bundok Apo" / "where is Jollibee" / "I speak Tagalog at home" / "Send a text to my mom" / "Magpatugtog ka ng musika" -> {"intent":"unknown","parameters":{}}
