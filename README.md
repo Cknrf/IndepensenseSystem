@@ -283,6 +283,8 @@ After wiring a component (or after any hardware change), run its test to confirm
 | Purpose | Command |
 |---|---|
 | Live fall detection (drop the wearable safely) | `python -m indepensense.safety.tests.manual.live_fall_test` |
+| Record a labelled IMU trace for offline replay | `python -m indepensense.safety.tests.manual.record_trace <label>` — prefix the label `fall_` or `adl_` so `fall_probe` can score it. Reports the achieved sample rate, which the freefall gate depends on |
+| Fall-detector sensitivity + specificity over recorded traces | `python -m indepensense.safety.tests.manual.fall_probe` — add `--sweep` to grid over the freefall and impact thresholds, `--trace <name>` for one recording. Runs on a Mac; no hardware needed |
 
 ### Telemetry
 
