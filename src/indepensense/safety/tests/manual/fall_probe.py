@@ -87,14 +87,22 @@ class Trace:
     achieved_hz: float
 
 
-def load_traces(directory: Path) -> list[Trace]:
-    traces = []
+def load_traces(directory: Path) -> tuple[list[Trace], list[str]]:
+    """Load every trace, skipping ones recorded before the gyro existed.
+
+    Skipped rather than fatal: one stale file from an earlier session
+    should not block scoring the nine good ones. Still never zero-filled
+    — the names are returned so the caller can say exactly what was left
+    out, because a silently smaller dataset reads as a real result.
+    """
+    traces, skipped = [], []
     for path in sorted(directory.glob("*.csv")):
-        traces.append(load_trace(path))
-    return traces
+        trace = load_trace(path)
+        (traces if trace is not None else skipped).append(trace or path.name)
+    return traces, skipped
 
 
-def load_trace(path: Path) -> Trace:
+def load_trace(path: Path) -> Trace | None:
     hz = 0.0
     readings: list[IMUReading] = []
 
@@ -107,18 +115,13 @@ def load_trace(path: Path) -> Trace:
             continue
         values = [float(v) for v in line.split(",")]
         if len(values) != 7:
-            # Traces recorded before the gyro was captured. Rejected
-            # rather than zero-filled: a rotation-based detector reading
-            # gx=gy=gz=0 would conclude "no rotation at all" and score
-            # every old fall as a miss, which looks like an algorithm
-            # result rather than missing data. Loudly useless beats
-            # quietly wrong.
-            raise SystemExit(
-                f"{path.name} has {len(values)} columns, expected 7 "
-                f"(t,ax,ay,az,gx,gy,gz).\nIt predates gyro recording. "
-                f"Delete it and re-record — a rotation signal cannot be "
-                f"recovered from an accelerometer-only trace."
-            )
+            # Recorded before the gyro was captured. Dropped rather than
+            # zero-filled: a rotation signal cannot be recovered from an
+            # accelerometer-only trace, and gx=gy=gz=0 would read as
+            # "no rotation at all" — scoring every old fall as a miss
+            # and looking like an algorithm result rather than missing
+            # data. Loudly absent beats quietly wrong.
+            return None
         t, ax, ay, az, gx, gy, gz = values
         readings.append(
             IMUReading(
@@ -407,7 +410,7 @@ def main() -> None:
             "  python -m indepensense.safety.tests.manual.record_trace fall_forward"
         )
 
-    traces = load_traces(directory)
+    traces, skipped = load_traces(directory)
     if args.trace:
         traces = [t for t in traces if t.name == args.trace]
     if not traces:
@@ -415,6 +418,10 @@ def main() -> None:
 
     labelled = [t for t in traces if t.is_fall is not None]
     rates = {round(t.achieved_hz) for t in traces if t.achieved_hz}
+    if skipped:
+        print(f"\n  SKIPPED {len(skipped)} pre-gyro trace(s): {', '.join(skipped)}")
+        print("  They have no rotation data and cannot be scored. Delete them:")
+        print(f"    rm {' '.join(str(directory / n) for n in skipped)}")
     print(f"\n  {len(traces)} trace(s), {len(labelled)} labelled, from {directory}")
     print(f"  {sum(1 for t in labelled if t.is_fall)} falls, "
           f"{sum(1 for t in labelled if not t.is_fall)} daily activities")
