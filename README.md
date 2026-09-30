@@ -332,9 +332,10 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
    ```
 2. **Confirm I²C devices:**
    ```bash
-   i2cdetect -y 1
+   i2cdetect -y 1     # I2C1 — expect 0x2D (UPS HAT), 0x68 (MPU6050)
+   i2cdetect -y 4     # I2C4 — expect 0x2C (QMC5883P compass)
    ```
-   Expected: `0x2D` (UPS HAT), `0x68` (MPU6050), `0x2C` (QMC5883P magnetometer). If the compass shows at `0x0D` instead it is a QMC5883L, a different chip — see [`docs/hardware.md`](docs/hardware.md).
+   The compass is on its own bus; bus 4 exists only if `dtoverlay=i2c4,pins_8_9` is in `/boot/firmware/config.txt`. Any address on bus 1 that isn't `0x2D` or `0x68` is a phantom and means the bus is electrically marginal — see [`docs/hardware.md`](docs/hardware.md). If the compass shows at `0x0D` it is a QMC5883L, a different chip.
 3. **Confirm serial devices:**
    ```bash
    ls /dev/ttyUSB* /dev/ttyAMA*
@@ -378,7 +379,8 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 
 | Symptom | Likely cause / fix |
 |---|---|
-| `i2cdetect` doesn't show a device | SDA/SCL swapped, wrong I²C bus (we use bus 1, not 0), or the device isn't powered |
+| `i2cdetect` doesn't show a device | SDA/SCL swapped, wrong bus (IMU and UPS HAT are on bus 1, the compass on bus 4), missing `dtoverlay=i2c4,pins_8_9`, or the device isn't powered |
+| `[Errno 121] Remote I/O error`, or a device that enumerates but fails on first write | Marginal I²C bus — too many breakout pull-ups in parallel. A phantom address in `i2cdetect` confirms it. See the compass section of [`docs/hardware.md`](docs/hardware.md) |
 | DYP-A22 returns 0 or fluctuates wildly | Wired to 5 V instead of **3.3 V** (may already be damaged); wrong UART; loose ground |
 | MPU6050 returns all zeros mid-test | Loose wire (very common after drop tests) — reseat SDA, SCL, VCC, GND |
 | Camera not detected | Ribbon cable inserted backwards, or camera not enabled in `raspi-config` |

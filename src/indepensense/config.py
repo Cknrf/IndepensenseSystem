@@ -107,7 +107,8 @@ OBSTACLE_COOLDOWN_S = 2.0        # per sensor: don't fire the same tier again
 # MUST be True for any demo, field test or deployment.
 OBSTACLE_BUZZER_ENABLED = False
 
-# MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus).
+# MPU6050 IMU — I²C wiring on the Raspberry Pi 5 (I2C1 bus, shared with
+# the UPS HAT only; the compass has its own bus, see MAG_I2C_BUS).
 # Accelerometer + gyroscope only; heading comes from the separate
 # QMC5883P below. (The MPU9250 bought as an upgrade turned out to be a
 # relabelled MPU6500 with no magnetometer die, so there is no upgrade
@@ -115,16 +116,21 @@ OBSTACLE_BUZZER_ENABLED = False
 MPU6050_I2C_BUS = 1
 MPU6050_ADDRESS = 0x68
 
-# QMC5883P magnetometer — a standalone compass chip on the same I2C1
-# bus, at its own fixed address. Its own bus constant rather than
-# reusing MPU6050_I2C_BUS: this is an unrelated device that merely
-# shares the wires, and conflating them would hide that.
+# QMC5883P magnetometer — a standalone compass chip on its own I²C bus
+# (I2C4, header pins 24/21), at its own fixed address.
+#
+# Bus 4, not 1: with the compass on I2C1 alongside the MPU6050 and the
+# UPS HAT, three sets of breakout pull-ups in parallel dropped the bus
+# to ~1 kΩ, below what a device can reliably sink. The bus failed
+# intermittently and the failure migrated between devices. I2C4 needs
+# `dtoverlay=i2c4,pins_8_9` in /boot/firmware/config.txt — see
+# docs/hardware.md for the measurements.
 #
 # 0x2C is the QMC5883P. The board was sold as a "QMC5883L", which would
 # be 0x0D — a different chip with an incompatible register map. Confirm
-# with `i2cdetect -y 1` before changing this; the address identifies the
-# part. See docs/hardware.md.
-MAG_I2C_BUS = 1
+# with `i2cdetect -y 4` before changing this; the address identifies the
+# part.
+MAG_I2C_BUS = 4
 MAG_ADDRESS = 0x2C
 
 # How often the main loop samples the compass. The QMC5883P is

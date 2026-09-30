@@ -13,7 +13,7 @@ magnitude, and the computed heading. Rotate the cane slowly and check:
     signature of an uncalibrated sensor — run `magnetometer_calibrate`.
 
 If construction fails with a chip-ID error, the part at `MAG_ADDRESS` is
-not a QMC5883P. Check `sudo i2cdetect -y 1`: `0x2C` is the QMC5883P,
+not a QMC5883P. Check `sudo i2cdetect -y 4`: `0x2C` is the QMC5883P,
 `0x0D` a QMC5883L, `0x1E` a genuine Honeywell HMC5883L. None of the
 three share a register map, so only 0x2C works with this driver.
 """

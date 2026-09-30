@@ -1,7 +1,11 @@
 """QMC5883P 3-axis magnetometer driver over I²C.
 
-A standalone compass chip (QST Corp), independent of the IMU — it shares
-only the SDA/SCL wires and needs no host-side setup to appear on the bus.
+A standalone compass chip (QST Corp), independent of the IMU. It sits on
+its own I²C bus (I2C4, header pins 24/21) rather than sharing I2C1 with
+the IMU and the UPS HAT: three breakouts' pull-ups in parallel took that
+bus below the resistance a device can reliably pull low. `docs/hardware.md`
+records the measurements. The bus needs `dtoverlay=i2c4,pins_8_9` in
+/boot/firmware/config.txt; nothing else is required host-side.
 
 Beware the family naming, which has now bitten this project twice. The
 part fitted to boards sold as "QMC5883L", "HMC5883L", "GY-271" or
@@ -13,7 +17,7 @@ are mutually incompatible:
     QMC5883L    0x0D   0x0D -> 0xFF     0x00-0x05  0x06
     HMC5883L    0x1E   0x0A -> 'H48'    0x03-0x08  0x09
 
-This driver is for the **P**. Confirm with `i2cdetect -y 1` before
+This driver is for the **P**. Confirm with `i2cdetect -y 4` before
 assuming: the address alone identifies the part.
 
 Register map (QMC5883P datasheet Rev C, §9)

@@ -93,7 +93,10 @@ def main():
     print()
     if sample_count == 0 or x_min is None:
         print("No samples captured — the magnetometer isn't returning data.")
-        print(f"Check `sudo i2cdetect -y 1` for address 0x{MAG_ADDRESS:02X}.")
+        print(
+            f"Check `sudo i2cdetect -y {MAG_I2C_BUS}` "
+            f"for address 0x{MAG_ADDRESS:02X}."
+        )
         return
 
     offset_x = (x_max + x_min) / 2

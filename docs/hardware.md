@@ -17,9 +17,9 @@ here, then read that component's section.
 ```
 Pin 1  (3V3)              DYP-A22 TOP          VCC   — also feeds the 3.3 V rail
 Pin 2  (5V)               MPU6050              VCC   — and the motors' 5 V rail
-Pin 3  (GPIO 2 / SDA)     shared I2C1          SDA   — MPU6050, compass, UPS HAT
+Pin 3  (GPIO 2 / SDA)     shared I2C1          SDA   — MPU6050, UPS HAT
 Pin 4  (5V)               Perfboard
-Pin 5  (GPIO 3 / SCL)     shared I2C1          SCL   — MPU6050, compass, UPS HAT
+Pin 5  (GPIO 3 / SCL)     shared I2C1          SCL   — MPU6050, UPS HAT
 Pin 6  (GND)              DYP-A22 TOP          GND
 Pin 8  (GPIO 14 / TX)     DYP-A22 TOP          RX
 Pin 9  (GND)              MPU6050              GND
@@ -27,24 +27,30 @@ Pin 10 (GPIO 15 / RX)     DYP-A22 TOP          TX
 Pin 11 (GPIO 17)          Vibration motor      FRONT
 Pin 12 (GPIO 18)          Active buzzer        +
 Pin 13 (GPIO 27)          Vibration motor      RIGHT
-Pin 14 (GND)              QMC5883P compass     GND
 Pin 15 (GPIO 22)          Vibration motor      LEFT
 Pin 16 (GPIO 23)          Button               PTT
 Pin 17 (3V3)              DYP-A22 BOTTOM       VCC
 Pin 18 (GPIO 24)          Button               EMERGENCY
+Pin 21 (GPIO 9 / SCL4)    QMC5883P compass     SCK   — I2C4, its own bus
 Pin 22 (GPIO 25)          Button               REPEAT / STOP
+Pin 24 (GPIO 8 / SDA4)    QMC5883P compass     SDA   — I2C4, its own bus
 Pin 30 (GND)              DYP-A22 BOTTOM       GND
 Pin 32 (GPIO 12 / TX)     DYP-A22 BOTTOM       RX
 Pin 33 (GPIO 13 / RX)     DYP-A22 BOTTOM       TX
+Pin 34 (GND)              QMC5883P compass     GND
 ```
 
-Free GND pins for the shared ground rail: **20, 25, 34, 39**.
+Free GND pins for the shared ground rail: **14, 20, 25, 39**.
 
 **Shared rails.** Both 3.3 V pins (1 and 17) are consumed by the two DYP-A22s,
 but the three buttons and the compass also need 3.3 V. The build therefore has
 a distributed 3.3 V rail — splice into it rather than hunting for a free header
-pin. Same for SDA/SCL: the MPU6050, compass and UPS HAT share the same two
-wires.
+pin.
+
+**Two I²C buses, not one.** I2C1 (pins 3/5) carries the MPU6050 and the UPS
+HAT. The compass has its own bus, I2C4, on pins 24/21 — it was on I2C1 and a
+third set of pull-ups made that bus unreliable. See the compass section for
+the measurements and the reasoning.
 
 **Critical:** DYP-A22 is a **3.3 V** sensor. Wiring it to a 5 V pin will
 damage it. The compass is the same — it is the one component most likely to be
@@ -301,14 +307,14 @@ I²C device on the Pi's primary I²C bus (I2C1) at address `0x68`.
 ```
 Pin 2 (VCC)     VCC     5 V — this board has an on-board regulator
 Pin 9 (GND)     GND
-Pin 3 (GPIO 2)  SDA     shared with the compass and the UPS HAT
+Pin 3 (GPIO 2)  SDA     shared with the UPS HAT
 Pin 5 (GPIO 3)  SCL     shared
 ```
 
 Used by the fall detector at 100 Hz sample rate. ±8 g accelerometer range
-configured in the driver. Shares the I²C bus with the compass (`0x2C`) and
-the Waveshare UPS HAT (`0x2D`) — all three addresses are distinct, so no
-conflict.
+configured in the driver. Shares I2C1 with the Waveshare UPS HAT (`0x2D`)
+only — two devices, distinct addresses, no conflict. The compass was briefly
+on this bus too and had to be moved; see its section for why.
 
 **Do not copy the Pin 2 (5 V) line to the compass.** The MPU6050 tolerates it
 because of its regulator; most compass breakouts do not. See the next section.
@@ -323,18 +329,25 @@ python -m indepensense.sensors.tests.manual.single_mpu6050_test
 
 # 7. QMC5883P magnetometer — STATUS: wired, calibration outstanding
 
-Standalone 3-axis compass on I2C1 at address **`0x2C`**. Independent of the
-IMU: it shares only the SDA/SCL wires, so it appears in `i2cdetect`
-immediately, with no host-side setup needed.
+Standalone 3-axis compass at address **`0x2C`**, on **its own I²C bus, I2C4**
+— not the I2C1 bus the MPU6050 and UPS HAT share. That separation is
+deliberate and was forced by measurement; see "Why its own bus" below.
+
+I2C4 does not exist until `dtoverlay=i2c4,pins_8_9` is in
+`/boot/firmware/config.txt` — see the one-time setup section at the end.
 
 ```
 3.3 V rail      VDD     ⚠️ NOT Pin 2 (5 V). Pins 1 and 17 are taken by the
                            DYP-A22s — tap the shared 3.3 V rail.
-Pin 14 (GND)    GND     or any free GND: 20, 25, 34, 39
-Pin 3 (GPIO 2)  SDA     shared with the MPU6050 and the UPS HAT
-Pin 5 (GPIO 3)  SCK     shared. Labelled SCK on this part, = SCL
+Pin 34 (GND)    GND     or any free GND: 14, 20, 25, 39
+Pin 24 (GPIO 8) SDA     I2C4 — the compass alone
+Pin 21 (GPIO 9) SCK     I2C4. Labelled SCK on this part, = SCL
                 DRDY    not connected
 ```
+
+Pins 24 and 21 are adjacent on the header, which keeps the run short. They
+are also SPI0's CE0 and MISO — nothing in this build uses SPI and it is
+disabled by default, but an SPI device added later would collide.
 
 **⚠️ Power it from 3.3 V, NOT Pin 2.** The MPU6050 section above uses Pin 2,
 which is 5 V — that board has a regulator, GY-271-style compass breakouts
@@ -343,23 +356,55 @@ MPU6050 pin list verbatim is the most likely way to destroy this sensor.
 3.3 V is safe on either board variant: the bare chip runs at 2.5-3.6 V, and a
 board that does carry an LDO still passes 3.3 V through fine.
 
-Two of the four wires are **taps onto rails that already exist**, not free
-header pins — the Pi's only two 3.3 V pins (1 and 17) are already taken by the
-two DYP-A22s, and the three push buttons already need 3.3 V, so the build has
-a distributed 3.3 V rail regardless. Splice into it; do the same for SDA/SCL,
-which the MPU6050 is already on.
+VDD is a **tap onto a rail that already exists**, not a free header pin — the
+Pi's only two 3.3 V pins (1 and 17) are already taken by the two DYP-A22s,
+and the three push buttons already need 3.3 V, so the build has a distributed
+3.3 V rail regardless. Splice into it. SDA, SCK and GND all reach free header
+pins directly and need no splicing.
 
-No level shifter and no I²C address conflict: `0x2C` (compass), `0x68` (IMU)
-and `0x2D` (UPS HAT) are distinct — note `0x2C` and `0x2D` are adjacent but
-not colliding — and everything on this bus is 3.3 V logic.
+No level shifter is needed — everything here is 3.3 V logic.
 
-Pull-up caveat: the Pi has fixed 1.8 kΩ pull-ups on GPIO 2/3, and each
-breakout adds its own (typically 4.7 kΩ). Three devices in parallel pull the
-effective resistance to roughly 1 kΩ, near the point where a device can't
-sink enough current to drive the line low. If the bus turns flaky after
-adding this module — dropped reads, `i2cdetect` showing addresses
-intermittently — remove the two pull-up resistors on the compass breakout
-rather than the Pi's (which are not adjustable).
+### Why its own bus
+
+This chip was first wired onto I2C1, spliced into the MPU6050's SDA/SCL. The
+bus then failed intermittently, and the way it failed is worth recording.
+
+I²C lines are open-drain: a device signals by *sinking* current to pull the
+line low, and pull-up resistors restore the high level. The Pi has fixed
+1.8 kΩ pull-ups on GPIO 2/3 that cannot be adjusted, and every breakout adds
+its own — typically 4.7 kΩ. With three devices on the bus:
+
+```
+1.8k ∥ 4.7k (MPU6050) ∥ 4.7k (UPS HAT) ∥ 4.7k (compass)  ≈  0.95 kΩ
+```
+
+At 3.3 V that demands ~3.4 mA of sink current to pull a line low, against the
+3 mA an I²C device is only obliged to provide. Two devices were fine; the
+third crossed the limit.
+
+The symptoms were **not** a clean dead bus, which is what made it confusing:
+
+- `app.py` aborted with `[Errno 121] Remote I/O error` opening the **MPU6050**
+  — a device that had worked for weeks and whose wiring had not been touched.
+- Minutes later `i2cdetect -y 1` listed all three addresses correctly, and the
+  failure moved to the compass instead.
+- A phantom device appeared at `0x08`, an address nothing in this build uses.
+
+The tell is that `i2cdetect`'s probe needs **one** ACK, while the driver's
+first `write_byte_data` needs **three** consecutive ACKs (address, register,
+value). A marginal bus passes the cheap probe and fails the real transaction,
+so a clean `i2cdetect` is not evidence of a healthy bus. A fault that migrates
+between devices is in the bus, not in any device.
+
+Two fixes were available: desolder the two 4.7 kΩ pull-ups off the compass
+breakout, or give the compass its own bus. The second was chosen — it is
+reversible, needs no rework on a populated board, and it means a future I²C
+device can never destabilise the IMU or the compass again. The cost is one
+config.txt overlay and two header pins, both of which this build has spare.
+
+Lowering the I²C baudrate is the common advice for a flaky bus and would not
+have helped: that addresses pull-ups too *weak* and rise times too slow. This
+was the opposite fault, and clock speed has no bearing on sink current.
 
 ### Nothing acts on the heading yet, by design
 
@@ -572,7 +617,8 @@ whatever they currently are. Device selection, Bluetooth profile pitfalls
 ## raspi-config
 
 - **Serial Port** → Login shell over serial: **No**, Serial hardware: **Yes**
-- **I2C** → enabled (MPU6050, compass, UPS HAT)
+- **I2C** → enabled (MPU6050 and UPS HAT on I2C1; the compass's I2C4 comes
+  from the overlay below)
 - **Camera** → handled automatically on Pi 5 + Bookworm via libcamera
 
 User must be in the `dialout` group to access `/dev/ttyAMA*` without sudo:
@@ -583,11 +629,15 @@ sudo usermod -aG dialout $USER
 
 ## `/boot/firmware/config.txt` additions
 
-For the secondary UART (DYP-A22 BOTTOM):
+For the secondary UART (DYP-A22 BOTTOM) and the compass's own I²C bus:
 
 ```
 dtoverlay=uart4
+dtoverlay=i2c4,pins_8_9
 ```
+
+`pins_8_9` is not optional — it puts I2C4 on GPIO 8/9 (pins 24/21). The
+overlay's default is GPIO 6/7, which is a different pair of header pins.
 
 (Reboot required after editing.)
 
