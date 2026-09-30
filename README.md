@@ -261,6 +261,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | Continuous detection (terminal, no GUI) | `python -m indepensense.vision.tests.manual.continuous_detect_test` |
 | Live camera + bounding boxes (GUI) | `python -m indepensense.vision.tests.manual.live_detect_test` |
 | Record short video clip | `python -m indepensense.vision.tests.manual.record_test` |
+| Read printed text (Tesseract OCR) | `python -m indepensense.vision.tests.manual.ocr_test` (add `--language tl`, `--repeat 5`) |
 
 ### Voice
 

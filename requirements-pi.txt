@@ -54,4 +54,4 @@ sentence-transformers>=3.0
 # The binary + language packs come from apt:
 #   sudo apt install -y tesseract-ocr tesseract-ocr-tgl
 # `pytesseract` is just the Python wrapper; it shells out to the binary.
-pytesseract>=0.3
+pytesseract>=0.3.7   # get_languages(), used by the OCR manual test
