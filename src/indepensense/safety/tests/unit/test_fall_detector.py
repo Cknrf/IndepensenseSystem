@@ -170,3 +170,124 @@ def test_state_progresses_through_expected_phases():
     for r in _impact(0.75, peak_g=4.5):
         detector.process(r)
     assert detector.state is DetectorState.POST_IMPACT
+
+
+# --- posture route -----------------------------------------------------------
+#
+# The second detection route: impact, then the body ended up horizontal,
+# then stillness. Added because measurement on the assembled vest showed
+# the freefall route caught 0/3 recorded trips — a chest-mounted sensor
+# swings about the feet rather than dropping, so it is never weightless.
+# See the module docstring in `fall_detector.py`.
+
+
+def _still_horizontal(start_t: float, duration_s: float) -> list[IMUReading]:
+    """Lying on the ground: gravity has moved from +Z to +X, i.e. 90°.
+
+    The stationary helpers above rest gravity on +Z, so this is what a
+    body that went from upright to horizontal looks like at rest. Note
+    the magnitude is still 1 g — only the *direction* changed, which is
+    exactly the signal the posture route reads and the magnitude-only
+    gates cannot see.
+    """
+    rng = random.Random(11)
+    dt = 1.0 / SAMPLE_HZ
+    return [
+        _make_reading(
+            start_t + i * dt,
+            1.0 + rng.gauss(0.0, 0.008),
+            rng.gauss(0.0, 0.008),
+            rng.gauss(0.0, 0.008),
+        )
+        for i in range(int(duration_s * SAMPLE_HZ))
+    ]
+
+
+def test_trip_with_no_freefall_fires_via_the_posture_route():
+    """The case the freefall route misses entirely."""
+    readings = (
+        _stationary(0.0, 2.0)
+        + _impact(2.0, peak_g=5.0)
+        + _still_horizontal(2.1, 3.0)
+    )
+    _, events = _run(readings)
+
+    assert len(events) == 1
+    assert events[0].route == "posture"
+    assert events[0].tilt_deg > 80
+
+
+def test_sitting_down_hard_does_not_fire_despite_a_large_impact():
+    """Violent but upright — measured at 7.01 g and 13° on the vest.
+
+    The impact alone is larger than any recorded fall, so this is
+    rejected on orientation or not at all.
+    """
+    readings = (
+        _stationary(0.0, 2.0)
+        + _impact(2.0, peak_g=7.0)
+        + _still(2.1, 3.0)          # still upright: gravity stays on +Z
+    )
+    _, events = _run(readings)
+    assert events == []
+
+
+def test_lying_down_gently_does_not_fire_despite_going_horizontal():
+    """Horizontal but gentle — measured at 2.15 g and 102° on the vest.
+
+    The mirror image of the test above: orientation says fall, impact
+    says no. Each gate covers the other's blind spot, which is the whole
+    reason the route needs both.
+    """
+    readings = (
+        _stationary(0.0, 2.0)
+        + _impact(2.0, peak_g=2.1)   # below FALL_POSTURE_IMPACT_THRESHOLD_G
+        + _still_horizontal(2.1, 3.0)
+    )
+    _, events = _run(readings)
+    assert events == []
+
+
+def test_posture_route_still_requires_stillness():
+    """Tripped, went horizontal, but got straight back up.
+
+    Someone who can stand up again does not need a guardian summoned.
+    """
+    readings = (
+        _stationary(0.0, 2.0)
+        + _impact(2.0, peak_g=5.0)
+        + _still_horizontal(2.1, 0.5)    # under stillness_duration_s
+        + _stationary(2.6, 3.0)          # back upright and moving
+    )
+    _, events = _run(readings)
+    assert events == []
+
+
+def test_freefall_route_fires_without_any_orientation_change():
+    """A collapse that ends up slumped and seated is still a fall.
+
+    This is why the freefall route is kept rather than replaced: the
+    posture route would reject it for staying upright.
+    """
+    readings = (
+        _stationary(0.0, 2.0)
+        + _freefall(2.0, 0.3)
+        + _impact(2.3, peak_g=3.0)
+        + _still(2.4, 3.0)               # upright the whole time
+    )
+    _, events = _run(readings)
+
+    assert len(events) == 1
+    assert events[0].route == "freefall"
+
+
+def test_a_fall_is_reported_once_not_once_per_route():
+    """Freefall AND horizontal — both routes' conditions are met."""
+    readings = (
+        _stationary(0.0, 2.0)
+        + _freefall(2.0, 0.3)
+        + _impact(2.3, peak_g=5.0)
+        + _still_horizontal(2.4, 3.0)
+    )
+    _, events = _run(readings)
+    assert len(events) == 1

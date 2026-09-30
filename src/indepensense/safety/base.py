@@ -26,12 +26,24 @@ class DetectorState(Enum):
 class FallEvent:
     """A confirmed fall.
 
-    Emitted only after the full three-phase pattern (freefall -> impact ->
-    stillness) has been observed.
+    Emitted when either detection route completes. `route` says which,
+    because the two answer different questions and a wrong alert has to
+    be attributable to the one that produced it:
+
+      - `"freefall"` — weightless, then impact, then still. Catches a
+        straight-down collapse.
+      - `"posture"`  — impact, then the body ended up horizontal, then
+        still. Catches a trip, which barely goes weightless at all
+        because the torso swings rather than drops.
+
+    `tilt_deg` is the orientation change across the event and is 0.0 on
+    the freefall route, which never measures it.
     """
     timestamp: float              # local time when the fall was confirmed
     freefall_duration_s: float    # how long the freefall phase lasted
     impact_magnitude_g: float     # peak accel magnitude observed at impact
+    route: str = "freefall"       # which route confirmed it
+    tilt_deg: float = 0.0         # orientation change, posture route only
 
 
 class FallDetector(Protocol):

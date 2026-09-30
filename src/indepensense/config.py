@@ -559,6 +559,41 @@ FALL_IMPACT_WINDOW_S = 0.5
 FALL_STILLNESS_MAX_STDDEV_G = 0.15
 FALL_STILLNESS_DURATION_S = 2.0
 
+# Posture route — the second way to confirm a fall. See the module
+# docstring in safety/fall_detector.py for the full derivation.
+#
+# The thresholds above describe a straight-down collapse and detect
+# nothing else: measured on the assembled vest, forward/backward/sideways
+# falls spent as little as 10 ms below the freefall threshold against the
+# 100 ms requirement, because a chest-mounted sensor in a trip swings
+# about the feet rather than dropping. Sensitivity on recorded trips was
+# 0%.
+#
+# No single signal fixes that — every one of them overlaps between falls
+# and ordinary activity:
+#
+#   signal              falls        activities    separates?
+#   lowest |a|          0.12-0.38    0.07-0.95     no
+#   peak |a|            3.58-6.76    1.05-7.01     no
+#   peak rotation °/s    315-427       13-359      no
+#   posture change °       9-95         1-102      no
+#
+# The pair does. Sitting down hard is violent but upright (7.01 g, 13°);
+# lying down and bending are horizontal but gentle (2.15 g at 102°,
+# 1.60 g at 75°). Requiring BOTH a hard impact and a large orientation
+# change rejects all of them and caught every recorded fall: 3/3 falls,
+# 7/7 activities.
+#
+# Chosen mid-gap rather than at either edge. Impact: real falls bottomed
+# out at 3.65 g, the hardest horizontal activity reached 2.15 g — any
+# value in 2.2-3.6 works. Tilt: falls ran 73-95°, the activities that
+# clear the impact gate sat at 13° and 25° — any value in 26-72° works.
+#
+# Caveat for the write-up: 4 falls and 7 activities, all onto a mattress.
+# Enough to choose a design, not enough to publish a sensitivity figure.
+FALL_POSTURE_IMPACT_THRESHOLD_G = 3.0
+FALL_POSTURE_TILT_THRESHOLD_DEG = 50.0
+
 # Local LLM used for natural-language intent parsing. See prompts/nlu_system.md
 # for the system prompt and docs/voice.md → intent parser section for setup.
 #

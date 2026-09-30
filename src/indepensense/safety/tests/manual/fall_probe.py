@@ -52,6 +52,8 @@ from pathlib import Path
 
 from indepensense.config import (
     FALL_FREEFALL_MIN_DURATION_S,
+    FALL_POSTURE_IMPACT_THRESHOLD_G,
+    FALL_POSTURE_TILT_THRESHOLD_DEG,
     FALL_FREEFALL_THRESHOLD_G,
     FALL_IMPACT_THRESHOLD_G,
     FALL_IMPACT_WINDOW_S,
@@ -156,6 +158,8 @@ def replay(
         impact_window_s=FALL_IMPACT_WINDOW_S,
         stillness_max_stddev_g=FALL_STILLNESS_MAX_STDDEV_G,
         stillness_duration_s=FALL_STILLNESS_DURATION_S,
+        posture_impact_threshold_g=FALL_POSTURE_IMPACT_THRESHOLD_G,
+        posture_tilt_threshold_deg=FALL_POSTURE_TILT_THRESHOLD_DEG,
     )
     reached = set()
     for reading in trace.readings:
@@ -166,11 +170,16 @@ def replay(
                 "freefall_s": event.freefall_duration_s,
                 "impact_g": event.impact_magnitude_g,
                 "at_s": event.timestamp,
+                "route": event.route,
+                "tilt": event.tilt_deg,
             }
-    # No event. Which states it reached says why — a trace that never
-    # left IDLE never looked like freefall at all, which is a different
-    # problem from one that hit POST_IMPACT and failed the stillness gate.
-    return None if "POST_FREEFALL" not in reached else {"stalled_at": sorted(reached)}
+    # No event. Which states it reached says why, and with two routes
+    # POST_IMPACT is reachable without POST_FREEFALL — an impact-first
+    # trace that stalled is a posture-route rejection (never went
+    # horizontal, or never went still), not "no freefall".
+    if "POST_IMPACT" in reached or "POST_FREEFALL" in reached:
+        return {"stalled_at": sorted(reached - {"IDLE"})}
+    return None
 
 
 def score(
@@ -283,9 +292,20 @@ def report(s: dict, freefall_g: float, impact_g: float) -> None:
     for t, fired, result in s["rows"]:
         mags = [magnitude_g(r) for r in t.readings] or [0.0]
         if fired:
-            detail = f"freefall {result['freefall_s']:.2f}s, impact {result['impact_g']:.1f}g"
+            detail = (
+                f"[{result['route']}] impact {result['impact_g']:.1f}g, "
+                f"tilt {result['tilt']:.0f}°"
+            )
         elif result and "stalled_at" in result:
-            detail = f"saw freefall, no confirmed fall ({'/'.join(result['stalled_at'])})"
+            # Which route got as far as it did, and therefore which gate
+            # turned it down. "Saw freefall" would be wrong for a trace
+            # that went straight to POST_IMPACT on the posture route.
+            reached = result["stalled_at"]
+            started = "freefall" if "POST_FREEFALL" in reached else "impact"
+            stalled = "stillness" if "POST_IMPACT" in reached else "no impact followed"
+            if started == "impact":
+                stalled = f"{stalled} or tilt < {FALL_POSTURE_TILT_THRESHOLD_DEG:.0f}°"
+            detail = f"reached {started}, rejected at {stalled}"
         else:
             run_ms = 1000 * longest_run_below(t, freefall_g)
             need_ms = 1000 * FALL_FREEFALL_MIN_DURATION_S

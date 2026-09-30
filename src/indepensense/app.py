@@ -113,6 +113,14 @@ from indepensense.config import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
     CAMERA_WIDTH,
+    FALL_FREEFALL_MIN_DURATION_S,
+    FALL_FREEFALL_THRESHOLD_G,
+    FALL_IMPACT_THRESHOLD_G,
+    FALL_IMPACT_WINDOW_S,
+    FALL_POSTURE_IMPACT_THRESHOLD_G,
+    FALL_POSTURE_TILT_THRESHOLD_DEG,
+    FALL_STILLNESS_DURATION_S,
+    FALL_STILLNESS_MAX_STDDEV_G,
     CLOUD_LLM_API_KEY_ENV,
     CLOUD_LLM_ENABLED,
     CLOUD_LLM_MAX_TOKENS,
@@ -619,7 +627,20 @@ class App:
 
         print("  Opening MPU6050...", flush=True)
         self.imu = self._open_imu()
-        self.detector = ThresholdFallDetector()
+        # Thresholds passed explicitly. They were previously left to the
+        # constructor's defaults, which happened to match `config.py` —
+        # so editing config silently changed nothing, exactly the trap
+        # rule 5 exists to prevent.
+        self.detector = ThresholdFallDetector(
+            freefall_threshold_g=FALL_FREEFALL_THRESHOLD_G,
+            freefall_min_duration_s=FALL_FREEFALL_MIN_DURATION_S,
+            impact_threshold_g=FALL_IMPACT_THRESHOLD_G,
+            impact_window_s=FALL_IMPACT_WINDOW_S,
+            stillness_max_stddev_g=FALL_STILLNESS_MAX_STDDEV_G,
+            stillness_duration_s=FALL_STILLNESS_DURATION_S,
+            posture_impact_threshold_g=FALL_POSTURE_IMPACT_THRESHOLD_G,
+            posture_tilt_threshold_deg=FALL_POSTURE_TILT_THRESHOLD_DEG,
+        )
 
         print("  Opening GPS...", flush=True)
         self.gps = self._try_open_gps()

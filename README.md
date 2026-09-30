@@ -71,8 +71,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Turn verification — the compass notices a missed turn in about five seconds, where position-based off-route detection takes fifteen to thirty
 
 **Safety Monitoring**
-- Fall detection using the MPU6050 IMU
-- Abnormal-movement detection
+- Fall detection using the MPU6050 IMU, on two routes: *freefall → impact → stillness* for a straight-down collapse, and *impact → body now horizontal → stillness* for a trip. A chest-mounted sensor in a trip swings about the feet rather than dropping, so it never goes weightless — the freefall route alone caught 0 of 3 recorded trips. Neither impact nor orientation separates falls from ordinary activity on its own; requiring both does (3/3 falls, 7/7 activities on recorded traces)
 - Emergency SOS trigger via physical button
 - The wearer is told what the device knows: a detected fall and both battery tiers are spoken aloud, not only sent to guardians
 - Critical announcements interrupt whatever is being said, including mid-synthesis
