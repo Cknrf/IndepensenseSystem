@@ -45,6 +45,7 @@ non-freefall falls rather than a lower threshold, which would surrender
 the specificity that makes the alerts worth trusting.
 """
 import argparse
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,6 +191,62 @@ def score(
     return {"tp": tp, "fn": fn, "tn": tn, "fp": fp, "rows": rows}
 
 
+def posture_change_deg(trace: Trace, head_s: float = 1.0, tail_s: float = 2.0) -> float:
+    """Angle between the body's orientation at the start and the end.
+
+    The measurement that decides whether the proposed orientation gate
+    is worth building. Gravity always points down, so the direction of
+    the accelerometer vector *at rest* is a direct readout of which way
+    the body is leaning — no gyro integration, no drift.
+
+    Averaging over a window is what makes this work: individual samples
+    during a fall are dominated by motion, but the mean over a second of
+    standing still, or two seconds of lying still, is gravity alone.
+
+    Roughly: 0° means the body ended up as it started; ~90° means it
+    went from upright to horizontal. Sitting in a chair should be small
+    (the torso stays vertical); falling should be large.
+
+    Mount-independent, so the sensor being glued vertically to the vest
+    changes nothing — this compares the trace against its own starting
+    orientation, not against an assumed "up".
+    """
+    if not trace.readings:
+        return 0.0
+
+    t0 = trace.readings[0].timestamp
+    t_end = trace.readings[-1].timestamp
+    head = [r for r in trace.readings if r.timestamp <= t0 + head_s]
+    tail = [r for r in trace.readings if r.timestamp >= t_end - tail_s]
+    if not head or not tail:
+        return 0.0
+
+    def mean_vector(rs):
+        n = len(rs)
+        return (
+            sum(r.accel_x for r in rs) / n,
+            sum(r.accel_y for r in rs) / n,
+            sum(r.accel_z for r in rs) / n,
+        )
+
+    a, b = mean_vector(head), mean_vector(tail)
+    na = math.sqrt(sum(v * v for v in a))
+    nb = math.sqrt(sum(v * v for v in b))
+    if na == 0 or nb == 0:
+        return 0.0
+
+    cos = sum(x * y for x, y in zip(a, b)) / (na * nb)
+    return math.degrees(math.acos(max(-1.0, min(1.0, cos))))
+
+
+def peak_rotation_dps(trace: Trace) -> float:
+    """Largest single-axis angular rate anywhere in the trace."""
+    return max(
+        (max(abs(r.gyro_x), abs(r.gyro_y), abs(r.gyro_z)) for r in trace.readings),
+        default=0.0,
+    )
+
+
 def longest_run_below(trace: Trace, threshold: float) -> float:
     """Longest unbroken stretch, in seconds, spent under `threshold`.
 
@@ -273,6 +330,63 @@ def sweep(traces: list[Trace], impact_g: float) -> None:
         print()
 
 
+def signals(traces: list[Trace]) -> None:
+    """Every candidate signal per trace, falls and activities grouped.
+
+    Answers "which measurement actually separates a fall from an
+    activity" before any of them is wired into the detector. A signal
+    whose fall range overlaps its ADL range cannot be a gate at any
+    threshold, and that is far cheaper to discover here than after
+    rewriting the state machine around it.
+    """
+    print(f"\n  {'trace':26s} {'min|a|':>7s} {'peak|a|':>8s} "
+          f"{'rot °/s':>8s} {'tilt°':>6s}")
+    print("  " + "-" * 60)
+
+    ranges: dict[bool, dict[str, list[float]]] = {
+        True: {"min_g": [], "peak_g": [], "rot": [], "tilt": []},
+        False: {"min_g": [], "peak_g": [], "rot": [], "tilt": []},
+    }
+
+    for is_fall in (True, False):
+        for t in (x for x in traces if x.is_fall is is_fall):
+            mags = [magnitude_g(r) for r in t.readings] or [0.0]
+            row = {
+                "min_g": min(mags),
+                "peak_g": max(mags),
+                "rot": peak_rotation_dps(t),
+                "tilt": posture_change_deg(t),
+            }
+            for k, v in row.items():
+                ranges[is_fall][k].append(v)
+            print(f"  {'FALL' if is_fall else 'adl ':4s} {t.name:21s} "
+                  f"{row['min_g']:7.2f} {row['peak_g']:8.2f} "
+                  f"{row['rot']:8.0f} {row['tilt']:6.0f}")
+        print()
+
+    print("  " + "-" * 60)
+    print("  SEPARATION — does any single signal split falls from activities?\n")
+    for key, label, fmt in (
+        ("min_g", "lowest |a| (freefall)", "5.2f"),
+        ("peak_g", "peak |a| (impact)", "5.2f"),
+        ("rot", "peak rotation °/s", "5.0f"),
+        ("tilt", "posture change °", "5.0f"),
+    ):
+        f, a = ranges[True][key], ranges[False][key]
+        if not f or not a:
+            continue
+        # Falls are expected high on every signal except lowest-|a|,
+        # where a fall should go LOWER than an activity.
+        if key == "min_g":
+            gap, verdict = min(a) - max(f), "falls lower"
+        else:
+            gap, verdict = min(f) - max(a), "falls higher"
+        mark = "SEPARATES" if gap > 0 else "overlaps  "
+        print(f"  {label:24s} falls {min(f):{fmt}}-{max(f):{fmt}}   "
+              f"adl {min(a):{fmt}}-{max(a):{fmt}}   {mark} ({verdict}, gap {gap:+.0f})")
+    print("\n  A signal that overlaps cannot be a gate at ANY threshold.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dir", default=str(TRACE_DIR))
@@ -280,6 +394,8 @@ def main() -> None:
     ap.add_argument("--freefall", type=float, default=FALL_FREEFALL_THRESHOLD_G)
     ap.add_argument("--impact", type=float, default=FALL_IMPACT_THRESHOLD_G)
     ap.add_argument("--sweep", action="store_true")
+    ap.add_argument("--signals", action="store_true",
+                    help="compare candidate signals before changing the detector")
     args = ap.parse_args()
 
     directory = Path(args.dir)
@@ -309,7 +425,9 @@ def main() -> None:
             print("           Below ~50 Hz that is a handful of readings and the")
             print("           result says as much about the sample rate as the algorithm.")
 
-    if args.sweep:
+    if args.signals:
+        signals(labelled)
+    elif args.sweep:
         sweep(labelled, args.impact)
     else:
         report(score(labelled, args.freefall, args.impact), args.freefall, args.impact)
