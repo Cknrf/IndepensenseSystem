@@ -333,8 +333,10 @@ Standalone 3-axis compass at address **`0x2C`**, on **its own I²C bus, I2C4**
 — not the I2C1 bus the MPU6050 and UPS HAT share. That separation is
 deliberate and was forced by measurement; see "Why its own bus" below.
 
-I2C4 does not exist until `dtoverlay=i2c4,pins_8_9` is in
-`/boot/firmware/config.txt` — see the one-time setup section at the end.
+Bus 4 does not exist until `dtoverlay=i2c-gpio,bus=4,...` is in
+`/boot/firmware/config.txt` — see the one-time setup section at the end. It is
+a **software (bit-banged) bus**, not one of the SoC's hardware I²C
+controllers; the reason is below.
 
 ```
 3.3 V rail      VDD     ⚠️ NOT Pin 2 (5 V). Pins 1 and 17 are taken by the
@@ -633,11 +635,18 @@ For the secondary UART (DYP-A22 BOTTOM) and the compass's own I²C bus:
 
 ```
 dtoverlay=uart4
-dtoverlay=i2c4,pins_8_9
+dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=8,i2c_gpio_scl=9
 ```
 
-`pins_8_9` is not optional — it puts I2C4 on GPIO 8/9 (pins 24/21). The
-overlay's default is GPIO 6/7, which is a different pair of header pins.
+**Do not use `dtoverlay=i2c4,pins_8_9` here.** It is the obvious-looking
+choice and it silently does nothing on this board: `dtoverlay -h i2c4` says
+"BCM2711 only", which is the Pi 4's SoC. The Pi 5 is a BCM2712. The overlay
+loads without error and no `/dev/i2c-4` ever appears.
+
+`i2c-gpio` bit-bangs I²C on any two GPIOs and works on every Pi model. It is
+slower than a hardware controller, which is irrelevant here — `app.py` samples
+the compass at 2 Hz. What matters is that the compass gets its own pair of
+pull-ups, and that is true of a software bus just as much as a hardware one.
 
 (Reboot required after editing.)
 

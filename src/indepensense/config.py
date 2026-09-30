@@ -122,9 +122,11 @@ MPU6050_ADDRESS = 0x68
 # Bus 4, not 1: with the compass on I2C1 alongside the MPU6050 and the
 # UPS HAT, three sets of breakout pull-ups in parallel dropped the bus
 # to ~1 kΩ, below what a device can reliably sink. The bus failed
-# intermittently and the failure migrated between devices. I2C4 needs
-# `dtoverlay=i2c4,pins_8_9` in /boot/firmware/config.txt — see
-# docs/hardware.md for the measurements.
+# intermittently and the failure migrated between devices. Bus 4 is a
+# software (bit-banged) bus and needs
+# `dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=8,i2c_gpio_scl=9` in
+# /boot/firmware/config.txt — the hardware `i2c4` overlay is BCM2711
+# (Pi 4) only and does nothing here. See docs/hardware.md.
 #
 # 0x2C is the QMC5883P. The board was sold as a "QMC5883L", which would
 # be 0x0D — a different chip with an incompatible register map. Confirm

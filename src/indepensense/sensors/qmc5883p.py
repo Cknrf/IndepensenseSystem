@@ -1,10 +1,11 @@
 """QMC5883P 3-axis magnetometer driver over I²C.
 
 A standalone compass chip (QST Corp), independent of the IMU. It sits on
-its own I²C bus (I2C4, header pins 24/21) rather than sharing I2C1 with
+its own I²C bus (bus 4, header pins 24/21) rather than sharing I2C1 with
 the IMU and the UPS HAT: three breakouts' pull-ups in parallel took that
 bus below the resistance a device can reliably pull low. `docs/hardware.md`
-records the measurements. The bus needs `dtoverlay=i2c4,pins_8_9` in
+records the measurements. Bus 4 is bit-banged and needs
+`dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=8,i2c_gpio_scl=9` in
 /boot/firmware/config.txt; nothing else is required host-side.
 
 Beware the family naming, which has now bitten this project twice. The
