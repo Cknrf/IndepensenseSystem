@@ -63,12 +63,19 @@ from indepensense.sensors.base import IMUReading
 
 TRACE_DIR = PROJECT_ROOT / "var" / "traces"
 
-# Sweep grids. Freefall and impact thresholds are the two that decide
-# whether an event is seen at all; the stillness parameters only gate
-# confirmation afterwards, so they are held at their configured values
-# to keep the table readable.
-FREEFALL_GRID = (0.3, 0.4, 0.5, 0.6, 0.7)
-IMPACT_GRID = (1.5, 2.0, 2.5, 3.0, 3.5)
+# Sweep grid: freefall threshold against freefall *duration*.
+#
+# Not impact, which the first real recordings showed is not the binding
+# constraint — a mattress fall already peaked at 6.6 g against a 2.0 g
+# threshold, while the same trace failed the freefall gate. The gate is
+# a threshold AND a duration, and a torso-mounted sensor in a forward
+# fall rotates about the knees rather than dropping freely, so it spends
+# far less time near zero g than a true drop would.
+#
+# Impact is still sweepable with --impact; it just does not belong on
+# the axis of a table meant to find the operating point.
+FREEFALL_GRID = (0.4, 0.5, 0.6, 0.7, 0.8)
+DURATION_GRID = (0.03, 0.05, 0.08, 0.10, 0.15)
 
 
 @dataclass(frozen=True)
@@ -115,7 +122,12 @@ def load_trace(path: Path) -> Trace:
     return Trace(name=stem, is_fall=is_fall, readings=readings, achieved_hz=hz)
 
 
-def replay(trace: Trace, freefall_g: float, impact_g: float) -> dict | None:
+def replay(
+    trace: Trace,
+    freefall_g: float,
+    impact_g: float,
+    freefall_s: float = FALL_FREEFALL_MIN_DURATION_S,
+) -> dict | None:
     """Run one trace through a fresh detector. Returns the event, or None.
 
     A new detector per trace, deliberately: state carried over from a
@@ -123,7 +135,7 @@ def replay(trace: Trace, freefall_g: float, impact_g: float) -> dict | None:
     """
     detector = ThresholdFallDetector(
         freefall_threshold_g=freefall_g,
-        freefall_min_duration_s=FALL_FREEFALL_MIN_DURATION_S,
+        freefall_min_duration_s=freefall_s,
         impact_threshold_g=impact_g,
         impact_window_s=FALL_IMPACT_WINDOW_S,
         stillness_max_stddev_g=FALL_STILLNESS_MAX_STDDEV_G,
@@ -145,13 +157,18 @@ def replay(trace: Trace, freefall_g: float, impact_g: float) -> dict | None:
     return None if "POST_FREEFALL" not in reached else {"stalled_at": sorted(reached)}
 
 
-def score(traces: list[Trace], freefall_g: float, impact_g: float) -> dict:
+def score(
+    traces: list[Trace],
+    freefall_g: float,
+    impact_g: float,
+    freefall_s: float = FALL_FREEFALL_MIN_DURATION_S,
+) -> dict:
     tp = fn = tn = fp = 0
     rows = []
     for t in traces:
         if t.is_fall is None:
             continue
-        result = replay(t, freefall_g, impact_g)
+        result = replay(t, freefall_g, impact_g, freefall_s)
         fired = result is not None and "stalled_at" not in result
         if t.is_fall:
             tp, fn = (tp + 1, fn) if fired else (tp, fn + 1)
@@ -159,6 +176,28 @@ def score(traces: list[Trace], freefall_g: float, impact_g: float) -> dict:
             fp, tn = (fp + 1, tn) if fired else (fp, tn + 1)
         rows.append((t, fired, result))
     return {"tp": tp, "fn": fn, "tn": tn, "fp": fp, "rows": rows}
+
+
+def longest_run_below(trace: Trace, threshold: float) -> float:
+    """Longest unbroken stretch, in seconds, spent under `threshold`.
+
+    The diagnostic for "never reached freefall". Knowing the trace dipped
+    to 0.43 g says nothing useful on its own — the gate is a *duration*,
+    not a minimum, so what matters is how long it stayed down. A fall
+    that touches 0.43 g for 40 ms fails a 100 ms gate, and the fix for
+    that is the duration, not the threshold. Without this number the two
+    are indistinguishable in the output and you tune the wrong knob.
+    """
+    best = 0.0
+    run_start: float | None = None
+    for r in trace.readings:
+        if magnitude_g(r) < threshold:
+            if run_start is None:
+                run_start = r.timestamp
+            best = max(best, r.timestamp - run_start)
+        else:
+            run_start = None
+    return best
 
 
 def _pct(part: int, whole: int) -> str:
@@ -176,7 +215,12 @@ def report(s: dict, freefall_g: float, impact_g: float) -> None:
         elif result and "stalled_at" in result:
             detail = f"saw freefall, no confirmed fall ({'/'.join(result['stalled_at'])})"
         else:
-            detail = f"never reached freefall (min |a| {min(mags):.2f} g)"
+            run_ms = 1000 * longest_run_below(t, freefall_g)
+            need_ms = 1000 * FALL_FREEFALL_MIN_DURATION_S
+            detail = (
+                f"no freefall: min |a| {min(mags):.2f} g, longest run under "
+                f"{freefall_g} g was {run_ms:.0f} ms (need {need_ms:.0f} ms)"
+            )
         mark = "OK " if fired == t.is_fall else "<<<"
         print(f"  {mark} {t.name:24s} {'FALL' if t.is_fall else 'adl':>9s} "
               f"{'yes' if fired else 'no':>6s}  {detail}")
@@ -194,17 +238,26 @@ def report(s: dict, freefall_g: float, impact_g: float) -> None:
         print("  fires on everything would score perfectly here. Record some.")
 
 
-def sweep(traces: list[Trace]) -> None:
-    print(f"\n  {'freefall':>9s} {'impact':>7s} {'sens':>6s} {'spec':>6s} "
+def sweep(traces: list[Trace], impact_g: float) -> None:
+    """Freefall threshold against freefall duration, at a fixed impact.
+
+    Read it by finding rows with zero false alarms first, then taking
+    the highest sensitivity among those. A row with better sensitivity
+    and one false alarm is not an improvement: the false alarm reaches a
+    guardian, and guardians who learn to ignore alerts protect nobody.
+    """
+    print(f"\n  impact held at {impact_g} g (sweep it with --impact)")
+    print(f"\n  {'freefall':>9s} {'for':>7s} {'sens':>6s} {'spec':>6s} "
           f"{'missed':>7s} {'false':>6s}")
     print("  " + "-" * 48)
     for ff in FREEFALL_GRID:
-        for imp in IMPACT_GRID:
-            s = score(traces, ff, imp)
-            print(f"  {ff:9.1f} {imp:7.1f} "
+        for dur in DURATION_GRID:
+            s = score(traces, ff, impact_g, dur)
+            flag = "  <- clean" if s["fp"] == 0 and s["fn"] == 0 else ""
+            print(f"  {ff:9.2f} {dur * 1000:5.0f}ms "
                   f"{_pct(s['tp'], s['tp'] + s['fn']):>6s} "
                   f"{_pct(s['tn'], s['tn'] + s['fp']):>6s} "
-                  f"{s['fn']:7d} {s['fp']:6d}")
+                  f"{s['fn']:7d} {s['fp']:6d}{flag}")
         print()
 
 
@@ -245,7 +298,7 @@ def main() -> None:
             print("           result says as much about the sample rate as the algorithm.")
 
     if args.sweep:
-        sweep(labelled)
+        sweep(labelled, args.impact)
     else:
         report(score(labelled, args.freefall, args.impact), args.freefall, args.impact)
     print()

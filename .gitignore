@@ -36,8 +36,22 @@ data/
 
 # Runtime state written by the device (guardian contact cache, GPS surveys).
 # Machine-local and regenerated — never committed.
-var/
+#
+# `var/*` rather than `var/`: git never descends into an excluded
+# directory, so a `!` negation below it is silently ignored. Excluding
+# the *contents* is what leaves room for the exception.
+var/*
 gps_survey.csv
+
+# ...except the fall-detection traces, which are the opposite of
+# regenerable: each one cost someone an actual fall onto a mattress.
+# They are the evidence behind the detector's sensitivity and specificity
+# figures, they are small CSVs, and a threshold changed a year from now
+# has to be re-verified against the same recordings. Losing the SD card
+# would mean falling over again to reproduce a thesis result.
+!var/traces/
+var/traces/*
+!var/traces/*.csv
 
 # ML model weights (large binaries, downloaded on first run)
 models/
