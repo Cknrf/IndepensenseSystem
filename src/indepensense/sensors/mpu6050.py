@@ -15,6 +15,7 @@ impacts routinely peak above 2 g and clip at that range. ±8 g captures accurate
 peak amplitudes; the resulting resolution (~0.244 mg / LSB) is still finer than
 the thresholds our fall-detection algorithm uses.
 """
+import sys
 import time
 
 from indepensense.sensors.base import IMUReading
@@ -32,6 +33,35 @@ _ACCEL_CONFIG_8G = 0x10        # AFS_SEL = 0b10 -> ±8 g
 # Full-scale sensitivities (LSB per unit) — datasheet §6.2.
 _ACCEL_SENSITIVITY = 4096.0    # LSB / g    at AFS_SEL=2 (±8 g)
 _GYRO_SENSITIVITY = 131.0      # LSB / dps  at FS_SEL=0  (±250 °/s)
+
+
+# Minimum gap between wake-sequence retries after an all-zero block.
+# Long enough that a genuinely disconnected sensor does not spam the bus
+# or the journal at the loop's 100 Hz, short enough that a chip which
+# browned out recovers within a stride or two of walking.
+_REVIVE_INTERVAL_S = 1.0
+
+
+def is_dead_block(raw) -> bool:
+    """True when every byte is zero, which no live MPU6050 ever returns.
+
+    Not a real reading, and specifically not zero acceleration. The
+    temperature register is the tell: 0x0000 decodes to exactly 36.53 °C
+    and the die is never exactly at its zero point, so an all-zero block
+    means the chip is asleep, held in reset, or not driving the bus.
+
+    This matters far more than a normal bad read. `|a| = 0.00 g` sits
+    below `FALL_FREEFALL_THRESHOLD_G`, so a sensor that has quietly
+    reset does not merely stop detecting falls — it reports **continuous
+    freefall**, and a single spike of bus noise afterwards completes the
+    pattern. Observed on the assembled vest: the chip reset mid-session
+    and streamed zeros until the process was restarted.
+
+    Treated as a failed read rather than raising: `IMUSensor.read`
+    already returns `None` for an unreadable sensor, and every caller
+    handles that.
+    """
+    return not any(raw)
 
 
 def _signed_16(high: int, low: int) -> int:
@@ -63,6 +93,7 @@ class MPU6050:
 
         self._bus = SMBus(bus_number)
         self._address = address
+        self._last_revive_s = 0.0
         # Clear the SLEEP bit so the device starts sampling.
         self._bus.write_byte_data(self._address, _PWR_MGMT_1, 0x00)
         # Widen accel range to ±8 g for fall-detection headroom.
@@ -76,6 +107,11 @@ class MPU6050:
             )
         except OSError:
             return None
+
+        if is_dead_block(raw):
+            self._revive()
+            return None
+
         ax, ay, az, temp_c, gx, gy, gz = parse_mpu6050_block(bytes(raw))
         return IMUReading(
             accel_x=ax,
@@ -87,6 +123,35 @@ class MPU6050:
             temperature_c=temp_c,
             timestamp=time.time(),
         )
+
+    def _revive(self) -> None:
+        """Re-run the wake sequence after an all-zero block.
+
+        The chip resetting is the whole reason this happens, and a reset
+        chip is asleep with its configuration back at defaults. Rewriting
+        both registers is what actually restores it; without this the
+        device reads zeros until the process restarts, which is what was
+        observed on the vest.
+
+        Rate-limited because the failure can be a loose connection rather
+        than a reset, and hammering the bus at 100 Hz would not fix that
+        while making the log unreadable. Failures here are swallowed: the
+        caller already has its `None`, and the next read retries anyway.
+        """
+        now = time.monotonic()
+        if now - self._last_revive_s < _REVIVE_INTERVAL_S:
+            return
+        self._last_revive_s = now
+        print(
+            "[mpu6050] all-zero block — sensor asleep or reset. "
+            "Re-running wake sequence.",
+            file=sys.stderr,
+        )
+        try:
+            self._bus.write_byte_data(self._address, _PWR_MGMT_1, 0x00)
+            self._bus.write_byte_data(self._address, _ACCEL_CONFIG, _ACCEL_CONFIG_8G)
+        except OSError as exc:
+            print(f"[mpu6050] revive failed: {exc}", file=sys.stderr)
 
     def close(self) -> None:
         self._bus.close()

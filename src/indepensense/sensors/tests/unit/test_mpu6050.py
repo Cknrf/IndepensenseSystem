@@ -56,3 +56,32 @@ def test_parses_gyro_one_dps():
 def test_rejects_short_frame():
     with pytest.raises(ValueError):
         parse_mpu6050_block(bytes(13))
+
+
+# --- all-zero blocks -------------------------------------------------------
+#
+# Observed on the assembled vest: the chip reset mid-session, reverted to
+# its asleep default, and streamed 14 zero bytes until the process was
+# restarted. Those decode to |a| = 0.00 g, which is below the freefall
+# threshold — so a dead sensor reported continuous freefall rather than
+# no data. These tests pin the guard that turns that into a failed read.
+
+
+def test_all_zero_block_is_recognised_as_dead():
+    from indepensense.sensors.mpu6050 import is_dead_block
+
+    assert is_dead_block([0x00] * 14)
+
+
+def test_a_block_with_any_signal_is_not_dead():
+    from indepensense.sensors.mpu6050 import is_dead_block
+
+    # Genuine freefall: tiny but non-zero accel, and a real temperature.
+    assert not is_dead_block([0x00, 0x20] + [0x00] * 12)
+    assert not is_dead_block([0x00] * 6 + [0x0F, 0xA0] + [0x00] * 6)
+
+
+def test_resting_block_is_not_dead():
+    from indepensense.sensors.mpu6050 import is_dead_block
+
+    assert not is_dead_block([0x00, 0x00, 0x00, 0x00, 0x10, 0x00] + [0x00] * 8)
