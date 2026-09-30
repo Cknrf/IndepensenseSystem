@@ -110,7 +110,7 @@ def main() -> None:
     print("  1...", flush=True); time.sleep(1)
     print("  GO", flush=True)
 
-    rows: list[tuple[float, float, float, float]] = []
+    rows: list[tuple[float, ...]] = []
     dropped = 0
     t_start = time.monotonic()
     next_due = t_start
@@ -120,9 +120,16 @@ def main() -> None:
         if reading is None:
             dropped += 1
         else:
-            rows.append(
-                (now - t_start, reading.accel_x, reading.accel_y, reading.accel_z)
-            )
+            # Gyro is recorded even though the current detector ignores
+            # it. A trip rotates the torso where it barely free-falls, so
+            # rotation is the signal most likely to be added next — and a
+            # trace without it cannot be used to evaluate that, which
+            # would mean falling over again to answer the question.
+            rows.append((
+                now - t_start,
+                reading.accel_x, reading.accel_y, reading.accel_z,
+                reading.gyro_x, reading.gyro_y, reading.gyro_z,
+            ))
         next_due += period
         if (sleep_for := next_due - time.monotonic()) > 0:
             time.sleep(sleep_for)
@@ -135,15 +142,21 @@ def main() -> None:
         # captured at 40 Hz means something different to a detector whose
         # freefall gate needs 0.1 s of consecutive samples.
         f.write(f"# label={args.label} achieved_hz={achieved_hz:.1f} dropped={dropped}\n")
-        f.write("t,ax,ay,az\n")
-        for t, ax, ay, az in rows:
-            f.write(f"{t:.4f},{ax:.4f},{ay:.4f},{az:.4f}\n")
+        f.write("t,ax,ay,az,gx,gy,gz\n")
+        for t, ax, ay, az, gx, gy, gz in rows:
+            f.write(
+                f"{t:.4f},{ax:.4f},{ay:.4f},{az:.4f},"
+                f"{gx:.2f},{gy:.2f},{gz:.2f}\n"
+            )
 
-    mags = [
-        magnitude_g(_Reading(ax, ay, az)) for _, ax, ay, az in rows
-    ] or [0.0]
+    mags = [magnitude_g(_Reading(ax, ay, az)) for _, ax, ay, az, *_ in rows] or [0.0]
+    rots = [max(abs(gx), abs(gy), abs(gz)) for *_, gx, gy, gz in rows] or [0.0]
     print(f"\n  Wrote {len(rows)} samples to {path}")
     print(f"  Achieved {achieved_hz:.1f} Hz (target {args.hz:.0f}), {dropped} failed reads.")
+    print(f"  peak rotation {max(rots):.0f} °/s", end="")
+    # ±1000 °/s is the configured range; anything at the rail means the
+    # recording lost the true peak and the range needs widening again.
+    print("  (SATURATED — widen the gyro range)" if max(rots) > 990 else "")
     if achieved_hz < 0.8 * args.hz:
         print("  WARNING: well under target. The detector's freefall gate needs")
         print("           0.1 s of consecutive sub-0.5 g samples; at this rate that")

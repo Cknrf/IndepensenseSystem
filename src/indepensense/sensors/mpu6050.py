@@ -14,6 +14,16 @@ Accel range configured to ±8 g (AFS_SEL=2). The chip default is ±2 g, but fall
 impacts routinely peak above 2 g and clip at that range. ±8 g captures accurate
 peak amplitudes; the resulting resolution (~0.244 mg / LSB) is still finer than
 the thresholds our fall-detection algorithm uses.
+
+Gyro range configured to ±1000 °/s (FS_SEL=2) for the same reason, one step
+later. The chip default is ±250 °/s, which was adequate while nothing read the
+gyro — but a trip rotates the torso through roughly 90° in well under a second
+and the trunk's peak angular velocity in a fall is commonly several hundred
+degrees per second. At ±250 °/s a fast fall saturates, and a saturated reading
+is indistinguishable from a slower rotation: exactly the information a
+rotation-based detector needs. ±1000 °/s clears realistic peaks with room to
+spare, and the resulting 0.03 °/s resolution remains far finer than any
+threshold worth setting.
 """
 import sys
 import time
@@ -23,16 +33,19 @@ from indepensense.sensors.base import IMUReading
 MPU6050_DEFAULT_ADDRESS = 0x68
 
 _PWR_MGMT_1 = 0x6B
+_GYRO_CONFIG = 0x1B
 _ACCEL_CONFIG = 0x1C
 _ACCEL_XOUT_H = 0x3B
 _DATA_BLOCK_LENGTH = 14
 
-# Accel full-scale range selection. AFS_SEL lives in bits 4:3 of ACCEL_CONFIG.
+# Full-scale range selection. AFS_SEL and FS_SEL both live in bits 4:3 of
+# their respective config registers.
 _ACCEL_CONFIG_8G = 0x10        # AFS_SEL = 0b10 -> ±8 g
+_GYRO_CONFIG_1000DPS = 0x10    # FS_SEL  = 0b10 -> ±1000 °/s
 
-# Full-scale sensitivities (LSB per unit) — datasheet §6.2.
+# Full-scale sensitivities (LSB per unit) — datasheet §6.1, §6.2.
 _ACCEL_SENSITIVITY = 4096.0    # LSB / g    at AFS_SEL=2 (±8 g)
-_GYRO_SENSITIVITY = 131.0      # LSB / dps  at FS_SEL=0  (±250 °/s)
+_GYRO_SENSITIVITY = 32.8       # LSB / dps  at FS_SEL=2  (±1000 °/s)
 
 
 # Minimum gap between wake-sequence retries after an all-zero block.
@@ -94,11 +107,23 @@ class MPU6050:
         self._bus = SMBus(bus_number)
         self._address = address
         self._last_revive_s = 0.0
+        self._configure()
+        time.sleep(0.1)
+
+    def _configure(self) -> None:
+        """Wake the chip and set both full-scale ranges.
+
+        One method because these three writes must always happen
+        together: `_revive` re-runs exactly this after a reset, and a
+        chip woken without its ranges restored would report correct-
+        looking values at the wrong scale — worse than reporting
+        nothing, because nothing is detectable.
+        """
         # Clear the SLEEP bit so the device starts sampling.
         self._bus.write_byte_data(self._address, _PWR_MGMT_1, 0x00)
-        # Widen accel range to ±8 g for fall-detection headroom.
+        # Widen both ranges for fall-detection headroom; see module docstring.
         self._bus.write_byte_data(self._address, _ACCEL_CONFIG, _ACCEL_CONFIG_8G)
-        time.sleep(0.1)
+        self._bus.write_byte_data(self._address, _GYRO_CONFIG, _GYRO_CONFIG_1000DPS)
 
     def read(self) -> IMUReading | None:
         try:
@@ -148,8 +173,7 @@ class MPU6050:
             file=sys.stderr,
         )
         try:
-            self._bus.write_byte_data(self._address, _PWR_MGMT_1, 0x00)
-            self._bus.write_byte_data(self._address, _ACCEL_CONFIG, _ACCEL_CONFIG_8G)
+            self._configure()
         except OSError as exc:
             print(f"[mpu6050] revive failed: {exc}", file=sys.stderr)
 

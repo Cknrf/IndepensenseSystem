@@ -45,12 +45,26 @@ def test_parses_high_magnitude_impact_without_clipping():
     assert az == pytest.approx(4.0)
 
 
-def test_parses_gyro_one_dps():
-    # gx = 131 LSB = +1 °/s, located at bytes 8-9. Gyro range unaffected by
-    # widening the accel range.
-    raw = bytes([0x00] * 8 + [0x00, 0x83] + [0x00] * 4)
+def test_parses_gyro_at_1000dps_range():
+    # At ±1000 °/s: 32.8 LSB = +1 °/s, located at bytes 8-9.
+    # 33 LSB -> 0x0021, which is 1.006 °/s.
+    raw = bytes([0x00] * 8 + [0x00, 0x21] + [0x00] * 4)
     *_, gx, _gy, _gz = parse_mpu6050_block(raw)
-    assert gx == pytest.approx(1.0)
+    assert gx == pytest.approx(1.0, abs=0.01)
+
+
+def test_gyro_range_clears_realistic_fall_rotation():
+    """A trip rotates the trunk at several hundred °/s.
+
+    The old ±250 °/s default saturated there, and a saturated reading
+    looks the same as a slower rotation — which is precisely the signal
+    a rotation-based detector depends on. This pins the widened range:
+    400 °/s must come back as 400, not as a clipped ceiling.
+    """
+    # 400 °/s at 32.8 LSB/dps = 13120 LSB = 0x3340
+    raw = bytes([0x00] * 8 + [0x33, 0x40] + [0x00] * 4)
+    *_, gx, _gy, _gz = parse_mpu6050_block(raw)
+    assert gx == pytest.approx(400.0, abs=0.5)
 
 
 def test_rejects_short_frame():

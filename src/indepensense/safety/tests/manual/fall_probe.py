@@ -104,14 +104,26 @@ def load_trace(path: Path) -> Trace:
             continue
         if not line.strip() or line.startswith("t,"):
             continue
-        t, ax, ay, az = (float(v) for v in line.split(","))
+        values = [float(v) for v in line.split(",")]
+        if len(values) != 7:
+            # Traces recorded before the gyro was captured. Rejected
+            # rather than zero-filled: a rotation-based detector reading
+            # gx=gy=gz=0 would conclude "no rotation at all" and score
+            # every old fall as a miss, which looks like an algorithm
+            # result rather than missing data. Loudly useless beats
+            # quietly wrong.
+            raise SystemExit(
+                f"{path.name} has {len(values)} columns, expected 7 "
+                f"(t,ax,ay,az,gx,gy,gz).\nIt predates gyro recording. "
+                f"Delete it and re-record — a rotation signal cannot be "
+                f"recovered from an accelerometer-only trace."
+            )
+        t, ax, ay, az, gx, gy, gz = values
         readings.append(
             IMUReading(
                 accel_x=ax, accel_y=ay, accel_z=az,
-                # The detector never reads the gyro or the temperature —
-                # see `fall_detector.magnitude_g`. Recording them would be
-                # dead weight in every trace file.
-                gyro_x=0.0, gyro_y=0.0, gyro_z=0.0,
+                gyro_x=gx, gyro_y=gy, gyro_z=gz,
+                # Never read by the detector, and not worth a column.
                 temperature_c=0.0,
                 timestamp=t,
             )
