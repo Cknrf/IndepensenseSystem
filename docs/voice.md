@@ -25,7 +25,9 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 | Active language | Tagalog by default (`DEFAULT_LANGUAGE`), switchable at runtime by voice — see below |
 | Models stored at | `models/voices/`, `models/whisper/` (gitignored, downloaded on demand) |
 | Test artifacts at | `data/test/voice/` |
+| Audio device | NEWMSNR Ear Clip Earphones Wired Long Wear — one USB Audio Class headset, mic + speaker |
 | Speaker volume | `wpctl` on the default PipeWire sink, 20-100%, persisted to `var/volume` |
+| Microphone gain | `wpctl` on the default PipeWire source — provisioning only, not managed by the app |
 | Output ownership | one announcer thread for all main-loop speech; see below |
 | Engine selection | `MultiEngineTTS` (`voice/router.py`), one engine per language |
 
@@ -240,34 +242,58 @@ python -m indepensense.voice.tests.manual.echo_test
 Prompts you to press Enter, records 10 seconds from the OS default input
 device, transcribes it, synthesises the transcript back through Piper, and
 plays the echo through the default output. Whatever audio device PipeWire
-currently routes to (built-in audio, USB headset, paired Bluetooth
-headphones) will be used automatically.
+currently routes to will be used automatically.
 
-### Bluetooth audio troubleshooting
+### Audio device selection
 
-If echo playback goes to the wrong device, check the PipeWire default:
+The wearable uses a **NEWMSNR Ear Clip Earphones Wired Long Wear** USB
+headset — one USB Audio Class device carrying both playback and capture.
+Hardware rationale, and why it replaced Bluetooth earphones plus a separate
+USB microphone, is in `docs/hardware.md`.
+
+Nothing in Python names a device. `voice/audio.py` opens PortAudio's default
+input and output, and `voice/volume.py` targets `@DEFAULT_AUDIO_SINK@`, so
+which hardware is in use is an OS-level decision. Check it with:
 
 ```bash
 wpctl status
 ```
 
-Look at the `Sinks` (output) and `Sources` (input) sections. The default is
-marked with `*`. To change the default output:
+The default in the `Sinks` (output) and `Sources` (input) sections is marked
+with `*`. Pin both explicitly rather than relying on auto-selection — with
+HDMI attached, the sink that happens to be chosen at boot is not guaranteed:
 
 ```bash
-wpctl set-default <ID>     # ID column from `wpctl status`
+wpctl set-default <sink-id>     # ID column from `wpctl status`
+wpctl set-default <source-id>
 ```
 
-**AirPods and other Bluetooth headsets** appear as one device with two
-possible profiles: A2DP (high-quality stereo output, no mic) and HSP/HFP
-(mono mic + tinny mono output). Linux picks HSP automatically when a mic is
-needed. If the mic returns silence in the echo test, force HSP explicitly:
+The `Settings → Default Configured Devices` block at the end of `wpctl
+status` is the one to verify. It should name the headset for **both**
+`Audio/Sink` and `Audio/Source`. A pin survives the hardware it points at
+being unplugged, so after swapping audio devices this block can still name
+the old one — which then silently wins again if that device is ever
+reconnected.
+
+### Microphone gain
 
 ```bash
-wpctl set-profile <device-id> handsfree_head_unit
+wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 60%
 ```
 
-Device ID is from the `Devices` section of `wpctl status`.
+**The trailing `%` is required.** `wpctl` reads a bare number as a linear
+factor, so `60` asks for 6000% gain rather than 60%. WirePlumber clamps it,
+but the resulting over-amplified capture clips, and clipped audio transcribes
+acceptably in a quiet room and falls apart next to traffic — a failure that
+looks like a bad STT model rather than a bad mixer setting.
+
+Input gain is deliberately **not** managed by the application. Playback
+volume is runtime state the user owns by voice (`VolumeState` pushes it to
+the sink on every start, overwriting whatever `wpctl` was last told), but
+microphone gain is a one-time calibration, not something a user changes, and
+no voice command exists for it. It is therefore a provisioning step persisted
+only by WirePlumber. If that state is ever wiped, the symptom is "STT
+suddenly got worse" with nothing in the application logs to explain it.
 
 ## Per-language voices
 

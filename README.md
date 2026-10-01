@@ -120,7 +120,7 @@ This repository holds the **on-device runtime** — everything that runs on the 
 - SIM7600 module — cellular data + GPS
 - 3× Vibration motors — front / left / right directional feedback
 - Buzzer — audio alerts
-- USB microphone + speaker — voice interaction
+- NEWMSNR Ear Clip Earphones Wired Long Wear — USB open-ear headset, mic + speaker in one device (the Pi 5 has no 3.5 mm jack; open-ear keeps the user's ambient hearing)
 - Push-to-talk + SOS buttons + Repeat/stop button (replays the last response, or interrupts speech in progress)
 
 ## Wiring & Pin Alignment
@@ -364,12 +364,21 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
    # c. Check all four cardinals against a phone compass, then set
    #    COMPASS_CALIBRATED = True
    ```
-7. **Set the speaker volume** and confirm it sticks across a restart. The
-   floor is 20% and the buzzer is driven straight from GPIO, so it is not
-   affected by this:
+7. **Pin the audio device, then set the levels.** `wpctl status` lists the
+   headset under both `Sinks` and `Sources`; pin each so boot-time device
+   ordering can't pick HDMI instead:
    ```bash
+   wpctl status                                   # note both IDs
+   wpctl set-default <sink-id>
+   wpctl set-default <source-id>
    wpctl set-volume @DEFAULT_AUDIO_SINK@ 80%
+   wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 60%    # the % is required — see docs/voice.md
    ```
+   Verify `Settings → Default Configured Devices` names the headset for both,
+   then reboot and check it held. The speaker floor is 20% and the buzzer is
+   driven straight from GPIO, so volume cannot silence a safety alert. **Mic
+   gain is provisioning only** — nothing in the app restores it, and losing it
+   shows up as degraded STT with nothing in the logs.
 8. **Only after every component passes**, run the full wearable:
    ```bash
    python -m indepensense.app
@@ -385,14 +394,16 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | DYP-A22 returns 0 or fluctuates wildly | Wired to 5 V instead of **3.3 V** (may already be damaged); wrong UART; loose ground |
 | MPU6050 returns all zeros mid-test | Loose wire (very common after drop tests) — reseat SDA, SCL, VCC, GND |
 | Camera not detected | Ribbon cable inserted backwards, or camera not enabled in `raspi-config` |
-| No audio output | USB audio device isn't the default sink — check `aplay -l` and adjust the ALSA default |
+| No audio output | The headset isn't the default sink. `aplay -l` should list it as a card; `wpctl status` shows the real default and the `Settings` block shows what is pinned. A pin left over from a previous audio device survives that device being unplugged |
+| Headset not in `aplay -l` / `arecord -l` at all | Nothing in `lsusb` either means it's a passive analog USB-C earphone relying on a host DAC, not a USB Audio Class device — no adapter will make it work on a Pi |
+| STT suddenly got worse, nothing in the logs | Mic gain reset. Nothing in the app manages the PipeWire source level — re-run `wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 60%`, with the `%`: a bare number is a linear factor and over-amplifies into clipping |
 | Whisper / Piper / MMS / Ollama slow to start | First boot loads models into RAM (~30–60 s). Subsequent starts are fast. |
 | PTT button raises `PinInvalidState` | Do not set `active_state=True` when `pull_up=False` — the pull sets the polarity already |
 | YOLO very slow | Expected during `continuous_detect_test`. In production, YOLO only runs on-demand per voice command |
 | Voice commands don't classify correctly | Check `ollama list` — the Qwen model may not be loaded; the warmup service takes ~1–2 min on cold boot |
 | Turn-to-face never runs; no heading anywhere | `COMPASS_CALIBRATED` is `False` in `config.py`. Expected until the calibration step above is done — `latest_heading()` shows the raw reading meanwhile |
 | Heading looks plausible but guidance sends the user the wrong way | A sign is inverted in `MAG_FORWARD_AXIS` / `MAG_LEFT_AXIS`, which mirrors the compass. Re-check against a phone at all four cardinals, not just one |
-| "Louder" changes nothing | `wpctl` missing, or PipeWire is routing through a different node than `@DEFAULT_AUDIO_SINK@` (common over Bluetooth). `wpctl status` shows the real default |
+| "Louder" changes nothing | `wpctl` missing, or PipeWire is routing through a different node than `@DEFAULT_AUDIO_SINK@`. `wpctl status` shows the real default |
 | Navigation never starts, always says "cancelled" | The destination confirmation timed out. It wants a **PTT press** within `DESTINATION_CONFIRM_TIMEOUT_S` after the place is read back |
 | The device talks over itself | Should be impossible — every main-loop utterance goes through the announcer, which is single-threaded. If it happens, something is calling `play()` directly |
 | Process dies with `double free or corruption` and no traceback | A C-level fault, almost always PortAudio. `voice/audio.py` owns every stream and must never call `sd.play` / `sd.rec` / `sd.stop` — those share one global context and let one thread close another's stream. `test_audio_playback.py` guards this |

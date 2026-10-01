@@ -606,11 +606,51 @@ the 40-pin header is full — a HAT would cover it and block wire access to
 everything above. GPS NMEA arrives on `/dev/ttyUSB1`.
 Full setup, APN and antenna notes: **`docs/sim7600.md`**.
 
-## Microphone and speaker — USB / Bluetooth
+## Headset — USB
 
-No GPIO wiring. Audio routes through PipeWire's default source and sink,
-whatever they currently are. Device selection, Bluetooth profile pitfalls
-(A2DP vs HSP) and volume handling: **`docs/voice.md`**.
+**NEWMSNR Ear Clip Earphones Wired Long Wear**, an open-ear clip-on headset
+with an inline microphone. USB-C plug, connected through a passive USB-C to
+USB-A adapter. No GPIO wiring — audio routes through PipeWire's default
+source and sink.
+
+The Pi 5 has **no 3.5 mm jack at all**; unlike the Pi 4B, the analog audio
+connector was removed from the board. Even on a Pi 4 that jack carried
+output and composite video only and never had a microphone input, so any
+headset with a mic has to arrive over USB regardless. This one enumerates as
+a USB Audio Class device with both endpoints on one card, which is why it
+needs no driver:
+
+```
+$ lsusb
+Bus 001 Device 002: ID 0020:0b21 Generic EarPods
+$ aplay -l
+card 0: EarPods [EarPods], device 0: USB Audio [USB Audio]
+$ arecord -l
+card 0: EarPods [EarPods], device 0: USB Audio [USB Audio]
+```
+
+Appearing in **both** `aplay -l` and `arecord -l` is the check that matters.
+A USB-C earphone that shows nothing in `lsusb` is a passive analog part
+relying on the host phone's DAC, and no adapter will make it work here.
+
+**Why a wired headset replaced the Bluetooth earphones and separate USB
+microphone.** The AirPods used previously exposed one device with two
+mutually exclusive profiles: A2DP gives stereo output and no microphone,
+HSP/HFP gives a mono microphone and tinny mono output. Capturing voice
+therefore forced the whole output path down to handsfree quality for the
+duration, and the profile switch had to be forced by hand. A USB Audio Class
+headset is full duplex — playback and capture run at full quality
+simultaneously, with no profile negotiation, no pairing at boot, and no
+silent reconnect failure. It also collapses two devices into one and frees a
+USB port.
+
+The open-ear form factor is the accessibility argument: the ear canal stays
+unobstructed, so the user keeps full ambient hearing. For a blind-navigation
+wearable that is not a comfort preference — traffic noise, footsteps and
+voices are primary navigation input, and occluding earbuds would take away
+more situational awareness than the device gives back.
+
+Device selection, microphone gain and volume handling: **`docs/voice.md`**.
 
 ---
 

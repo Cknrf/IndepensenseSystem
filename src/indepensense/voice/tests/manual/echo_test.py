@@ -3,8 +3,8 @@
 Records for `RECORDING_DURATION_S` seconds through the OS default input,
 transcribes with Whisper, synthesises the transcript back with Piper, and
 plays the result through the OS default output. Intended for validating
-that live audio I/O works end-to-end with whatever device (USB headset,
-paired AirPods, etc.) PipeWire is currently routing to.
+that live audio I/O works end-to-end with whatever device PipeWire is
+currently routing to.
 
 Run from repo root with:
     python -m indepensense.voice.tests.manual.echo_test
@@ -49,7 +49,8 @@ def main():
 
     if not transcript.text.strip():
         print("Empty transcript — no speech detected in the recording. Try again louder,")
-        print("or check that the AirPods mic is the current PipeWire default source.")
+        print("or check `wpctl status`: the headset must be the default source, and its")
+        print("gain is set separately from the speaker volume.")
         return
 
     print("Synthesising echo...")

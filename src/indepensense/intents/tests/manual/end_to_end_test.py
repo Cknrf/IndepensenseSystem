@@ -42,8 +42,7 @@ Prerequisites (all must be running on the Pi):
     - Ollama with NLU_MODEL pulled  (systemctl status ollama)
     - GraphHopper on port 8989
     - Photon on port 2322
-    - USB mic plugged in as the PipeWire default source
-    - Bluetooth headset paired for playback (or USB output)
+    - USB headset plugged in, pinned as the PipeWire default source and sink
     - GPS enabled if you want location-aware intents (AT+CGPS=1)
     - KY-004 PTT button on `PTT_BUTTON_GPIO` (fallback: keyboard Enter)
     - KY-004 Emergency button on `EMERGENCY_BUTTON_GPIO` (optional)

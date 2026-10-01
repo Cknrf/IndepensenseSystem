@@ -3,8 +3,8 @@
 Wraps `sounddevice` (PortAudio) for I/O and `soundfile` (libsndfile) for WAV
 serialisation. Uses the operating system's *default* input and output devices
 — on the Pi that means whichever PipeWire currently designates as default,
-so switching between built-in audio, a USB headset, or paired Bluetooth
-headphones (AirPods) is an OS-level concern, not a Python concern.
+so which headset or speaker is in use is an OS-level concern, not a Python
+concern.
 
 Both `record` and `play` are blocking. Callers that need concurrency (e.g. a
 polling loop that must keep reading sensors while audio plays) should invoke
