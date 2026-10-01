@@ -52,7 +52,7 @@
  *
  * No reboot needed; polkit re-reads rules.d on restart. Verify with:
  *
- *     mmcli -m 0 --messaging-create-sms="text='test',number='+639XXXXXXXXX'"
+ *     mmcli -m any --messaging-create-sms="text='test',number='+639XXXXXXXXX'"
  *
  * A path like `/org/freedesktop/ModemManager1/SMS/1` means it worked.
  *

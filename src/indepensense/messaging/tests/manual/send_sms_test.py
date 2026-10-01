@@ -16,7 +16,7 @@ Prerequisites
 
     sudo apt install -y modemmanager
     mmcli -L                  # should list the SIM7600
-    mmcli -m 0                # 'state: registered' before SMS will work
+    mmcli -m any                # 'state: registered' before SMS will work
 
 The SIM must have an SMS-capable plan. A *data-only* plan will accept the
 create step and fail the send — if that happens, the failure is the plan,
@@ -26,7 +26,7 @@ What to check afterwards
 -----------------------
 
 The message arrives, the sender ID looks right, and the map link opens to
-the expected location. Also re-run `mmcli -m 0 --messaging-list-sms` — it
+the expected location. Also re-run `mmcli -m any --messaging-list-sms` — it
 should be empty, because the driver deletes each message after sending.
 A growing list there means modem storage is filling up and will
 eventually make sends fail.
@@ -88,7 +88,7 @@ def main():
         print("\nSent. Check the handset — delivery can take a few seconds.")
     else:
         print(f"\nFAILED: {result.detail}")
-        print("Check `mmcli -m 0` shows 'state: registered', and that the")
+        print("Check `mmcli -m any` shows 'state: registered', and that the")
         print("SIM's plan actually permits sending SMS.")
 
 

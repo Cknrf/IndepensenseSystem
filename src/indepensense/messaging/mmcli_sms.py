@@ -27,22 +27,54 @@ The sequence
 Sending is two steps, because ModemManager models an SMS as an object
 that is created and then dispatched:
 
-    mmcli -m 0 --messaging-create-sms="text='...',number='+639...'"
+    mmcli -m any --messaging-create-sms="text='...',number='+639...'"
       -> /org/freedesktop/ModemManager1/SMS/7      (the new object's path)
-    mmcli -m 0 --sms 7 --send
-    mmcli -m 0 --messaging-delete-sms=7            (housekeeping)
+    mmcli -m any --sms 7 --send
+    mmcli -m any --messaging-delete-sms=7            (housekeeping)
 
 The modem stores created messages, so skipping the delete slowly fills
 its limited SMS memory until creates start failing — which would surface
 much later as emergencies silently not being sent.
 
+The modem index is not stable
+-----------------------------
+
+ModemManager hands out a fresh index every time it enumerates a modem, so
+the SIM7600 is `/Modem/0` on one boot and `/Modem/3` after a USB glitch,
+a modem reset, or a `systemctl restart ModemManager`. Nothing announces
+the change; the old index simply stops existing and every call against it
+fails with `error: couldn't find modem`.
+
+Discovering once at construction is therefore not enough. A wearable that
+has been up for hours would hold a stale index and fail *every* emergency
+SMS for the rest of the session, with the backend alert still succeeding
+so nothing else looked wrong — the same shape of silent single-channel
+failure that `telemetry/sms_alerts.py` exists to surface.
+
+So `_run` re-binds and retries once when, and only when, mmcli says the
+modem is gone. Deliberately reactive rather than polled:
+
+- **No background thread, no periodic probe.** Re-discovery costs nothing
+  until something actually fails.
+- **One retry per call, never a loop.** If `mmcli -L` finds no modem the
+  attempt is abandoned and `send` returns a failed `SMSResult`. A modem
+  that has been unplugged produces one extra fast `mmcli -L` per send,
+  not a retry storm.
+- **Only on a stale-handle error.** A send refused by a data-only plan or
+  a modem that is still searching for signal re-binds nothing — those are
+  not index problems, and retrying them would turn one honest failure
+  into two.
+- **Off the main loop.** Every send already runs on the SMS fan-out
+  thread, so the extra subprocess cannot touch fall detection latency.
+
 Prerequisites on the Pi
 -----------------------
 
 ModemManager running (stock on Pi OS Trixie), a SIM with an SMS-capable
-plan, and the modem registered on the network. `mmcli -m 0` shows
-registration state. Note that a *data-only* plan will accept the create
-and fail the send.
+plan, the modem registered on the network, and the polkit rule in
+`deploy/polkit/` installed — without it ModemManager refuses every create
+from a non-interactive session. `mmcli -m any` shows registration state.
+Note that a *data-only* plan will accept the create and fail the send.
 """
 import re
 import shutil
@@ -55,6 +87,18 @@ from indepensense.messaging.base import SMSResult
 # e.g. "Successfully created new SMS: /org/.../SMS/7". We only need the
 # trailing index, which is what `--sms N` takes.
 _SMS_PATH_RE = re.compile(r"/SMS/(\d+)")
+
+# What mmcli says when the index no longer resolves to a modem. Matched on
+# the message rather than the exit code because mmcli returns 1 for every
+# kind of failure, and re-binding on all of them would retry a send the
+# carrier deliberately rejected.
+_STALE_MODEM_MARKERS = ("couldn't find modem", "cannot find modem")
+
+
+def _is_stale_modem(detail: str) -> bool:
+    """Does this mmcli failure mean our modem index no longer exists?"""
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _STALE_MODEM_MARKERS)
 
 
 class MMCLISMSSender:
@@ -140,7 +184,53 @@ class MMCLISMSSender:
         return int(match.group(1))
 
     def _run(self, args: list[str]) -> str | None:
-        """Run one mmcli call. Returns stdout, or None on any failure."""
+        """Run one mmcli call, re-binding once if the index went stale.
+
+        Returns stdout, or None on any failure. The retry is bounded to a
+        single attempt and happens only on a stale-handle error — see the
+        module docstring for why it is not a loop and not a poll.
+        """
+        stdout, detail = self._run_once(args)
+        if stdout is not None or not _is_stale_modem(detail):
+            return stdout
+
+        print(
+            f"[sms] modem {self._modem_index} is gone — re-discovering.",
+            file=sys.stderr,
+        )
+        if not self._rebind():
+            return None
+
+        stdout, _ = self._run_once(args)
+        return stdout
+
+    def _rebind(self) -> bool:
+        """Point this sender at whatever modem ModemManager has now.
+
+        False when there is none, which is the genuinely-unplugged case:
+        the caller gives up rather than retrying, so a missing modem costs
+        one extra `mmcli -L` per send and nothing more.
+
+        Two overlapping alerts can reach this at once — the emergency
+        button is pressable twice. Both would discover the same index and
+        write the same value, so the race is harmless and not worth a lock
+        on a path that must stay fast during an emergency.
+        """
+        try:
+            self._modem_index = self._discover_modem()
+        except RuntimeError as exc:
+            print(f"[sms] re-discovery failed: {exc}", file=sys.stderr)
+            return False
+        print(f"[sms] re-bound to modem {self._modem_index}.", file=sys.stderr)
+        return True
+
+    def _run_once(self, args: list[str]) -> tuple[str | None, str]:
+        """One mmcli invocation: `(stdout or None, error detail)`.
+
+        Split from `_run` so the retry logic can see *why* a call failed.
+        The detail is also what gets logged, so a failure is reported once
+        regardless of how many attempts it took.
+        """
         command = ["mmcli", "-m", str(self._modem_index), *args]
         try:
             completed = subprocess.run(
@@ -150,14 +240,16 @@ class MMCLISMSSender:
                 timeout=self._timeout_s,
             )
         except subprocess.TimeoutExpired:
-            print(f"[sms] timed out after {self._timeout_s}s: {args}", file=sys.stderr)
-            return None
+            detail = f"timed out after {self._timeout_s}s"
+            print(f"[sms] {detail}: {args}", file=sys.stderr)
+            return None, detail
         except OSError as exc:
-            print(f"[sms] could not run mmcli: {exc}", file=sys.stderr)
-            return None
+            detail = f"could not run mmcli: {exc}"
+            print(f"[sms] {detail}", file=sys.stderr)
+            return None, detail
 
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "").strip()[:200]
             print(f"[sms] mmcli failed ({completed.returncode}): {detail}", file=sys.stderr)
-            return None
-        return completed.stdout
+            return None, detail
+        return completed.stdout, ""
