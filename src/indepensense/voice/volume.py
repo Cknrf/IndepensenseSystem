@@ -33,9 +33,9 @@ import sys
 from pathlib import Path
 
 # The sink applications play to. `@DEFAULT_AUDIO_SINK@` is a PipeWire alias
-# that follows whatever is currently default, so switching between the
-# built-in jack, a USB speaker and paired Bluetooth is an OS concern —
-# the same reasoning `voice/audio.py` applies to input and output devices.
+# that follows whatever is currently default, so which output device is in
+# use is an OS concern — the same reasoning `voice/audio.py` applies to
+# input and output devices.
 _DEFAULT_SINK = "@DEFAULT_AUDIO_SINK@"
 
 _COMMAND_TIMEOUT_S = 3.0
