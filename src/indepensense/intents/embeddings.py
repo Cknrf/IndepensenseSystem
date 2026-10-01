@@ -342,6 +342,25 @@ class EmbeddingMatcher:
             matched_example=winner.text,
         )
 
+    def neighbours(self, transcript: str, k: int = 5) -> list[tuple[float, BankEntry]]:
+        """The `k` nearest bank entries, nearest first. Diagnostics only.
+
+        `explain` names the gate that rejected a transcript but only ever
+        reports the *winner*, and for a `contested` rejection the winner
+        is the less interesting half — what you need in order to fix the
+        bank is the runner-up it was contested against. Deriving that from
+        `score` and `margin` alone is not possible.
+
+        Not used by `match`, and deliberately not folded into `explain`:
+        the runtime needs one decision per utterance, and ranking the
+        whole bank to hand back five rows it will discard is work on the
+        voice thread's critical path. This is for `embedding_probe`.
+        """
+        query = self._encode([transcript])[0]
+        scores = self._vectors @ query
+        order = scores.argsort()[::-1][:k]
+        return [(float(scores[i]), self._entries[int(i)]) for i in order]
+
     # -------------------------------------------------------------- internals
 
     @staticmethod

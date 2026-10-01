@@ -42,6 +42,31 @@ Run from repo root (works on a Mac; needs no Pi hardware):
     python -m indepensense.intents.tests.manual.embedding_probe \
         --model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 
+    # diagnose specific transcripts — paste what the device actually heard
+    python -m indepensense.intents.tests.manual.embedding_probe \
+        --try "Can you send an emergency?" "Can you tell me what is around me?"
+
+    # or a batch, one per line (quoting real transcripts in a shell is painful)
+    python -m indepensense.intents.tests.manual.embedding_probe --try-file misses.txt
+
+Why `--try` exists
+------------------
+
+The scored run above answers "is the fast path worth it". It cannot
+answer "why did *this* utterance go to the LLM", which is the question a
+log leaves you with. `--try` prints the gate that rejected each phrase
+plus its nearest neighbours, and the three reasons call for different
+fixes:
+
+    below_score     nothing in the bank is close — add this phrasing
+    contested       two classes are too near — pull THEM apart; adding
+                    more examples to one of them usually makes it worse
+    escalate_class  a negative example won — working as designed
+
+Field transcripts are the right input. They carry the carrier phrases
+("Can you tell me...", "I want you to...") and the ASR errors that
+hand-written examples never do.
+
 Requires `pip install sentence-transformers` (pulls torch). On the Pi
 that is already satisfied by `requirements-pi.txt`.
 """
@@ -255,6 +280,37 @@ def sweep(matcher: EmbeddingMatcher) -> None:
         print()
 
 
+def diagnose(matcher: EmbeddingMatcher, phrases: list[str], k: int = 4) -> None:
+    """Show which gate each phrase hit, and what it was competing against.
+
+    The neighbour list is the part that makes a `contested` result
+    actionable: it names the two classes that are too close, which is
+    what has to be pulled apart. Fixing a contested case by piling more
+    examples into the class you *wanted* to win usually drags the other
+    one along with it, because both sides move in the same direction.
+    """
+    print()
+    for phrase in phrases:
+        result = matcher.explain(phrase)
+        print(f"  {phrase!r}")
+
+        if isinstance(result, Match):
+            slots = f" {result.parameters}" if result.parameters else ""
+            print(
+                f"      MATCHED   {result.intent.value}{slots}   "
+                f"score {result.score:.3f}  margin {result.margin:.3f}"
+            )
+        else:
+            print(
+                f"      ESCALATED {result.reason:<15s} "
+                f"score {result.score:.3f}  margin {result.margin:.3f}"
+            )
+
+        for score, entry in matcher.neighbours(phrase, k):
+            print(f"        {score:.3f}  [{entry.bucket:<28s}] {entry.text!r}")
+        print()
+
+
 def check_overlap(bank_path) -> int:
     """Report any utterance present in both the bank and the test set."""
     bank = {e.text.strip().lower() for e in parse_bank(bank_path)}
@@ -281,6 +337,20 @@ def main() -> None:
     ap.add_argument("--margin", type=float, default=NLU_EMBEDDING_MARGIN_THRESHOLD)
     ap.add_argument("--sweep", action="store_true", help="grid over both thresholds")
     ap.add_argument("--check-overlap", action="store_true", help="bank vs test set only")
+    ap.add_argument(
+        "--try", dest="phrases", nargs="+", metavar="TEXT",
+        help="diagnose these transcripts instead of running the scored set",
+    )
+    ap.add_argument(
+        "--try-file", metavar="PATH",
+        help="same, reading one transcript per line (blank lines and # ignored)",
+    )
+    ap.add_argument(
+        "--neighbours", type=int, default=4, metavar="K",
+        help="how many nearest examples --try prints (default 4). Raise it "
+             "when the margin names a competitor that is not in the list — "
+             "that competitor is the row to change.",
+    )
     args = ap.parse_args()
 
     from pathlib import Path
@@ -353,7 +423,17 @@ def main() -> None:
     per_query_ms = 1000 * (time.time() - t0) / len(TEST_CASES)
     print(f"  Mean match latency: {per_query_ms:.1f} ms/query over {len(TEST_CASES)} cases.")
 
-    if args.sweep:
+    phrases = list(args.phrases or [])
+    if args.try_file:
+        phrases += [
+            line.strip()
+            for line in Path(args.try_file).read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+    if phrases:
+        diagnose(matcher, phrases, k=args.neighbours)
+    elif args.sweep:
         sweep(matcher)
     else:
         report(evaluate(matcher, args.score, args.margin), args.score, args.margin)

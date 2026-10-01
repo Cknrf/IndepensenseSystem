@@ -88,6 +88,8 @@ Outside `src/`:
 
 - `prompts/nlu_system.md` — the LLM intent-classification system prompt. **Prompt changes go here, not into Python.** Loaded via `config.NLU_PROMPT_PATH`. After editing it, re-run the probe: `llm_probe` exercises 98 prompts across English, Tagalog and adversarial groups, reported per group — a blended score would hide a model that aces English and fails Tagalog.
 - `prompts/nlu_examples.md` — the labelled example bank for the embedding fast path. Same discipline as the system prompt: **content goes here, not into Python.** Loaded via `config.NLU_EMBEDDING_BANK_PATH`. Section headings are class labels and are validated on load, so a typo fails loudly instead of silently shrinking the bank. After editing it, re-run `embedding_probe` — and `--check-overlap` first, because the held-out test set lives in `llm_probe` and a copied phrasing turns the accuracy number into memorisation.
+
+  **Adding examples is not monotonic.** The gate is score *and* margin, and margin is the gap to the nearest example of a *different* class — so a new row raises its own class while lowering its neighbours'. One carrier-phrase addition to `system.help` silently broke a working `system.time` match. Always re-run the probe after a bank edit and read **precision** first: capture buys latency, precision is what it costs. `--try` / `--try-file` names the gate that rejected a given transcript and its nearest neighbours, which is the only way to tell "add a phrasing" from "pull two classes apart".
 - `docs/` — hardware wiring, voice pipeline, GraphHopper, Photon, SIM7600.
 - `deploy/systemd/` — unit files for `indepensense`, `graphhopper`, `photon`, `ollama-warmup`.
 

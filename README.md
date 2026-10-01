@@ -312,6 +312,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | LLM intent-classification probe (98 test prompts — 47 English, 26 Tagalog, 25 adversarial — scored per language group) | `python -m indepensense.intents.tests.manual.llm_probe` |
 | Cloud LLM probe — real Mistral calls, latency and answer quality | `python -m indepensense.intents.tests.manual.cloud_probe` |
 | Embedding fast-path probe — coverage and precision of the semantic matcher against the same 98 prompts, per language group | `python -m indepensense.intents.tests.manual.embedding_probe` — add `--sweep` to grid over both thresholds, `--check-overlap` to verify the example bank is disjoint from the test set, `--model <name>` to compare encoders. Runs on a Mac; no hardware needed |
+| Embedding fast-path diagnosis — why *this* transcript went to the LLM. Prints the gate that rejected it (`below_score` / `contested` / `escalate_class`) plus its nearest bank examples, which is what makes a `contested` result actionable | `python -m indepensense.intents.tests.manual.embedding_probe --try "Can you send an emergency?"` — or `--try-file misses.txt` for a batch, `--neighbours K` to see further down the list. Paste real transcripts from the runtime log; they carry the carrier phrases and ASR errors hand-written examples never do. Runs on a Mac |
 
 ### System Profiling
 

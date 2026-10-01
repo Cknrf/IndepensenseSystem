@@ -43,6 +43,31 @@ with English examples only will match English transcripts and silently
 escalate every Tagalog one, which looks like "the fast path is safe" while
 actually meaning "the fast path does not serve half the users".
 
+**Adding examples can make things worse. Measure.** The gate is score
+*and* margin, and margin is the gap to the nearest example of a different
+class — so a new row raises its own class and lowers its neighbours'
+margins at the same time. Adding "Can you tell me what you can do" to
+`system.help` cost "Can you jump me the time?" its margin and turned a
+working `system.time` match into an escalation. Nothing in the diff looked
+wrong; only the probe caught it.
+
+Two rules follow:
+
+- **Carrier phrases must bring their class's own vocabulary.** "Can you
+  tell me..." is shared noise across every class. An example that is
+  mostly carrier lands in the middle of the space and steals margin from
+  everything near it. "Can you tell me what this device can do" is safe;
+  "Can you tell me what you can do" was not.
+- **Re-run the probe after every edit**, and read *precision* first:
+
+      python -m indepensense.intents.tests.manual.embedding_probe
+      python -m indepensense.intents.tests.manual.embedding_probe --try-file field.txt
+
+  Capture is a convenience number — a miss costs latency and the LLM
+  still answers correctly. Precision is the safety number: a drop there
+  means the wearable takes a wrong action. Never accept an edit that
+  lowers it.
+
 ## navigation.stop
 
 Stop navigating
@@ -99,6 +124,20 @@ Sabihin mo kung nasaan ako
 Anong address ito
 Saan ba ako
 
+# Carrier phrases — see the note under `vision.describe`. Deliberately
+# leaning on place / street / address rather than "around me": this class
+# and `vision.describe` sit close enough already that "what is around me"
+# split them by 0.001 in the field log, and giving both the same spatial
+# vocabulary would make that worse rather than better.
+Can you tell me what street I am on
+Could you tell me my current location
+I want to know what place this is
+What is my location right now
+
+Pwede mo bang sabihin kung anong lugar ito
+Gusto kong malaman kung nasaang kalye ako
+Ano ang kasalukuyan kong lokasyon
+
 ## navigation.progress
 
 How far is left
@@ -148,6 +187,26 @@ Tumawag kayo ng tulong
 Tulungan mo ako ngayon
 Kailangan ko ng tulong agad
 
+# Field testing surfaced a gap: every example above is the user in
+# distress, and none of them is the user *instructing the device*. "Can
+# you send an emergency?" went to the LLM because the bank had no
+# request-shaped phrasing of the most important intent on the wearable.
+# These add the instruction form, and name the guardian explicitly —
+# "alert my guardian" has no distress words in it at all, so nothing
+# above would have been near it.
+Send an emergency alert now
+Can you send an emergency alert
+Alert my guardian
+Contact my guardian right now
+Tell my guardian I need help
+Notify my guardian immediately
+
+Ipadala mo na ang emergency alert
+Pwede mo bang ipadala ang emergency
+Abisuhan mo ang tagabantay ko
+Sabihan mo ang tagapag-alaga ko
+Ipaalam mo sa tagabantay ko na kailangan ko ng tulong
+
 ## system.time
 
 What time is it now
@@ -162,6 +221,14 @@ Alam mo ba kung anong oras na
 Sabihin mo nga ang oras
 Pakisabi ang oras
 Anong oras na po
+
+# Carrier phrases — see the note under `vision.describe`.
+Can you tell me the time right now
+I want to know the time
+Do you have the time
+
+Pwede mo bang sabihin ang oras ngayon
+Gusto kong malaman kung anong oras na
 
 ## system.help
 
@@ -191,6 +258,23 @@ Para saan ka ba
 Anong pwede kong itanong sayo
 Paano mo ako matutulungan
 Anong klaseng tulong ang kaya mong ibigay
+
+# Carrier phrases — see the note under `vision.describe`.
+#
+# "Can you tell me what you can do" was here and had to go: almost all of
+# it is carrier, with "what you can do" carrying no content a short query
+# can latch onto. It landed 0.884 from "Can you jump me the time?" and
+# cost that transcript its margin — a system.time case the fast path used
+# to answer. A carrier example has to bring its class's own vocabulary
+# with it ("device", "features", "commands") or it just sits in the
+# middle of the space stealing margin from everything.
+Can you tell me what this device can do
+Could you list the features of this device
+I want to know what this device can do
+What commands does this device understand
+
+Pwede mo bang sabihin ang mga kaya mong gawin
+Gusto kong malaman kung ano ang magagawa mo
 
 ## system.shutdown
 
@@ -224,6 +308,26 @@ Sabihin mo kung ano ang nakikita mo
 Anong mga bagay ang nasa paligid ko
 Tignan mo nga ang paligid
 Ilarawan mo nga ang nasa harapan
+
+# Carrier phrases. Real users do not speak in bare imperatives — the
+# field log is full of "Can you tell me...", "Could you...", "I want you
+# to...", and the bank had almost none of it. See the note above the
+# escalate sections for why these are added to several classes at once
+# rather than only to the one that missed.
+#
+# Each keeps its class's distinctive content words (see / objects /
+# around) rather than leaning on the carrier, which is shared noise: it
+# is the content that has to carry the margin.
+Can you tell me what you see
+Could you describe what is near me
+Tell me what objects are around me
+What do you see right now
+I want you to describe my surroundings
+
+Pwede mo bang sabihin kung ano ang nakikita mo
+Maaari mo bang ilarawan ang nasa paligid ko
+Gusto kong malaman kung ano ang nasa harap ko
+Anong mga bagay ang nakikita mo ngayon
 
 ## vision.read
 
@@ -357,6 +461,21 @@ Palitan mo sa Ingles
 Ingles na lang sana
 Mag-Ingles ka na lang
 
+# "Lumipat ko ng lengwahing English" lost outright to
+# `__escalate__:language_mentioned` ("Marunong akong mag-Ingles") in field
+# testing. Neither `lumipat` nor `lengwahe`/`wika` appeared anywhere in
+# the bank, so the only token the matcher could read was "Ingles" — which
+# is precisely the token that bucket exists to neutralise. The switching
+# VERB is what separates a request from a remark, so it has to be present
+# on this side too.
+Lumipat ka sa wikang Ingles
+Lumipat ka sa Ingles
+Palitan mo ang wika sa Ingles
+Ibahin mo ang lengwahe sa Ingles
+Gamitin mo ang wikang Ingles
+Switch to the English language
+Change your language to English
+
 ## system.language:tl
 
 Speak in Tagalog
@@ -372,6 +491,17 @@ Gawin mong Tagalog ang salita
 Palitan mo sa Filipino
 Filipino na lang sana
 Mag-Tagalog ka na lang
+
+# Same switching verbs as the `:en` section — see the note there. Both
+# sides carry them so the verb distinguishes request from remark, and the
+# language name distinguishes the two directions.
+Lumipat ka sa wikang Tagalog
+Lumipat ka sa Tagalog
+Palitan mo ang wika sa Tagalog
+Ibahin mo ang lengwahe sa Filipino
+Gamitin mo ang wikang Filipino
+Switch to the Tagalog language
+Change your language to Filipino
 
 # --------------------------------------------------------------------------
 # Escalations. Everything below must reach the LLM. These are not padding —
