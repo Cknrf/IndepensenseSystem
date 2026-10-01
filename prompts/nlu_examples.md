@@ -532,6 +532,34 @@ Ihatid mo ako sa bahay
 Gusto kong pumunta sa bangko
 Tulungan mo akong hanapin ang tindahan
 
+# "Can you help me go home?" — a real field transcript — sat 0.0199 from
+# firing `system.help`, i.e. it escalated by one ten-thousandth. Its three
+# nearest neighbours were all `system.help` ("How can you help me", "What
+# kind of help can you give"), because a destination request phrased as
+# "help me ..." shares every word with asking what the device can do.
+#
+# That is the worst possible confusion on this device — a user asking to
+# be taken somewhere, answered with a feature list — and it was being held
+# off by rounding. These pull the "help me get to <place>" family firmly
+# onto the escalate side, where the LLM can extract the destination.
+# The verbatim field transcript ("Can you help me go home") is pointedly
+# NOT here. It sat 0.886 from "Can you jump me the time?" — close enough
+# to cost that transcript its margin — because "Can you ..." is carrier
+# shared with every other class. The family below covers the case on
+# content alone, which is both safer for the neighbours and an honest
+# test of generalisation rather than a memorised row.
+Help me get home
+Help me get to the hospital
+Help me find my way to the market
+Help me walk to the pharmacy
+I need help getting to the terminal
+I need help getting home
+
+Tulungan mo akong makauwi
+Pwede mo ba akong tulungang makarating sa ospital
+Tulungan mo ako papuntang palengke
+Kailangan ko ng tulong para makarating sa simbahan
+
 ## __escalate__:place
 
 Save this spot as my clinic
