@@ -1,0 +1,68 @@
+/* Let the wearable's own account send SMS through ModemManager.
+ *
+ * Why this file exists
+ * --------------------
+ *
+ * Emergency SMS is sent with `mmcli --messaging-create-sms` (see
+ * `src/indepensense/messaging/mmcli_sms.py`). ModemManager guards that
+ * call behind the polkit action `org.freedesktop.ModemManager1.Messaging`,
+ * which upstream defaults to `auth_admin_keep` — "ask an administrator for
+ * a password, then remember it for a while".
+ *
+ * That default assumes a person is sitting at a desktop. The wearable has
+ * no screen, no keyboard and nobody to prompt, and over SSH the session is
+ * not even "active" as far as logind is concerned, so polkit has nowhere
+ * to send the question and denies outright:
+ *
+ *     error: couldn't create new SMS:
+ *       'GDBus.Error:org.freedesktop.ModemManager1.Error.Core.Unauthorized:
+ *        Unauthorized: PolicyKit authorization failed:
+ *        not authorized for 'org.freedesktop.ModemManager1.Messaging''
+ *
+ * Every emergency alert failed this way for a full test session while the
+ * wearable said "Emergency alert sent to your guardian", because the HTTP
+ * leg succeeded and nothing checked the other one. The spoken response is
+ * honest now (see `telemetry/sms_alerts.py`), but honest-and-broken is not
+ * the goal — this is the half that makes it work.
+ *
+ * Why this is not a security hole
+ * -------------------------------
+ *
+ * polkit's model is "which *human* may ask the system to do this". There
+ * is no human here: the sender is the device itself, acting on a button
+ * its wearer pressed, and the message goes only to guardian numbers the
+ * backend issued. The authorisation that matters happened when the unit
+ * was provisioned with its credential.
+ *
+ * So the grant is deliberately narrow rather than blanket:
+ *   - one unix user, not a group and not `unix-user:*`
+ *   - the Messaging action only — not Control, not Location, not Firmware
+ *   - `YES`, not `AUTH_ADMIN_KEEP`, because a cached admin password would
+ *     expire and take emergency SMS with it at an unpredictable moment
+ *
+ * Running the whole runtime as root would also "fix" the symptom and is
+ * strictly worse: it would hand a voice-controlled network service every
+ * privilege on the device to solve one D-Bus call.
+ *
+ * Install
+ * -------
+ *
+ *     sudo cp 50-indepensense-modemmanager.rules /etc/polkit-1/rules.d/
+ *     sudo systemctl restart polkit
+ *
+ * No reboot needed; polkit re-reads rules.d on restart. Verify with:
+ *
+ *     mmcli -m 0 --messaging-create-sms="text='test',number='+639XXXXXXXXX'"
+ *
+ * A path like `/org/freedesktop/ModemManager1/SMS/1` means it worked.
+ *
+ * NOTE: `cknrf` must match `User=` in deploy/systemd/indepensense.service.
+ * Changing the account means changing it in both files — there is no way
+ * to share one value between a systemd unit and a polkit rule.
+ */
+polkit.addRule(function (action, subject) {
+    if (action.id === "org.freedesktop.ModemManager1.Messaging" &&
+        subject.user === "cknrf") {
+        return polkit.Result.YES;
+    }
+});

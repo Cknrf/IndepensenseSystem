@@ -11,21 +11,29 @@ that happens.
 """
 import json
 import time
+from datetime import datetime, timezone
 
 import pytest
 import requests
 
 from indepensense.app_mock import MockApp
 from indepensense.feedback.mock import MockBuzzer, MockVibrationMotor
+from indepensense.intents import messages
 from indepensense.messaging.mock import MockSMSSender
 from indepensense.safety.base import FallEvent
 from indepensense.sensors.mock import MockMagnetometer
 from indepensense.sensors.base import GPSFix
-from indepensense.telemetry.base import EventType
+from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.conftest import TEST_BACKEND_URL, make_credential
 from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.mock import MockTelemetryClient
-from indepensense.telemetry.sms_alerts import SMSAlertNotifier
+from indepensense.telemetry.sms_alerts import (
+    SMS_FAILED,
+    SMS_NO_NUMBER,
+    SMS_SENT,
+    AlertDelivery,
+    SMSAlertNotifier,
+)
 
 SMS_EVENT_TYPES = ("Emergency Alert", "Fall Detection", "Low Battery")
 
@@ -364,3 +372,97 @@ def test_a_failing_announcer_does_not_block_the_guardian_alert(speaking_app):
         if a.event_type is EventType.FALL_DETECTION
     ]
     assert len(fall_alerts) == 1
+
+
+# --- delivery reporting ------------------------------------------------------
+#
+# The wearable said "Emergency alert sent to your guardian" through a whole
+# test session in which every SMS was refused by polkit, because the spoken
+# response was built from the HTTP leg alone. `_on_alert_delivery` is the
+# correction that follows once both channels have answered.
+
+def _delivery(backend_ok, sms):
+    return AlertDelivery(backend_ok=backend_ok, sms=sms)
+
+
+def _emergency():
+    return AlertEvent(
+        device_id="dev-1", event_type=EventType.EMERGENCY_ALERT,
+        latitude=14.5824, longitude=120.9760,
+        occurred_at=datetime(2026, 8, 24, 9, 5, tzinfo=timezone.utc),
+    )
+
+
+def test_a_fully_delivered_alert_is_not_announced(speaking_app):
+    """Nothing to correct. The wearer already heard the acknowledgement and
+    does not need the same news twice."""
+    speaking_app._on_alert_delivery(_emergency(), _delivery(True, SMS_SENT))
+    assert speaking_app.spoken == []
+
+
+@pytest.mark.parametrize("backend_ok,sms", [
+    (True, SMS_FAILED),       # the field failure: polkit refusing every text
+    (True, SMS_NO_NUMBER),    # nobody saved to text
+    (False, SMS_SENT),        # offline, but the cell network worked
+    (False, SMS_FAILED),      # nobody was told at all
+    (False, SMS_NO_NUMBER),
+])
+def test_every_partial_failure_is_announced(speaking_app, backend_ok, sms):
+    speaking_app._on_alert_delivery(_emergency(), _delivery(backend_ok, sms))
+
+    assert len(speaking_app.spoken) == 1
+    text, critical = speaking_app.spoken[0]
+    assert text.strip() != ""
+    # It corrects something the wearer is currently acting on, so it must
+    # not queue behind an obstacle warning.
+    assert critical is True
+
+
+def test_the_four_failure_modes_are_told_apart(speaking_app):
+    """A failed text with a working dashboard and nobody reached at all
+    call for different responses from the user, so they must not collapse
+    into one generic 'something went wrong'."""
+    said = []
+    for backend_ok, sms in [
+        (True, SMS_FAILED), (True, SMS_NO_NUMBER), (False, SMS_SENT), (False, SMS_FAILED),
+    ]:
+        speaking_app.spoken.clear()
+        speaking_app._on_alert_delivery(_emergency(), _delivery(backend_ok, sms))
+        said.append(speaking_app.spoken[0][0])
+
+    assert len(set(said)) == len(said)
+
+
+def test_an_unmapped_delivery_state_reports_total_failure(speaking_app):
+    """A state added to `sms_alerts.py` without a message here must not
+    make the wearable go quiet about a failed emergency alert."""
+    speaking_app._on_alert_delivery(_emergency(), _delivery(True, "something-new"))
+
+    assert len(speaking_app.spoken) == 1
+    pessimistic = messages.get("emergency.delivery.all_failed", "en")
+    assert speaking_app.spoken[0][0] == pessimistic
+
+
+def test_low_battery_delivery_is_not_announced(speaking_app):
+    """Low battery texts guardians too, but the wearer already heard the
+    battery warning — a delivery report on every one would be noise."""
+    event = AlertEvent(
+        device_id="dev-1", event_type=EventType.LOW_BATTERY,
+        latitude=0.0, longitude=0.0,
+        occurred_at=datetime(2026, 8, 24, 9, 5, tzinfo=timezone.utc),
+    )
+    speaking_app._on_alert_delivery(event, _delivery(True, SMS_FAILED))
+    assert speaking_app.spoken == []
+
+
+def test_the_delivery_report_follows_the_active_language(speaking_app):
+    speaking_app.language.set("tl")
+    speaking_app._on_alert_delivery(_emergency(), _delivery(True, SMS_FAILED))
+    tagalog = speaking_app.spoken[0][0]
+
+    speaking_app.spoken.clear()
+    speaking_app.language.set("en")
+    speaking_app._on_alert_delivery(_emergency(), _delivery(True, SMS_FAILED))
+    english = speaking_app.spoken[0][0]
+
+    assert tagalog != english

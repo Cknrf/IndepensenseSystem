@@ -15,7 +15,13 @@ from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.conftest import TEST_BACKEND_URL, make_credential
 from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.mock import MockTelemetryClient
-from indepensense.telemetry.sms_alerts import SMSAlertNotifier, compose_alert_sms
+from indepensense.telemetry.sms_alerts import (
+    SMS_FAILED,
+    SMS_NO_NUMBER,
+    SMS_SENT,
+    SMSAlertNotifier,
+    compose_alert_sms,
+)
 
 SMS_EVENT_TYPES = ("Emergency Alert", "Fall Detection", "Low Battery")
 
@@ -199,3 +205,125 @@ def test_http_result_is_not_affected_by_sms_outcome(tmp_path):
         inner, sms, _directory(tmp_path, "09171234567"), SMS_EVENT_TYPES,
     )
     assert notifier.send_alert(_alert()) is False
+
+
+# --- delivery reporting ------------------------------------------------------
+#
+# The wearable told a user "Emergency alert sent to your guardian" through
+# a whole test session in which every SMS was refused by polkit, because
+# `send_alert`'s boolean only ever covered the HTTP leg. These tests pin
+# the per-channel report that replaced that guess.
+
+def _report_collector():
+    """A delivery callback plus the list it appends to."""
+    received = []
+    return received, lambda event, delivery: received.append((event, delivery))
+
+
+def _deliver(tmp_path, *, numbers, backend_ok, fail_numbers=frozenset()):
+    """Fire one alert and return the `AlertDelivery` that was reported."""
+    received, on_delivery = _report_collector()
+    notifier = SMSAlertNotifier(
+        MockTelemetryClient(succeed=backend_ok),
+        MockSMSSender(fail_numbers=set(fail_numbers)),
+        _directory(tmp_path, *numbers),
+        SMS_EVENT_TYPES,
+        on_delivery=on_delivery,
+    )
+    notifier.send_alert(_alert())
+    assert _wait_until(lambda: len(received) == 1), "no delivery report arrived"
+    return received[0][1]
+
+
+def test_delivery_reports_both_channels_succeeding(tmp_path):
+    delivery = _deliver(tmp_path, numbers=["09171234567"], backend_ok=True)
+    assert delivery.backend_ok is True
+    assert delivery.sms == SMS_SENT
+
+
+def test_delivery_reports_a_refused_sms(tmp_path):
+    """The exact field failure: HTTP fine, modem refusing every message."""
+    delivery = _deliver(
+        tmp_path,
+        numbers=["09171234567"],
+        backend_ok=True,
+        fail_numbers={"+639171234567"},
+    )
+    assert delivery.backend_ok is True
+    assert delivery.sms == SMS_FAILED
+
+
+def test_delivery_distinguishes_no_number_from_a_failed_send(tmp_path):
+    """Two different things to tell the user: one is fixed by a guardian
+    filling in the web form, the other is a fault on the device."""
+    delivery = _deliver(tmp_path, numbers=[], backend_ok=True)
+    assert delivery.sms == SMS_NO_NUMBER
+
+
+def test_delivery_reports_both_channels_failing(tmp_path):
+    delivery = _deliver(
+        tmp_path,
+        numbers=["09171234567"],
+        backend_ok=False,
+        fail_numbers={"+639171234567"},
+    )
+    assert delivery.backend_ok is False
+    assert delivery.sms == SMS_FAILED
+
+
+def test_delivery_reports_sms_through_with_the_backend_down(tmp_path):
+    """Offline but on the cell network — a guardian still gets the text."""
+    delivery = _deliver(tmp_path, numbers=["09171234567"], backend_ok=False)
+    assert delivery.backend_ok is False
+    assert delivery.sms == SMS_SENT
+
+
+def test_one_guardian_reached_counts_as_sent(tmp_path):
+    """A partial success is still a person who knows. The wearer does not
+    need a roll call; the per-number detail is in the log."""
+    delivery = _deliver(
+        tmp_path,
+        numbers=["09171234567", "09281234567"],
+        backend_ok=True,
+        fail_numbers={"+639171234567"},
+    )
+    assert delivery.sms == SMS_SENT
+
+
+def test_untexted_event_types_are_not_reported(tmp_path):
+    """Connectivity events never text anyone, so there is no delivery to
+    report and the wearer must not be interrupted about one."""
+    received, on_delivery = _report_collector()
+    notifier = SMSAlertNotifier(
+        MockTelemetryClient(), MockSMSSender(),
+        _directory(tmp_path, "09171234567"), SMS_EVENT_TYPES,
+        on_delivery=on_delivery,
+    )
+    notifier.send_alert(_alert(event_type=EventType.CONNECTIVITY))
+    time.sleep(0.15)
+    assert received == []
+
+
+def test_a_raising_delivery_callback_does_not_lose_the_sms(tmp_path):
+    """The callback speaks, so it touches TTS and the announcer. A failure
+    there must not take the fan-out thread down with it."""
+    sms = MockSMSSender()
+    notifier = SMSAlertNotifier(
+        MockTelemetryClient(), sms, _directory(tmp_path, "09171234567"),
+        SMS_EVENT_TYPES,
+        on_delivery=lambda event, delivery: 1 / 0,
+    )
+    notifier.send_alert(_alert())
+    assert _wait_until(lambda: len(sms.sent) == 1)
+
+
+def test_no_callback_keeps_the_old_silent_behaviour(tmp_path):
+    """`on_delivery` is optional — without it the notifier logs and counts
+    exactly as it did before reporting existed."""
+    sms = MockSMSSender()
+    notifier = SMSAlertNotifier(
+        MockTelemetryClient(), sms, _directory(tmp_path, "09171234567"),
+        SMS_EVENT_TYPES,
+    )
+    assert notifier.send_alert(_alert()) is True
+    assert _wait_until(lambda: notifier.sms_sent_count == 1)

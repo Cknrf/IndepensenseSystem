@@ -354,9 +354,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     # Phrased as a statement, not a question: there is no cancel window by
     # design — someone knocked unconscious cannot decline one — so implying
     # they have a choice would be a lie.
+    #
+    # Present continuous, not past: the alert has been *dispatched*, not
+    # confirmed delivered. The outcome follows a few seconds later as one
+    # of the `emergency.delivery.*` messages below, and claiming success
+    # here would have the wearable contradict itself when the modem fails.
     "fall.detected": {
-        "en": "I detected a fall. I have alerted your guardian.",
-        "tl": "May natukoy akong pagkahulog. Naabisuhan ko na ang inyong tagabantay.",
+        "en": "I detected a fall. I am alerting your guardian.",
+        "tl": "May natukoy akong pagkahulog. Inaabisuhan ko na ang inyong tagabantay.",
     },
 
     # --- battery warnings spoken to the wearer ------------------------------
@@ -386,6 +391,50 @@ MESSAGES: dict[str, dict[str, str]] = {
     "emergency.queued": {
         "en": "Emergency alert could not be sent right now. The system will keep trying in the background.",
         "tl": "Hindi maipadala ngayon ang emergency alert. Patuloy itong susubukan ng sistema.",
+    },
+    # Spoken the moment the alert is dispatched, before either channel has
+    # answered. The wearable used to say `emergency.sent` here on the
+    # strength of the HTTP leg alone, which was a lie whenever the modem
+    # refused — and the person who just pressed the button had no way to
+    # know. One of the `emergency.delivery.*` messages follows it.
+    "emergency.sending": {
+        "en": "Sending your emergency alert.",
+        "tl": "Ipinapadala ko na ang emergency alert mo.",
+    },
+
+    # --- emergency delivery outcomes ---------------------------------------
+    # One per combination of (backend reached, SMS reached). The wearer is
+    # told which channel failed rather than a generic "something went
+    # wrong", because the two call for different responses: a failed text
+    # with a working dashboard means a guardian watching the website
+    # already knows, while both failing means nobody does and the user
+    # should get help another way.
+    #
+    # The both-succeeded case reuses `emergency.sent` — the sentence was
+    # always correct, it was just being said too early.
+    "emergency.delivery.sms_failed": {
+        "en": "Your guardian was notified online, but the text message "
+              "did not go through.",
+        "tl": "Naabisuhan online ang iyong tagapag-alaga, pero hindi "
+              "naipadala ang text message.",
+    },
+    "emergency.delivery.no_number": {
+        "en": "Your guardian was notified online, but no phone number is "
+              "saved for a text message.",
+        "tl": "Naabisuhan online ang iyong tagapag-alaga, pero walang "
+              "naka-save na numero para sa text message.",
+    },
+    "emergency.delivery.backend_failed": {
+        "en": "I sent a text message to your guardian, but I could not "
+              "reach the guardian dashboard.",
+        "tl": "Nakapagpadala ako ng text sa iyong tagapag-alaga, pero "
+              "hindi ko maabot ang guardian dashboard.",
+    },
+    "emergency.delivery.all_failed": {
+        "en": "I could not reach your guardian at all. Please call for "
+              "help another way.",
+        "tl": "Hindi ko talaga maabot ang iyong tagapag-alaga. Pakihingi "
+              "po ng tulong sa ibang paraan.",
     },
 
     # --- battery ------------------------------------------------------------

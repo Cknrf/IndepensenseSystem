@@ -249,6 +249,13 @@ class IntentExecutor:
         ocr_max_chars: int = 500,
         cloud_max_chars: int = 500,
         geocode_candidate_limit: int = 10,
+        # True when the telemetry client reports per-channel delivery
+        # afterwards (see `telemetry/sms_alerts.py`). The emergency
+        # response then only acknowledges the dispatch and lets that
+        # report state the outcome. False — no SMS layer wired, as in unit
+        # tests and on a unit with `SMS_ENABLED` off — keeps answering
+        # from the HTTP result, because nothing else is coming.
+        reports_delivery: bool = False,
     ):
         self._router = router
         self._geocoder = geocoder
@@ -274,6 +281,7 @@ class IntentExecutor:
         self._ocr_max_chars = ocr_max_chars
         self._cloud_max_chars = cloud_max_chars
         self._geocode_candidate_limit = geocode_candidate_limit
+        self._reports_delivery = reports_delivery
 
         self._current_route: Route | None = None
 
@@ -488,7 +496,16 @@ class IntentExecutor:
             longitude=lon,
             occurred_at=datetime.now(timezone.utc),
         )
-        if self._telemetry.send_alert(event):
+        sent = self._telemetry.send_alert(event)
+
+        # With a delivery report coming, this response only acknowledges
+        # that the alert went out. `send_alert`'s boolean covers the HTTP
+        # leg alone, and answering from it was how the wearable came to
+        # say "sent to your guardian" while every SMS was being refused.
+        if self._reports_delivery:
+            return messages.get("emergency.sending", self._lang)
+
+        if sent:
             return messages.get("emergency.sent", self._lang)
         return messages.get("emergency.queued", self._lang)
 

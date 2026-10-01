@@ -31,6 +31,21 @@ sudo systemctl enable graphhopper.service photon.service ollama-warmup.service i
 sudo systemctl start  graphhopper.service photon.service ollama-warmup.service indepensense.service
 ```
 
+### Emergency SMS needs one more file
+
+Unit files alone do not get SMS working. ModemManager refuses
+`--messaging-create-sms` from a non-interactive session unless a polkit
+rule allows it, and the failure is quiet — the backend alert still
+succeeds, so only the text goes missing:
+
+```bash
+sudo cp ../polkit/50-indepensense-modemmanager.rules /etc/polkit-1/rules.d/
+sudo systemctl restart polkit
+```
+
+The username in that rule must match `User=` in `indepensense.service`.
+Full explanation in `docs/sim7600.md`.
+
 For dev work you may prefer to leave `indepensense.service` disabled and
 run the app by hand (`python -m indepensense.app`) so you can iterate.
 Enable it once you're ready to demo boot-to-wearable.

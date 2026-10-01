@@ -251,7 +251,13 @@ from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.heartbeat import PeriodicHeartbeatSender
 from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
 from indepensense.telemetry.null import NullTelemetryClient
-from indepensense.telemetry.sms_alerts import SMSAlertNotifier
+from indepensense.telemetry.sms_alerts import (
+    SMS_FAILED,
+    SMS_NO_NUMBER,
+    SMS_SENT,
+    AlertDelivery,
+    SMSAlertNotifier,
+)
 from indepensense.vision.detector import YOLOv8Detector
 from indepensense.vision.ocr import TesseractOCR
 from indepensense.vision.picamera import PiCamera
@@ -710,8 +716,10 @@ class App:
                     sms=self.sms,
                     guardians=self.guardians,
                     event_type_values=SMS_ALERT_EVENT_TYPES,
+                    on_delivery=self._on_alert_delivery,
                 )
         self.alert_sink = alert_sink
+        reports_delivery = isinstance(alert_sink, SMSAlertNotifier)
 
         # NB: battery isn't opened yet — wire it after this block. Store
         # the executor construction here anyway so the button handlers
@@ -735,6 +743,7 @@ class App:
             cloud_max_chars=CLOUD_MAX_RESPONSE_CHARS,
             ocr_max_chars=OCR_MAX_CHARS,
             geocode_candidate_limit=GEOCODE_CANDIDATE_LIMIT,
+            reports_delivery=reports_delivery,
         )
 
         print("  Opening buttons...", flush=True)
@@ -1511,6 +1520,75 @@ class App:
             self._announce(response, critical=True)
         except Exception as exc:
             print(f"[EMERGENCY BUTTON] handler error: {exc}", file=sys.stderr, flush=True)
+
+    # Alerts whose delivery outcome the wearer is told about. Low battery
+    # is deliberately absent even though it texts guardians: the wearer
+    # already heard `battery.low_warning`, and following every one with a
+    # delivery report would be noise on a non-urgent event. These two are
+    # the ones where believing help is coming — and being wrong — is the
+    # whole failure.
+    _DELIVERY_REPORTED_EVENTS = frozenset({
+        EventType.EMERGENCY_ALERT,
+        EventType.FALL_DETECTION,
+    })
+
+    # (backend reached, SMS state) -> what to say. The both-succeeded case
+    # is absent on purpose: it is the only outcome that needs no
+    # correction, and `_on_alert_delivery` stays silent for it rather than
+    # repeating a sentence the wearer heard moments ago.
+    _DELIVERY_MESSAGES = {
+        (True, SMS_FAILED):      "emergency.delivery.sms_failed",
+        (True, SMS_NO_NUMBER):   "emergency.delivery.no_number",
+        (False, SMS_SENT):       "emergency.delivery.backend_failed",
+        (False, SMS_FAILED):     "emergency.delivery.all_failed",
+        (False, SMS_NO_NUMBER):  "emergency.delivery.all_failed",
+    }
+
+    def _on_alert_delivery(
+        self, event: AlertEvent, delivery: AlertDelivery,
+    ) -> None:
+        """Tell the wearer which channels actually carried an alert.
+
+        Runs on the SMS fan-out thread, seconds after the alert was
+        dispatched and after the wearable has already acknowledged it.
+        Speaking goes through `_announce` like everything else, so this
+        thread never touches the speaker itself.
+
+        Critical, because it corrects something the wearer is currently
+        acting on. Someone who believes a guardian has been told will wait
+        where they are; someone who knows nobody was told will shout, or
+        find a phone. Queueing that behind an obstacle warning would delay
+        the one announcement with a time cost attached to it.
+
+        Silent when everything worked. The acknowledgement already said
+        the alert was going out, so the only thing left worth the
+        interruption is news that it did not.
+        """
+        if event.event_type not in self._DELIVERY_REPORTED_EVENTS:
+            return
+        if delivery.backend_ok and delivery.sms == SMS_SENT:
+            print("[alert] delivered on both channels.", flush=True)
+            return
+
+        key = self._DELIVERY_MESSAGES.get((delivery.backend_ok, delivery.sms))
+        if key is None:
+            # An `sms` state this map does not know. Reaching here means a
+            # state was added to `sms_alerts.py` without a message, and
+            # staying quiet about a failed emergency alert is the worst
+            # possible response — say the most pessimistic thing instead.
+            print(
+                f"[alert] unmapped delivery state {delivery!r} — "
+                f"reporting total failure.",
+                file=sys.stderr, flush=True,
+            )
+            key = "emergency.delivery.all_failed"
+
+        print(
+            f"[alert] {event.event_type.value}: backend="
+            f"{'ok' if delivery.backend_ok else 'FAILED'} sms={delivery.sms}",
+            file=sys.stderr, flush=True,
+        )
+        self._announce(messages.get(key, self.language.current), critical=True)
 
     def _on_repeat_press(self) -> None:
         """Dual-purpose: stop talking if it is talking, otherwise repeat.

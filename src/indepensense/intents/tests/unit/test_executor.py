@@ -207,6 +207,42 @@ def test_emergency_when_telemetry_send_fails_says_will_retry():
     assert "could not" in response.lower() or "keep trying" in response.lower()
 
 
+def test_emergency_only_acknowledges_when_a_delivery_report_follows():
+    """With SMS wired, `send_alert`'s boolean covers the HTTP leg alone.
+    Answering from it is how the wearable came to say "sent to your
+    guardian" while every text message was being refused."""
+    telemetry = MockTelemetryClient()
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(fix_quality=1),
+        telemetry=telemetry,
+        device_id="test-device-id",
+        reports_delivery=True,
+    )
+    response = executor.execute(IntentResult(Intent.EMERGENCY_TRIGGER))
+    assert "sending" in response.lower()
+    # The claim that must not be made yet.
+    assert "sent to your guardian" not in response.lower()
+    assert len(telemetry.alerts) == 1
+
+
+def test_emergency_still_answers_from_http_when_nothing_will_report():
+    """`SMS_ENABLED` off, or no modem — no report is coming, so the HTTP
+    result is the only thing there is to tell the user about."""
+    telemetry = MockTelemetryClient(succeed=True)
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(fix_quality=1),
+        telemetry=telemetry,
+        device_id="test-device-id",
+        reports_delivery=False,
+    )
+    response = executor.execute(IntentResult(Intent.EMERGENCY_TRIGGER))
+    assert "sent" in response.lower()
+
+
 def test_device_status_gps_with_fix():
     executor = _make_executor(fix_quality=1)
     response = executor.execute(IntentResult(
