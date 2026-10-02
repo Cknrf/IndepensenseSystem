@@ -235,3 +235,49 @@ def test_the_guard_tolerates_a_provider_without_close():
             raise AssertionError("not called")
 
     OfflineGuard(_Bare(), probe_url="http://probe.test").close()
+
+
+# --- follow-up context on the wire -------------------------------------------
+
+def test_without_context_only_the_question_is_sent(answerer, monkeypatch):
+    sent = _capture(monkeypatch, response=_response(payload=_ok_payload()))
+    answerer.answer("How tall is Mount Apo", "en")
+
+    roles = [m["role"] for m in sent["json"]["messages"]]
+    assert roles == ["system", "user"]
+
+
+def test_the_previous_turn_is_replayed_as_a_real_exchange(answerer, monkeypatch):
+    """Replayed as turns rather than stuffed into the system prompt, so
+    the model resolves "what about the second" the way it resolves any
+    follow-up."""
+    sent = _capture(monkeypatch, response=_response(payload=_ok_payload()))
+    answerer.answer(
+        "What about the second",
+        "en",
+        previous=("What is the tallest mountain", "Mount Apo."),
+    )
+
+    messages = sent["json"]["messages"]
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert messages[1]["content"] == "What is the tallest mountain"
+    assert messages[2]["content"] == "Mount Apo."
+    assert messages[3]["content"] == "What about the second"
+
+
+def test_the_newest_question_is_always_last(answerer, monkeypatch):
+    """Order is the whole mechanism — a follow-up placed before the turn
+    it follows reads as the start of the conversation."""
+    sent = _capture(monkeypatch, response=_response(payload=_ok_payload()))
+    answerer.answer("second", "en", previous=("first", "an answer"))
+
+    assert sent["json"]["messages"][-1] == {"role": "user", "content": "second"}
+
+
+def test_context_does_not_disturb_the_system_prompt(answerer, monkeypatch):
+    sent = _capture(monkeypatch, response=_response(payload=_ok_payload()))
+    answerer.answer("second", "tl", previous=("first", "an answer"))
+
+    system = sent["json"]["messages"][0]
+    assert system["role"] == "system"
+    assert "Filipino" in system["content"]

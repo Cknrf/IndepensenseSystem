@@ -752,6 +752,21 @@ CLOUD_LLM_MAX_TOKENS = 100
 CLOUD_LLM_TIMEOUT_S = 10.0
 CLOUD_MAX_RESPONSE_CHARS = 500
 
+# How long a cloud exchange stays usable as follow-up context.
+#
+# The fallback keeps the last question and answer and replays them, so
+# "what is the tallest mountain" can be followed by "what about the
+# second". A pronoun resolves against what was *just* said, though — a
+# question asked ten minutes later is a new conversation, and silently
+# attaching it to an old one is how "what about the second" gets answered
+# about the wrong subject. Two minutes is comfortably longer than anyone
+# pauses mid-thought and far shorter than they would leave a topic and
+# come back expecting to be understood.
+#
+# Also cleared outright on a language switch: the stored turn is in the
+# language just left.
+CLOUD_CONTEXT_TTL_S = 120.0
+
 OLLAMA_URL = "http://127.0.0.1:11434"
 NLU_MODEL = "qwen3:1.7b"
 NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"

@@ -98,19 +98,36 @@ class MistralAnswerer:
         self._max_tokens = max_tokens
         self._session = None
 
-    def answer(self, question: str, language: str) -> CloudAnswer:
+    def answer(
+        self,
+        question: str,
+        language: str,
+        previous: tuple[str, str] | None = None,
+    ) -> CloudAnswer:
         import requests  # lazy: keeps the module importable off-device
 
         language_name = _LANGUAGE_NAMES.get(language, _LANGUAGE_NAMES["en"])
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": _SYSTEM_PROMPT.format(language_name=language_name),
+            },
+        ]
+        if previous is not None:
+            # Replayed as a real turn rather than stuffed into the system
+            # prompt, so the model resolves "what about the second one"
+            # the way it resolves any follow-up. Exactly one turn: the
+            # device speaks its answers aloud, so a long history would
+            # cost tokens on every question to serve a conversation the
+            # user cannot scroll back through anyway.
+            past_question, past_answer = previous
+            messages.append({"role": "user", "content": past_question})
+            messages.append({"role": "assistant", "content": past_answer})
+        messages.append({"role": "user", "content": question})
+
         payload = {
             "model": self._model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": _SYSTEM_PROMPT.format(language_name=language_name),
-                },
-                {"role": "user", "content": question},
-            ],
+            "messages": messages,
             "max_tokens": self._max_tokens,
             # Low but not zero. Deterministic phrasing is fine for factual
             # questions and slightly reduces the chance of a rambling

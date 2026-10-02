@@ -181,16 +181,26 @@ class MockCloudAnswerer:
 
     `asked` records every (question, language) pair, which is how a test
     asserts that the transcript really was forwarded and that the active
-    language was passed through rather than assumed.
+    language was passed through rather than assumed. `context` records the
+    `previous` argument alongside it, so a test can assert what the
+    provider was told about the preceding turn — including that it was
+    told nothing.
     """
 
     def __init__(self, text: str | None = None, reason: str = "ok"):
         self._text = text
         self._reason = reason
         self.asked: list[tuple[str, str]] = []
+        self.context: list[tuple[str, str] | None] = []
 
-    def answer(self, question: str, language: str) -> CloudAnswer:
+    def answer(
+        self,
+        question: str,
+        language: str,
+        previous: tuple[str, str] | None = None,
+    ) -> CloudAnswer:
         self.asked.append((question, language))
+        self.context.append(previous)
         if self._reason != "ok":
             return CloudAnswer(text=None, reason=self._reason)
         if self._text is not None:

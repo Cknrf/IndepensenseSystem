@@ -146,7 +146,7 @@ def test_an_empty_answer_is_treated_as_an_error(text):
     means "use the default echo" — it cannot express "returned nothing".
     """
     class _Empty:
-        def answer(self, question, language):
+        def answer(self, question, language, previous=None):
             return CloudAnswer(text=text, reason="ok")
 
     assert _executor(cloud=_Empty()).execute(_unknown()) == messages.get(
@@ -158,7 +158,7 @@ def test_a_raising_provider_does_not_break_the_pipeline():
     """The protocol says answerers don't raise, but a driver bug must
     surface as a spoken message rather than as silence."""
     class _Exploding:
-        def answer(self, question, language):
+        def answer(self, question, language, previous=None):
             raise RuntimeError("driver bug")
 
     response = _executor(cloud=_Exploding()).execute(_unknown())
@@ -225,3 +225,135 @@ def _ok_head(url, **kwargs):
 
 def _raising_head(url, **kwargs):
     raise requests.ConnectionError("simulated offline")
+
+
+# --- follow-up context -------------------------------------------------------
+#
+# People ask follow-ups. The field log has a user asking "what about I
+# want to know what's the answer regarding 5-7?", being told the device
+# did not understand, and rephrasing the same question twice more. A
+# second question that depends on the first was simply unanswerable.
+
+def test_the_first_question_carries_no_context():
+    cloud = MockCloudAnswerer(text="Mount Apo.")
+    _executor(cloud=cloud).execute(_unknown("what is the tallest mountain"))
+
+    assert cloud.context == [None]
+
+
+def test_a_follow_up_carries_the_previous_exchange():
+    cloud = MockCloudAnswerer(text="Mount Apo.")
+    executor = _executor(cloud=cloud)
+
+    executor.execute(_unknown("what is the tallest mountain"))
+    executor.execute(_unknown("what about the second"))
+
+    assert cloud.context[-1] == ("what is the tallest mountain", "Mount Apo.")
+
+
+def test_only_one_turn_is_kept():
+    """A history would cost tokens on every question to serve a
+    conversation the user cannot scroll back through anyway."""
+    cloud = MockCloudAnswerer(text="an answer")
+    executor = _executor(cloud=cloud)
+
+    executor.execute(_unknown("first"))
+    executor.execute(_unknown("second"))
+    executor.execute(_unknown("third"))
+
+    assert cloud.context[-1] == ("second", "an answer")
+
+
+def test_a_failed_exchange_is_not_remembered():
+    """Remembering "I couldn't get an answer" as the assistant's turn
+    would have the model build on an apology."""
+    executor = _executor(cloud=MockCloudAnswerer(reason="error"))
+    executor.execute(_unknown("what is the tallest mountain"))
+
+    working = MockCloudAnswerer(text="Manila.")
+    executor._cloud = working
+    executor.execute(_unknown("what about the capital"))
+
+    assert working.context == [None]
+
+
+def test_the_full_answer_is_remembered_not_the_truncated_one():
+    """Truncation exists so a long reply is not spoken at length. Feeding
+    the clipped version back would have the model build on a sentence that
+    stops mid-word."""
+    cloud = MockCloudAnswerer(text="y" * 900)
+    executor = _executor(cloud=cloud, cloud_max_chars=100)
+
+    executor.execute(_unknown("tell me a long thing"))
+    executor.execute(_unknown("and then"))
+
+    assert cloud.context[-1][1] == "y" * 900
+
+
+def test_context_expires():
+    """A pronoun resolves against what was *just* said. Silently attaching
+    a question asked ten minutes later to an old one is how "what about
+    the second" gets answered about the wrong subject."""
+    cloud = MockCloudAnswerer(text="Mount Apo.")
+    executor = _executor(cloud=cloud, cloud_context_ttl_s=120.0)
+
+    executor.execute(_unknown("what is the tallest mountain"))
+    question, answer, asked_at = executor._last_exchange
+    executor._last_exchange = (question, answer, asked_at - 600.0)
+
+    executor.execute(_unknown("what about the second"))
+    assert cloud.context[-1] is None
+
+
+def test_context_inside_the_window_survives():
+    cloud = MockCloudAnswerer(text="Mount Apo.")
+    executor = _executor(cloud=cloud, cloud_context_ttl_s=120.0)
+
+    executor.execute(_unknown("what is the tallest mountain"))
+    question, answer, asked_at = executor._last_exchange
+    executor._last_exchange = (question, answer, asked_at - 60.0)
+
+    executor.execute(_unknown("what about the second"))
+    assert cloud.context[-1] is not None
+
+
+def test_a_language_switch_drops_the_context():
+    """The stored turn is in the language just left. Replaying it while
+    instructing the provider to answer in the new one is a contradiction
+    the model resolves by guessing."""
+    cloud = MockCloudAnswerer(text="Mount Apo.")
+    executor = _executor(cloud=cloud, default="en")
+
+    executor.execute(_unknown("what is the tallest mountain"))
+    executor.execute(IntentResult(Intent.SYSTEM_LANGUAGE, {"language": "tl"}))
+    executor.execute(_unknown("ano ang pangalawa"))
+
+    assert cloud.context[-1] is None
+
+
+def test_a_no_op_language_switch_keeps_the_context():
+    """Asking for the language already in use changes nothing, so it must
+    not quietly discard the conversation."""
+    cloud = MockCloudAnswerer(text="Mount Apo.")
+    executor = _executor(cloud=cloud, default="en")
+
+    executor.execute(_unknown("what is the tallest mountain"))
+    executor.execute(IntentResult(Intent.SYSTEM_LANGUAGE, {"language": "en"}))
+    executor.execute(_unknown("what about the second"))
+
+    assert cloud.context[-1] is not None
+
+
+def test_a_local_intent_does_not_become_cloud_context():
+    """A follow-up like "what about now" after `vision.describe` cannot be
+    served by a cloud model — it has no camera — and handing it "I see a
+    window" would invite a confident answer about a scene the provider
+    never saw."""
+    cloud = MockCloudAnswerer(text="Mount Apo.")
+    executor = _executor(cloud=cloud)
+
+    executor.execute(_unknown("what is the tallest mountain"))
+    executor.execute(IntentResult(Intent.SYSTEM_TIME, {}, "what time is it", ""))
+    executor.execute(_unknown("what about the second"))
+
+    assert cloud.context[-1] == ("what is the tallest mountain", "Mount Apo.")

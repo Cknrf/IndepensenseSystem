@@ -20,6 +20,7 @@ Sentence *structure* can differ per language too, not just wording: see
 path from English pluralisation.
 """
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -262,6 +263,8 @@ class IntentExecutor:
         obstacle_ahead: Callable[[], float | None] | None = None,
         ocr_max_chars: int = 500,
         cloud_max_chars: int = 500,
+        # How long a cloud exchange stays usable as follow-up context.
+        cloud_context_ttl_s: float = 120.0,
         geocode_candidate_limit: int = 10,
         # True when the telemetry client reports per-channel delivery
         # afterwards (see `telemetry/sms_alerts.py`). The emergency
@@ -295,6 +298,7 @@ class IntentExecutor:
         self._obstacle_ahead = obstacle_ahead
         self._ocr_max_chars = ocr_max_chars
         self._cloud_max_chars = cloud_max_chars
+        self._cloud_context_ttl_s = cloud_context_ttl_s
         self._geocode_candidate_limit = geocode_candidate_limit
         self._reports_delivery = reports_delivery
 
@@ -306,6 +310,13 @@ class IntentExecutor:
         # the "nothing to repeat yet" message would become the last
         # response forever).
         self._last_response: str | None = None
+
+        # The last cloud question, its answer, and when it was asked.
+        # Passed back to the provider so a follow-up resolves — "what is
+        # the tallest mountain" then "what about the second" — which
+        # otherwise cannot be answered at all. One turn, not a history:
+        # see `_recent_exchange`.
+        self._last_exchange: tuple[str, str, float] | None = None
 
     @property
     def _lang(self) -> str:
@@ -809,6 +820,12 @@ class IntentExecutor:
         if not self._language.set(target):
             # Supported but unchanged — already speaking it.
             return messages.get("language.already", target)
+
+        # Drop the cloud follow-up context. It holds a question and answer
+        # in the language just left, and replaying those to the provider
+        # while instructing it to answer in the new one is a contradiction
+        # the model resolves by guessing.
+        self._last_exchange = None
         return messages.get("language.switched", target)
 
     def _handle_place_save(self, result: IntentResult) -> str:
@@ -981,7 +998,7 @@ class IntentExecutor:
             # be told nothing.
             return messages.get("generic.unknown_intent", self._lang)
 
-        answer = self._cloud.answer(question, self._lang)
+        answer = self._cloud.answer(question, self._lang, self._recent_exchange())
 
         if answer.reason == "offline":
             return messages.get("cloud.offline", self._lang)
@@ -993,9 +1010,38 @@ class IntentExecutor:
             text = text[: self._cloud_max_chars].rstrip() + messages.get(
                 "vision.truncated_suffix", self._lang,
             )
+
+        # Remember the full answer, not the truncated one: the truncation
+        # exists so a long reply is not spoken at length, and feeding the
+        # clipped version back would have the model build on a sentence
+        # that stops mid-word.
+        self._last_exchange = (question, answer.text.strip(), time.monotonic())
         return text
 
     # --- helpers ------------------------------------------------------------
+
+    def _recent_exchange(self) -> tuple[str, str] | None:
+        """The last cloud question and answer, if still recent enough.
+
+        Only cloud exchanges. A follow-up like "what about now" after
+        `vision.describe` cannot be served by a cloud model — it has no
+        camera — and handing it "I see a window" as context would invite
+        a confident answer about a scene the provider never saw. Pairing
+        cloud questions with cloud answers keeps the context honest about
+        what it is.
+
+        Expires after `CLOUD_CONTEXT_TTL_S`. A pronoun resolves against
+        what was *just* said; a question asked ten minutes later is a new
+        conversation, and silently attaching it to an old one is how
+        "what about the second" gets answered about the wrong subject.
+        """
+        if self._last_exchange is None:
+            return None
+        question, answer, asked_at = self._last_exchange
+        if time.monotonic() - asked_at > self._cloud_context_ttl_s:
+            self._last_exchange = None
+            return None
+        return question, answer
 
     def _current_heading(self) -> float | None:
         """The user's facing direction, or None if it cannot be trusted.

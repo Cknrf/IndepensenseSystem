@@ -112,7 +112,12 @@ class CloudAnswer:
 
 
 class CloudAnswerer(Protocol):
-    def answer(self, question: str, language: str) -> CloudAnswer:
+    def answer(
+        self,
+        question: str,
+        language: str,
+        previous: tuple[str, str] | None = None,
+    ) -> CloudAnswer:
         """Answer an open question that local intents couldn't handle.
 
         `question` is the user's transcript — text only. The recorded
@@ -121,6 +126,12 @@ class CloudAnswerer(Protocol):
         `language` is the code the answer must come back in, so the
         provider replies in the language the user is speaking rather than
         forcing a translation step.
+
+        `previous` is the `(question, answer)` of the last cloud exchange,
+        or None. It exists because people ask follow-ups: "what is the
+        tallest mountain" then "what about the second". Without it the
+        second question is unanswerable, and the wearable said so — a
+        field log has the user rephrasing the same question three times.
 
         Implementations must not raise — report failure via `reason`. The
         answer should be short enough to speak aloud; the executor

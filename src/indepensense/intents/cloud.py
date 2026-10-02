@@ -44,7 +44,10 @@ The provider in use is `MistralAnswerer` (`intents/mistral.py`), opened by
 rather than the implementation, so swapping providers touches one factory
 method. A replacement needs to:
 
-  - implement `CloudAnswerer.answer(question, language) -> CloudAnswer`
+  - implement `CloudAnswerer.answer(question, language, previous) -> CloudAnswer`
+  - replay `previous` — the last `(question, answer)` pair, or None — as
+    a real prior turn, so a follow-up ("what about the second") resolves.
+    One turn only; the executor decides what to keep and when it expires
   - never raise; return `reason="error"` instead
   - distinguish offline from provider failure, so the user hears
     "no internet connection" only when that is actually true
@@ -93,11 +96,16 @@ class OfflineGuard:
     def is_online(self) -> bool:
         return probe_internet(self._probe_url, timeout_s=self._probe_timeout_s)
 
-    def answer(self, question: str, language: str) -> CloudAnswer:
+    def answer(
+        self,
+        question: str,
+        language: str,
+        previous: tuple[str, str] | None = None,
+    ) -> CloudAnswer:
         if not self.is_online():
             print("[cloud] offline — not sending the question", file=sys.stderr)
             return CloudAnswer(text=None, reason="offline")
-        return self._inner.answer(question, language)
+        return self._inner.answer(question, language, previous)
 
     def close(self) -> None:
         """Release the wrapped provider's resources — its HTTP session, in

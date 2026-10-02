@@ -83,7 +83,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 
 **Voice Interaction**
 - Push-to-talk speech input (Whisper STT)
-- LLM-based intent classification (Qwen 3 1.7B via Ollama), with a Mistral cloud fallback for questions no intent covers
+- LLM-based intent classification (Qwen 3 1.7B via Ollama), with a Mistral cloud fallback for questions no intent covers. The fallback remembers one previous exchange, so "what is the tallest mountain" can be followed by "what about the second" — cloud turns only, expiring after two minutes and cleared on a language switch
 - Natural-language responses (Piper TTS for English, MMS-TTS for Tagalog)
 - Nothing the device does ends in unexplained silence: an empty transcript or a recording too short to hold speech is answered aloud, not swallowed
 - A soft blip while the device is working. Transcription plus local classification is 3-7 s of silence on a Pi, which is indistinguishable from a device that has died; a command answered faster than 1.5 s never blips at all
