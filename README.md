@@ -85,6 +85,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Push-to-talk speech input (Whisper STT)
 - LLM-based intent classification (Qwen 3 1.7B via Ollama), with a Mistral cloud fallback for questions no intent covers
 - Natural-language responses (Piper TTS for English, MMS-TTS for Tagalog)
+- A soft blip while the device is working. Transcription plus local classification is 3-7 s of silence on a Pi, which is indistinguishable from a device that has died; a command answered faster than 1.5 s never blips at all
 - Speech and commands can both be interrupted — the repeat button stops the wearable mid-sentence (which matters when OCR is reading a menu) and cancels a command still being transcribed or classified, so a question asked by mistake can be taken back without waiting out the answer. Every press answers with a short tone, because silence is also what a dead device sounds like
 - Spoken help, so a user who cannot read a manual can ask what the device does
 - Speaks as soon as it is powered on — startup takes 2-3 minutes, and a pre-rendered announcement plays before any model loads so silence is never mistaken for a device that failed to boot
@@ -270,7 +271,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | STT — microphone → text | `python -m indepensense.voice.tests.manual.stt_test` |
 | TTS — text → speaker | `python -m indepensense.voice.tests.manual.tts_test` — uses the engine for `DEFAULT_LANGUAGE`: Piper for `en`, MMS for `tl` |
 | Full echo — mic → text → speech | `python -m indepensense.voice.tests.manual.echo_test` |
-| Button cues — are the four non-speech sounds distinguishable by ear? | `python -m indepensense.voice.tests.manual.cue_test` — plays the rising/falling chimes, the stop cue and the busy cue, then the two easiest to confuse back to back. Run through the real headset at normal volume; a cue that is clear on a laptop speaker can vanish under traffic noise |
+| Button cues — are the five non-speech sounds distinguishable by ear? | `python -m indepensense.voice.tests.manual.cue_test` — plays the rising/falling chimes, the stop cue, the busy cue and the waiting blip, then the two easiest to confuse back to back and five seconds of blipping. Run through the real headset at normal volume; a cue that is clear on a laptop speaker can vanish under traffic noise |
 
 ### Power
 

@@ -350,7 +350,12 @@ def stop_playback() -> None:
     _stop_requested.set()
 
 
-def _tone(frequency_hz: float, duration_s: float, samplerate: int):
+def _tone(
+    frequency_hz: float,
+    duration_s: float,
+    samplerate: int,
+    amplitude: float = 0.3,
+):
     """One fixed-pitch tone with the edges faded, as a float32 array.
 
     The fade is not decoration. A sine cut off mid-cycle steps the speaker
@@ -362,7 +367,7 @@ def _tone(frequency_hz: float, duration_s: float, samplerate: int):
 
     n_samples = int(samplerate * duration_s)
     t = np.linspace(0, duration_s, n_samples, endpoint=False)
-    wave = 0.3 * np.sin(2.0 * np.pi * frequency_hz * t)
+    wave = amplitude * np.sin(2.0 * np.pi * frequency_hz * t)
 
     fade = int(0.008 * samplerate)
     if fade > 0 and n_samples > 2 * fade:
@@ -371,7 +376,11 @@ def _tone(frequency_hz: float, duration_s: float, samplerate: int):
     return wave.astype(np.float32)
 
 
-def play_cue(steps: list[tuple[float, float]], gap_s: float = 0.03) -> None:
+def play_cue(
+    steps: list[tuple[float, float]],
+    gap_s: float = 0.03,
+    amplitude: float = 0.3,
+) -> None:
     """Play a sequence of `(frequency_hz, duration_s)` tones as one cue.
 
     Distinct from `play_chime`, which sweeps continuously between two
@@ -392,7 +401,7 @@ def play_cue(steps: list[tuple[float, float]], gap_s: float = 0.03) -> None:
     for frequency_hz, duration_s in steps:
         if parts:
             parts.append(silence)
-        parts.append(_tone(frequency_hz, duration_s, samplerate))
+        parts.append(_tone(frequency_hz, duration_s, samplerate, amplitude))
     if not parts:
         return
 
@@ -427,6 +436,26 @@ def play_stop_cue() -> None:
 def play_busy_cue() -> None:
     """Tell the user a press was heard but cannot be acted on right now."""
     play_cue(_BUSY_CUE)
+
+
+# A single soft blip, repeated by the caller while the device is working.
+# Quieter and shorter than the cues above on purpose: those are answers to
+# a press and are heard once, this one recurs for several seconds and is
+# background. At 0.3 amplitude it reads as the device beeping AT you; at
+# 0.12 it reads as the device being busy.
+_WAITING_TICK = [(520.0, 0.045)]
+_WAITING_AMPLITUDE = 0.12
+
+
+def play_waiting_tick() -> None:
+    """One blip of the "still working on it" pattern.
+
+    Deliberately a single short blip the caller repeats, not a continuous
+    tone it would have to interrupt. `play` holds `_playback_lock` for a
+    whole utterance, so a sustained waiting sound would make the answer —
+    and any obstacle warning — queue behind it. One blip holds the lock
+    for 45 ms and leaves it free the rest of the time.""" 
+    play_cue(_WAITING_TICK, amplitude=_WAITING_AMPLITUDE)
 
 
 def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:

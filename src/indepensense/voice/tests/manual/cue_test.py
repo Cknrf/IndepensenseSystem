@@ -36,6 +36,7 @@ from indepensense.voice.audio import (
     play_busy_cue,
     play_chime,
     play_stop_cue,
+    play_waiting_tick,
 )
 
 # Long enough to hear each cue as its own event rather than as one run-on
@@ -51,6 +52,8 @@ CUES = [
      play_stop_cue),
     ("BUSY cue      (press refused — a command is already running)",
      play_busy_cue),
+    ("waiting blip  (still working — repeats every ~1.2 s)",
+     play_waiting_tick),
 ]
 
 
@@ -72,8 +75,18 @@ def main() -> None:
         play_stop_cue()
         time.sleep(_GAP_S)
 
-    print("\nIf those two are hard to separate, change `_STOP_CUE` in")
-    print("voice/audio.py — the pitches and durations are right there.\n")
+    print("\nAnd the waiting blip as it is actually heard — five seconds")
+    print("of it, which is a realistic wait for a cloud question:\n")
+    for _ in range(4):
+        play_waiting_tick()
+        time.sleep(1.2)
+
+    print("\nJudge that one for *intrusiveness*, not clarity. It should sit")
+    print("under conversation, not demand attention — if it is irritating")
+    print("after five seconds it will be unbearable after a long OCR read.")
+    print("`_WAITING_AMPLITUDE` and `_WAITING_TICK` in voice/audio.py.")
+    print("\nIf the stop cue and falling chime are hard to separate, change")
+    print("`_STOP_CUE` there too — the pitches and durations are right there.\n")
 
 
 if __name__ == "__main__":

@@ -138,6 +138,22 @@ OBSTACLE_DANGER_REPEAT_S = 15.0
 # after a failure retries instead of being ignored.
 EMERGENCY_REARM_S = 10.0
 
+# The "still working on it" blip played while a voice command is being
+# transcribed and classified.
+#
+# That stretch is 3-7 s of total silence on the Pi — speech-to-text, then
+# a 1.7B model on a CPU — and the user has already had their stop chime,
+# so from their side nothing distinguishes it from a device that died.
+# "Let me think about that" only covers the cloud path, and only after the
+# local model has already spent its seconds deciding to escalate.
+#
+# `DELAY` is the grace period before the first blip: a command answered
+# faster than this never ticks at all, so the common quick reply ("what
+# time is it") stays clean. `INTERVAL` is the gap between blips after
+# that — slow enough to read as a heartbeat rather than a countdown.
+WAITING_CUE_DELAY_S = 1.5
+WAITING_CUE_INTERVAL_S = 1.2
+
 # Bench mute for the obstacle buzzer. The active buzzer is deliberately
 # loud — it has to cut through street noise — which makes indoor desk
 # testing unpleasant for everyone in the room. With this False the TOP

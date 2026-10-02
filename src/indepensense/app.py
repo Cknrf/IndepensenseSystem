@@ -118,6 +118,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -222,6 +223,8 @@ from indepensense.config import (
     SHUTDOWN_COMMAND,
     STARTUP_AUDIO_DIR,
     VOICE_TEST_DIR,
+    WAITING_CUE_DELAY_S,
+    WAITING_CUE_INTERVAL_S,
     VOLUME_DEFAULT_PERCENT,
     VOLUME_MAX_PERCENT,
     VOLUME_MIN_PERCENT,
@@ -284,6 +287,7 @@ from indepensense.voice.audio import (
     play_busy_cue,
     play_chime,
     play_stop_cue,
+    play_waiting_tick,
     record_until_button,
     stop_playback,
 )
@@ -294,6 +298,23 @@ from indepensense.voice.whisper import FasterWhisperSTT
 
 
 FALL_LOOP_INTERVAL_S = 0.01     # 100 Hz — matches ThresholdFallDetector's tuning
+
+# Messages rendered to WAV ahead of time rather than synthesised when
+# needed. Two different reasons, one mechanism:
+#
+#   startup   TTS does not exist yet when this plays — it is the first
+#             thing `start()` does, minutes before the models finish
+#             loading, so it can only ever replay a previous boot's file.
+#   thinking  TTS does exist, but this sentence sits in front of the
+#             device's slowest path. Synthesising it on every cloud
+#             question added ~1 s to the exact wait it exists to excuse.
+#
+# Name -> message key. The name is also the filename prefix, so adding an
+# entry here is the whole change.
+_PRERENDERED: dict[str, str] = {
+    "startup": "system.starting",
+    "thinking": "cloud.thinking",
+}
 
 # Obstacle tiers, ordered. `None` is "clear", so comparing ranks answers
 # "did this get worse?" without a chain of string equality checks.
@@ -697,6 +718,12 @@ class App:
         # each, every one preempting the last, and the user hears a
         # stutter of half-sentences instead of an answer.
         self._already_sent_spoken: bool = False
+        # Suspends the waiting blip. Set only by the destination
+        # confirmation, which is deliberately silent while it waits for a
+        # press — blipping through that question would read as the device
+        # talking over itself, and `is_playing()` cannot see it because
+        # nothing is playing.
+        self._waiting_paused = threading.Event()
 
         # Set by the executor once the user confirms a shutdown; acted on
         # by the voice thread after the goodbye has finished playing.
@@ -897,7 +924,7 @@ class App:
         # Now that TTS exists, make sure the next boot can speak at second
         # zero. Deliberately last: it costs a synthesis per language and
         # the user is already up and running by this point.
-        self._render_startup_notice()
+        self._render_prerendered()
 
     def run(self) -> None:
         """Main 100 Hz sensor loop. Blocks until shutdown.
@@ -1862,6 +1889,60 @@ class App:
             except Exception as exc:
                 print(f"[feedback] motor-ack error: {exc}", file=sys.stderr, flush=True)
 
+    @contextmanager
+    def _waiting_cue(self):
+        """Blip softly while the user waits, for the duration of the block.
+
+        The gap between the stop chime and the answer is 3-7 s of silence
+        on the Pi — Whisper, then a 1.7B model on a CPU — and from the
+        user's side that is indistinguishable from a device that died.
+        "Let me think about that" only ever covered the cloud path, and
+        only *after* the local model had already spent its seconds.
+
+        A context manager because the one thing that must never happen is
+        the blip outliving the wait. The pipeline has several early
+        returns inside this block (cancelled, empty transcript, emergency)
+        and a `finally` is the only way all of them stop it.
+
+        Separate blips rather than one sustained tone: `play` holds the
+        audio lock for a whole utterance, so a continuous waiting sound
+        would make the answer — and any obstacle warning — queue behind
+        it. Each blip holds the lock for 45 ms and leaves it free the
+        rest of the time.
+
+        Skips a blip whenever speech is on the speaker, which is what
+        keeps it out of the way of "let me think about that" and of an
+        obstacle warning, without either of them needing to know it
+        exists. `_waiting_paused` covers the one case that check cannot:
+        the destination confirmation, which is *silent on purpose* while
+        it waits for a button press.
+        """
+        stop = threading.Event()
+
+        def _run() -> None:
+            # A command answered faster than the delay never blips at all.
+            if stop.wait(WAITING_CUE_DELAY_S):
+                return
+            while True:
+                if not is_playing() and not self._waiting_paused.is_set():
+                    try:
+                        play_waiting_tick()
+                    except Exception as exc:
+                        # No audio stack, or the device went away. Stop
+                        # rather than retry every interval for the rest of
+                        # the wait — one log line, not twenty.
+                        print(f"[waiting] cue stopped: {exc}",
+                              file=sys.stderr, flush=True)
+                        return
+                if stop.wait(WAITING_CUE_INTERVAL_S):
+                    return
+
+        threading.Thread(target=_run, name="waiting-cue", daemon=True).start()
+        try:
+            yield
+        finally:
+            stop.set()
+
     def _cancel_reason(self) -> str:
         """Why the current voice cycle was abandoned, for the log.
 
@@ -1987,45 +2068,54 @@ class App:
             # got your command, processing now."
             self._play_press_feedback(rising_chime=False)
 
-            transcript = self.stt.transcribe(
-                input_path,
-                language=self.language.current,
-                initial_prompt=WHISPER_INITIAL_PROMPTS.get(self.language.current) or None,
-            )
-            print(f"[PTT] Transcript: {transcript.text!r}", flush=True)
-            if self._voice_cancel.is_set() or not transcript.text.strip():
-                return
+            # Everything from here to the answer is silent work the user
+            # cannot see: transcription, classification, whatever the
+            # executor has to fetch, and finally synthesis. The blip is
+            # what distinguishes that from a device that has died.
+            with self._waiting_cue():
+                transcript = self.stt.transcribe(
+                    input_path,
+                    language=self.language.current,
+                    initial_prompt=(
+                        WHISPER_INITIAL_PROMPTS.get(self.language.current) or None
+                    ),
+                )
+                print(f"[PTT] Transcript: {transcript.text!r}", flush=True)
+                if self._voice_cancel.is_set() or not transcript.text.strip():
+                    return
 
-            intent_result = self.parser.parse(transcript.text)
-            print(
-                f"[PTT] Intent: {describe(intent_result)} "
-                f"params={intent_result.parameters}",
-                flush=True,
-            )
+                intent_result = self.parser.parse(transcript.text)
+                print(
+                    f"[PTT] Intent: {describe(intent_result)} "
+                    f"params={intent_result.parameters}",
+                    flush=True,
+                )
 
-            # A cloud answer takes seconds. A sighted user watches a
-            # spinner; this user hears nothing and cannot tell whether
-            # the wearable is thinking or dead. Say so before the wait.
-            #
-            # `failure is None` mirrors the executor's own gate: a parse
-            # failure never reaches the cloud, so promising a wait that is
-            # not coming would have the wearable say "let me think" and
-            # then immediately "I didn't catch that".
-            if (
-                intent_result.intent is Intent.UNKNOWN
-                and intent_result.failure is None
-                and self.cloud is not None
-            ):
-                self._speak_thinking()
+                # A cloud answer takes seconds on top of everything above.
+                # The blip says the device is alive; this says an answer is
+                # coming and roughly why it is slow, which a tone cannot.
+                #
+                # `failure is None` mirrors the executor's own gate: a parse
+                # failure never reaches the cloud, so promising a wait that is
+                # not coming would have the wearable say "let me think" and
+                # then immediately "I didn't catch that".
+                if (
+                    intent_result.intent is Intent.UNKNOWN
+                    and intent_result.failure is None
+                    and self.cloud is not None
+                ):
+                    self._speak_thinking()
+                    if self._voice_cancel.is_set():
+                        return
+
+                response = self.executor.execute(intent_result)
+                print(f"[PTT] Response: {response}", flush=True)
                 if self._voice_cancel.is_set():
                     return
 
-            response = self.executor.execute(intent_result)
-            print(f"[PTT] Response: {response}", flush=True)
-            if self._voice_cancel.is_set():
-                return
-
-            self.tts.synthesize(response, response_path, language=self.language.current)
+                self.tts.synthesize(
+                    response, response_path, language=self.language.current,
+                )
             if self._voice_cancel.is_set():
                 return
             play(response_path)
@@ -2205,8 +2295,15 @@ class App:
             print("[nav] no PTT button — skipping confirmation.", flush=True)
             return True
 
+        # The silence after the question is the user's turn, not a wait
+        # for the device — blipping through it would read as the wearable
+        # talking over its own question. `is_playing()` cannot see this
+        # because, by design, nothing is playing.
+        self._waiting_paused.set()
+
         self._speak_error(question)   # reuse the best-effort speak helper
         if self._voice_cancel.is_set():
+            self._waiting_paused.clear()
             return False
 
         confirmed = threading.Event()
@@ -2220,6 +2317,7 @@ class App:
                 if self._voice_cancel.is_set():
                     return False
         finally:
+            self._waiting_paused.clear()
             # Hand the button back even if speaking or waiting blew up,
             # or the next press would land on a dead handler.
             try:
@@ -2233,19 +2331,19 @@ class App:
         print("[nav] destination confirmation timed out — cancelling.", flush=True)
         return False
 
-    def _startup_audio_path(self, language: str) -> Path:
-        """Where the pre-rendered "starting up" clip for `language` lives.
+    def _prerendered_path(self, name: str, language: str) -> Path:
+        """Where the pre-rendered clip `name` for `language` lives.
 
-        The message text is hashed into the filename, so editing
-        `system.starting` in `messages.py` points this at a file that does
-        not exist yet and the stale recording is simply never played again.
-        Without that, the wearable would keep speaking a sentence that is
-        no longer anywhere in the source — the kind of drift that costs an
+        The message text is hashed into the filename, so editing it in
+        `messages.py` points this at a file that does not exist yet and
+        the stale recording is simply never played again. Without that,
+        the wearable would keep speaking a sentence that is no longer
+        anywhere in the source — the kind of drift that costs an
         afternoon to find.
         """
-        text = messages.get("system.starting", language)
+        text = messages.get(_PRERENDERED[name], language)
         digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-        return STARTUP_AUDIO_DIR / f"startup_{language}_{digest}.wav"
+        return STARTUP_AUDIO_DIR / f"{name}_{language}_{digest}.wav"
 
     def _play_startup_notice(self) -> None:
         """Play the pre-rendered startup message. Never raises.
@@ -2255,13 +2353,13 @@ class App:
         available yet, so this can only replay something rendered on a
         previous boot. The very first boot after installation (or after
         the message text changes) is therefore silent here, and
-        `_render_startup_notice` fixes that for every boot after.
+        `_render_prerendered` fixes that for every boot after.
 
         Playback is blocking, and deliberately so: it is a few seconds at
         the head of a 2-3 minute startup, and letting model loading talk
         over the greeting would defeat it.
         """
-        path = self._startup_audio_path(self.language.current)
+        path = self._prerendered_path("startup", self.language.current)
         if not path.exists():
             print(
                 f"  (no startup clip yet at {path.name} — it will be "
@@ -2274,35 +2372,41 @@ class App:
         except Exception as exc:
             print(f"[startup] could not play notice: {exc}", file=sys.stderr, flush=True)
 
-    def _render_startup_notice(self) -> None:
-        """Render the startup clip for every language, if missing. Never raises.
+    def _render_prerendered(self) -> None:
+        """Render every pre-rendered clip in every language. Never raises.
 
         Every language, not just the active one, because the user can
-        switch with a voice command and the next boot must greet them in
-        whatever they chose — by which point TTS is again unavailable.
+        switch with a voice command: the next boot must greet them in
+        whatever they chose, by which point TTS is again unavailable, and
+        a cloud question asked in Tagalog must not pay for synthesis the
+        English boot already did.
 
-        Stale clips for the same language are removed, so an edited
-        message leaves one file rather than a growing pile of recordings
-        of sentences nobody says any more.
+        Stale clips for the same name and language are removed, so an
+        edited message leaves one file rather than a growing pile of
+        recordings of sentences nobody says any more.
         """
-        for language in self.language.supported:
-            path = self._startup_audio_path(language)
-            if path.exists():
-                continue
-            try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                self.tts.synthesize(
-                    messages.get("system.starting", language), path, language=language,
-                )
-                for stale in path.parent.glob(f"startup_{language}_*.wav"):
-                    if stale != path:
-                        stale.unlink()
-                print(f"  Rendered startup clip for '{language}'.", flush=True)
-            except Exception as exc:
-                print(
-                    f"[startup] could not render '{language}' notice: {exc}",
-                    file=sys.stderr, flush=True,
-                )
+        for name in _PRERENDERED:
+            for language in self.language.supported:
+                path = self._prerendered_path(name, language)
+                if path.exists():
+                    continue
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    self.tts.synthesize(
+                        messages.get(_PRERENDERED[name], language),
+                        path,
+                        language=language,
+                    )
+                    for stale in path.parent.glob(f"{name}_{language}_*.wav"):
+                        if stale != path:
+                            stale.unlink()
+                    print(f"  Rendered '{name}' clip for '{language}'.", flush=True)
+                except Exception as exc:
+                    print(
+                        f"[prerender] could not render '{name}' for "
+                        f"'{language}': {exc}",
+                        file=sys.stderr, flush=True,
+                    )
 
     def _request_shutdown(self) -> None:
         """Arm the power-off. Called by the executor after the user confirms.
@@ -2373,16 +2477,28 @@ class App:
         coming, which a beep does not. It plays synchronously on the voice
         thread — that costs a second, but overlapping it with the answer
         would mean two voices talking at once.
+
+        Pre-rendered at startup. It used to be synthesised on every cloud
+        question, which put ~1 s of TTS in front of the slowest path the
+        device has — adding to the exact wait this sentence exists to
+        excuse. Live synthesis stays as the fallback for the first boot
+        after the message text changes, when no file exists yet.
         """
+        language = self.language.current
         try:
-            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
-            thinking_path = VOICE_TEST_DIR / f"{timestamp}_thinking.wav"
-            self.tts.synthesize(
-                messages.get("cloud.thinking", self.language.current),
-                thinking_path,
-                language=self.language.current,
-            )
-            play(thinking_path)
+            path = self._prerendered_path("thinking", language)
+            if not path.exists():
+                print(
+                    f"[thinking] no pre-rendered clip at {path.name} — "
+                    f"synthesising.",
+                    file=sys.stderr, flush=True,
+                )
+                timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
+                path = VOICE_TEST_DIR / f"{timestamp}_thinking.wav"
+                self.tts.synthesize(
+                    messages.get("cloud.thinking", language), path, language=language,
+                )
+            play(path)
         except Exception as exc:
             print(f"[thinking] could not speak: {exc}", file=sys.stderr, flush=True)
 
