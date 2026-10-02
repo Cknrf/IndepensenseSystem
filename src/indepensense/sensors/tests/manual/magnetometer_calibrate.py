@@ -110,8 +110,17 @@ _TONE_TURN = [(520.0, 0.07)]
 _TONE_SPIN = [(900.0, 0.14)]
 
 # How long before the changeover the warning beeps start. One per second,
-# so this is also how many of them there are.
-_TURN_LEAD_S = 2.0
+# so this is also how many of them there are: a 5-4-3-2-1 countdown, with
+# the digits on screen matching the beeps rather than running beside them.
+#
+# Five seconds because turning a vest over by hand is slower than it
+# sounds, and the cost of being hurried is a face swept badly or skipped
+# — which is the one thing the min/max derivation cannot recover from.
+# Note what it buys at the default 60 s: six faces of 10 s each, so 5 s of
+# transition leaves 5 s of spinning. That is about one unhurried rotation
+# per face, and opposite faces cover each other's gaps. Raise `--seconds`
+# if the grade comes back short.
+_TURN_LEAD_S = 5.0
 
 # Audible structure of the sweep, for running it away from the screen.
 # Pitch carries the meaning: rising is progress or success, falling is

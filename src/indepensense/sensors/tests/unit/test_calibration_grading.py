@@ -317,3 +317,40 @@ def test_the_field_magnitude_is_shown_and_labelled_raw():
 
     assert "47.3" in line
     assert "raw" in line
+
+
+def test_the_shipped_pacing_leaves_time_to_spin():
+    """The default is a balance, not an arbitrary number: a longer
+    transition is easier on the person but eats the spinning that
+    actually sweeps the circle. If either side is changed, this is the
+    constraint that has to still hold."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        DURATION_S,
+        _SWEEP_POSITIONS,
+        _TURN_LEAD_S,
+    )
+
+    segment = DURATION_S / _SWEEP_POSITIONS
+    spin = segment - _TURN_LEAD_S
+
+    assert spin >= 4.0, (
+        f"only {spin:.1f}s of spinning per face — about one rotation is "
+        f"needed and that is not enough time for it"
+    )
+    assert _TURN_LEAD_S >= 3.0, "too little time to physically turn the vest"
+
+
+def test_the_shipped_countdown_matches_the_beeps():
+    """The digits on screen and the sounds have to agree — one per second
+    of lead — or they read as two different instructions."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        DURATION_S,
+        _SWEEP_POSITIONS,
+        _TURN_LEAD_S,
+    )
+
+    schedule = cue_schedule(DURATION_S, _SWEEP_POSITIONS, _TURN_LEAD_S)
+    segment = DURATION_S / _SWEEP_POSITIONS
+    first_changeover = [at for at, cue in schedule if cue == "turn" and at < segment]
+
+    assert len(first_changeover) == int(_TURN_LEAD_S)
