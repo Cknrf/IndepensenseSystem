@@ -252,8 +252,29 @@ MAG_SCALE_Z = 1.0
 # Determine the signs empirically on the assembled unit — see the
 # procedure in docs/hardware.md. Getting a sign wrong mirrors the
 # heading, which reads plausibly while sending the user the wrong way.
-MAG_FORWARD_AXIS = "+x"
-MAG_LEFT_AXIS = "+y"
+# Measured on the assembled vest with `magnetometer_axes`, 2026-10-03.
+#
+# Pass 1, run twice: spans x=77.6, y=21.1, z=79.6 and x=77.6, y=20.2,
+# z=78.3 — y is vertical both times at a ratio of 0.26, comfortably
+# inside the 0.35 limit. Matches the upright-on-the-back mount described
+# above, so heading comes from z and x.
+#
+# Pass 2 saw 196° and 81° of rightward turn across the two runs and
+# agreed on these signs, which is the half that matters: the heading now
+# rotates the correct way, and a mirrored one cannot be fixed by any
+# later offset.
+#
+# PROVISIONAL on where zero sits. Four combinations rotate correctly and
+# measured an identical turn, so pass 2 cannot separate them — they
+# differ only by whole 90° steps. Confirm against one known bearing and
+# step through this list if the heading is out by about 90, 180 or 270°:
+#
+#     forward="+x"  left="-z"
+#     forward="-x"  left="+z"
+#     forward="+z"  left="+x"
+#     forward="-z"  left="-x"      <- in use
+MAG_FORWARD_AXIS = "-z"
+MAG_LEFT_AXIS = "-x"
 
 # Whether the compass may be acted upon. **Leave False until calibrated.**
 #
