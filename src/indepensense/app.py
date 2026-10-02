@@ -264,7 +264,9 @@ from indepensense.vision.picamera import PiCamera
 from indepensense.voice.audio import (
     is_playing,
     play,
+    play_busy_cue,
     play_chime,
+    play_stop_cue,
     record_until_button,
     stop_playback,
 )
@@ -525,10 +527,19 @@ class App:
         )
 
         # Voice concurrency: one voice thread at a time; a second PTT
-        # press while _voice_active is set is ignored. Emergency press
-        # sets _voice_cancel to abort an in-progress voice cycle.
+        # press while _voice_active is set is ignored. `_voice_cancel`
+        # aborts an in-progress voice cycle — every pipeline stage checks
+        # it and bails — and two buttons now set it: emergency, and repeat
+        # used as "stop".
         self._voice_active = threading.Event()
         self._voice_cancel = threading.Event()
+        # Why the cycle was abandoned, for the log only. One event rather
+        # than two because every stage wants the same answer ("stop now");
+        # only the reader of a journal afterwards needs to tell an
+        # emergency preemption from a user changing their mind. Always
+        # assigned BEFORE `_voice_cancel.set()`, so a thread that observes
+        # the event observes a reason that is already current.
+        self._voice_cancel_reason: str = ""
         self._voice_thread: threading.Thread | None = None
 
         # Placeholders — filled in by start()
@@ -1479,10 +1490,16 @@ class App:
         recording starts so the chime isn't captured in the audio.
         """
         if self._voice_active.is_set():
+            # Answer the press even though it is refused. A button that
+            # produces nothing at all is indistinguishable from a button
+            # that is broken, and this is the one the user reaches for
+            # when they think the device has stopped listening.
             print("[PTT] Voice pipeline busy — press ignored.", flush=True)
+            self._play_cue(play_busy_cue)
             return
 
         self._voice_active.set()
+        self._voice_cancel_reason = ""
         self._voice_cancel.clear()
         self._play_press_feedback(rising_chime=True)
         self._voice_thread = threading.Thread(
@@ -1505,6 +1522,7 @@ class App:
         callback thread for the length of the sentence. Going through the
         announcer fixes both.
         """
+        self._voice_cancel_reason = "emergency"
         self._voice_cancel.set()
         print("\n[EMERGENCY BUTTON] Pressed. Firing alert...", flush=True)
 
@@ -1615,17 +1633,47 @@ class App:
         the last response, so pressing again replays the one just
         cancelled — which is what someone who stopped it for a passing
         jeepney would expect.
+
+        **Stop means the whole exchange, not just the audio.** A press
+        used to abort playback only, so a press during the three to seven
+        seconds of transcription and classification did nothing at all —
+        no sound, no haptic, and the answer still arrived afterwards
+        whether or not it was still wanted. There was no way to take back
+        a question except by triggering a real emergency alert to a
+        guardian, which is not a cancel button. It now sets
+        `_voice_cancel`, the same flag the emergency path uses, so every
+        stage of the pipeline bails for the same reason it already bails
+        for an emergency.
+
+        **It always answers.** Interrupting is silent by design — silence
+        is what was asked for — but silence is also exactly what a dead
+        device produces, and the two were indistinguishable. A short stop
+        cue says the press landed. It is a tone and not a sentence
+        because the user just asked it to stop talking, and replying with
+        more talking both contradicts the request and invites a second
+        press to stop *that*.
         """
-        if is_playing():
+        speaking = is_playing()
+        working = self._voice_active.is_set()
+
+        if speaking:
             print("[REPEAT] Stopping playback.", flush=True)
             stop_playback()
             if self.announcer is not None:
                 self.announcer.clear()
+
+        if working:
+            # Checked after `is_playing` and acted on independently: a
+            # pipeline that is mid-playback is both, and "stop" has to
+            # mean both or the response resumes from the next stage.
+            print("[REPEAT] Cancelling the voice command in flight.", flush=True)
+            self._voice_cancel_reason = "user"
+            self._voice_cancel.set()
+
+        if speaking or working:
+            self._play_cue(play_stop_cue)
             return
 
-        if self._voice_active.is_set():
-            print("[REPEAT] Voice pipeline busy — press ignored.", flush=True)
-            return
         self._play_button_ack()
         try:
             response = self.executor.execute(
@@ -1649,6 +1697,35 @@ class App:
                 self._pulse_all_motors(duration_s=0.15)
             except Exception as exc:
                 print(f"[feedback] motor-ack error: {exc}", file=sys.stderr, flush=True)
+
+    def _cancel_reason(self) -> str:
+        """Why the current voice cycle was abandoned, for the log.
+
+        Falls back to "unknown" rather than asserting: this is read on the
+        voice thread after observing `_voice_cancel`, and a reason that
+        somehow never got written must not turn a clean abort into an
+        exception inside the pipeline's own error handling.
+        """
+        return self._voice_cancel_reason or "unknown"
+
+    def _play_cue(self, cue) -> None:
+        """Play a short audio cue, never raising. ~200 ms.
+
+        Audio only, no motors. The three vibration motors already carry
+        two meanings — turn direction and obstacle proximity — and a third
+        overlaid on the same hardware would be unreadable to someone
+        decoding it by feel while walking.
+
+        Deliberately not inside `_warning_lock`, unlike the press and
+        emergency feedback: those hold it because they pulse motors, and
+        taking it here would make a stop cue queue behind a warning
+        pattern the user has just asked to interrupt. `play_cue` takes the
+        audio layer's own lock, which is the only serialisation it needs.
+        """
+        try:
+            cue()
+        except Exception as exc:
+            print(f"[feedback] cue error: {exc}", file=sys.stderr, flush=True)
 
     def _play_press_feedback(self, rising_chime: bool) -> None:
         """PTT start/stop feedback: all-motor pulse + audio chime.
@@ -1717,10 +1794,15 @@ class App:
             print(f"[PTT] Captured {duration:.1f} s of audio.", flush=True)
 
             if self._voice_cancel.is_set():
-                # Emergency preempted us — its own feedback pattern is
-                # already playing; skip the PTT stop feedback to avoid
-                # audio contention on the same output device.
-                print("[PTT] Recording preempted by emergency — skipping.", flush=True)
+                # Whichever button fired has already made its own sound —
+                # the emergency pattern, or the stop cue — so the PTT stop
+                # feedback is skipped to avoid two cues contending for the
+                # one output device.
+                print(
+                    f"[PTT] Recording cancelled ({self._cancel_reason()}) "
+                    f"— skipping.",
+                    flush=True,
+                )
                 return
             if duration <= 0.2:
                 print("[PTT] Too short — skipping.", flush=True)

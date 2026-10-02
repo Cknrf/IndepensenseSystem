@@ -188,3 +188,88 @@ def test_the_flag_is_cleared_when_a_stream_raises(fake_sd, wav):
 
     assert audio.is_playing() is False
     assert fake_sd.streams[0].closed == 1, "an exception must still close the stream"
+
+
+# --- interrupt cues ----------------------------------------------------------
+#
+# A press that stops the wearable talking used to produce nothing, which is
+# also what a device that has just died produces. These cues are the
+# difference. They are generated here rather than read from WAVs so the
+# device ships no audio assets it has to find on disk at the one moment it
+# needs to say "I stopped".
+
+def test_the_stop_cue_owns_and_closes_its_stream(fake_sd):
+    pytest.importorskip("numpy")
+
+    audio.play_stop_cue()
+
+    assert len(fake_sd.streams) == 1
+    assert fake_sd.streams[0].closed == 1
+    assert fake_sd.max_live == 1
+
+
+def test_a_cue_never_overlaps_speech(fake_sd, wav):
+    """Same collision as the chime: a cue runs on gpiozero's callback
+    thread while the announcer is mid-sentence. The stop cue is played
+    *immediately after* `stop_playback`, so this ordering is the common
+    case rather than a corner one."""
+    pytest.importorskip("numpy")
+
+    speech = threading.Thread(target=audio.play, args=(wav,), name="announcer")
+    cue = threading.Thread(target=audio.play_stop_cue, name="button-callback")
+    speech.start()
+    cue.start()
+    speech.join(timeout=5.0)
+    cue.join(timeout=5.0)
+
+    assert fake_sd.max_live == 1
+    for stream in fake_sd.streams:
+        assert stream.closed == 1
+
+
+def test_a_cue_does_not_count_as_speech(fake_sd):
+    """`is_playing` gates the stop press. A cue that set it would make the
+    *next* press land on nothing — the user presses stop twice in a row
+    when the first one seemed not to work."""
+    pytest.importorskip("numpy")
+
+    audio.play_stop_cue()
+
+    assert audio.is_playing() is False
+
+
+def test_a_cue_clears_a_stale_stop_request(fake_sd):
+    """The stop cue is played right after `stop_playback` set the flag.
+    Without clearing it the cue would abort itself on its first block and
+    the press would still be silent."""
+    pytest.importorskip("numpy")
+
+    audio.stop_playback()
+    audio.play_stop_cue()
+
+    assert fake_sd.streams[0].blocks, "the cue aborted on a stale stop flag"
+
+
+def test_the_stop_and_busy_cues_sound_different(fake_sd):
+    """They mean opposite things — "I stopped" against "I cannot" — and
+    the wearer has no screen to tell them apart."""
+    pytest.importorskip("numpy")
+
+    audio.play_stop_cue()
+    stop_frames = sum(fake_sd.streams[0].blocks)
+    fake_sd.streams.clear()
+
+    audio.play_busy_cue()
+    busy_frames = sum(fake_sd.streams[0].blocks)
+
+    assert stop_frames != busy_frames
+
+
+def test_a_cue_with_no_steps_plays_nothing(fake_sd):
+    """Guards the empty-sequence path: a zero-length array would reach
+    PortAudio as a stream with nothing to write."""
+    pytest.importorskip("numpy")
+
+    audio.play_cue([])
+
+    assert fake_sd.streams == []

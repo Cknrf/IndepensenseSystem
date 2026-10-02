@@ -350,6 +350,85 @@ def stop_playback() -> None:
     _stop_requested.set()
 
 
+def _tone(frequency_hz: float, duration_s: float, samplerate: int):
+    """One fixed-pitch tone with the edges faded, as a float32 array.
+
+    The fade is not decoration. A sine cut off mid-cycle steps the speaker
+    cone discontinuously, which is heard as a click — and a cue made of
+    clicks is indistinguishable from a loose connection on a device the
+    user cannot look at.
+    """
+    import numpy as np
+
+    n_samples = int(samplerate * duration_s)
+    t = np.linspace(0, duration_s, n_samples, endpoint=False)
+    wave = 0.3 * np.sin(2.0 * np.pi * frequency_hz * t)
+
+    fade = int(0.008 * samplerate)
+    if fade > 0 and n_samples > 2 * fade:
+        wave[:fade] *= np.linspace(0.0, 1.0, fade)
+        wave[-fade:] *= np.linspace(1.0, 0.0, fade)
+    return wave.astype(np.float32)
+
+
+def play_cue(steps: list[tuple[float, float]], gap_s: float = 0.03) -> None:
+    """Play a sequence of `(frequency_hz, duration_s)` tones as one cue.
+
+    Distinct from `play_chime`, which sweeps continuously between two
+    pitches. A cue built from *separate* tones is heard as a pattern
+    rather than a slide, and pattern is what the ear uses to tell short
+    sounds apart — the wearer has to identify these without seeing
+    anything, and two similar sweeps would blur together.
+
+    Takes the same playback lock as everything else here and generates
+    its own audio, so it is safe from any thread.
+    """
+    import numpy as np
+
+    samplerate = 22050
+    silence = np.zeros(int(gap_s * samplerate), dtype="float32")
+
+    parts: list = []
+    for frequency_hz, duration_s in steps:
+        if parts:
+            parts.append(silence)
+        parts.append(_tone(frequency_hz, duration_s, samplerate))
+    if not parts:
+        return
+
+    audio = np.concatenate(parts).reshape(-1, 1)
+    with _playback_lock:
+        _stop_requested.clear()
+        # Like `play_chime`, deliberately does not set `_playing`: a cue is
+        # an acknowledgement, not speech, and counting it as speech would
+        # make the very next stop press land on nothing.
+        _write_blocks(audio, samplerate)
+
+
+# Two falling tones — the shape of something being put down. Says "I
+# stopped" after a press that interrupted speech. Deliberately NOT the
+# falling `play_chime` sweep, which already means "recording ended": the
+# two happen seconds apart in the same session and the wearer has no
+# screen to disambiguate them.
+_STOP_CUE = [(660.0, 0.07), (440.0, 0.10)]
+
+# Two flat low beeps, the convention for "not now" since the telephone
+# busy signal. Says the press was heard and refused, which is the thing a
+# silently-ignored button cannot say — and a button that appears to do
+# nothing reads as broken hardware.
+_BUSY_CUE = [(350.0, 0.06), (350.0, 0.06)]
+
+
+def play_stop_cue() -> None:
+    """Acknowledge a press that interrupted speech or a voice command."""
+    play_cue(_STOP_CUE)
+
+
+def play_busy_cue() -> None:
+    """Tell the user a press was heard but cannot be acted on right now."""
+    play_cue(_BUSY_CUE)
+
+
 def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
     """Play a short synthesized chime as an audio button-press acknowledgment.
 

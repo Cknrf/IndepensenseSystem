@@ -55,6 +55,20 @@ def _playing(monkeypatch, value: bool):
     monkeypatch.setattr(app_module, "is_playing", lambda: value)
 
 
+@pytest.fixture(autouse=True)
+def cues(monkeypatch):
+    """Records which audio cue was played, and keeps the suite silent.
+
+    Autouse because every press now answers with one — left real, these
+    tests would open a PortAudio stream and emit tones on the dev
+    machine, and a swallowed exception would hide which cue was chosen.
+    """
+    played: list[str] = []
+    monkeypatch.setattr(app_module, "play_stop_cue", lambda: played.append("stop"))
+    monkeypatch.setattr(app_module, "play_busy_cue", lambda: played.append("busy"))
+    return played
+
+
 @pytest.fixture
 def stopped(monkeypatch):
     """Records calls to `stop_playback`."""
@@ -193,3 +207,129 @@ def test_the_emergency_confirmation_is_announced_critically(app, monkeypatch):
 
     assert app.executor.intents == [Intent.EMERGENCY_TRIGGER]
     assert app.announcer.said == [("Emergency alert sent.", True)]
+
+
+# --- the press always answers ------------------------------------------------
+#
+# Interrupting is silent by design — silence is what was asked for — but
+# silence is also exactly what a dead device produces, and the two were
+# indistinguishable. Every press now makes a sound saying which happened.
+
+def test_stopping_speech_plays_the_stop_cue(app, monkeypatch, stopped, cues):
+    _playing(monkeypatch, True)
+
+    app._on_repeat_press()
+
+    assert cues == ["stop"]
+
+
+def test_the_stop_cue_is_a_tone_not_a_sentence(app, monkeypatch, stopped, cues):
+    """Answering "I have stopped talking" with more talking contradicts
+    the request and invites a second press to stop that."""
+    _playing(monkeypatch, True)
+
+    app._on_repeat_press()
+
+    assert app.announcer.said == []
+
+
+def test_repeating_does_not_play_the_stop_cue(app, monkeypatch, stopped, cues):
+    """A press while silent means repeat, which answers with speech. A
+    stop cue in front of it would say the opposite of what happens next."""
+    _playing(monkeypatch, False)
+
+    app._on_repeat_press()
+
+    assert cues == []
+
+
+# --- cancelling a command in flight ------------------------------------------
+#
+# A press used to abort playback only, so one during the 3-7 seconds of
+# transcription and classification did nothing at all and the answer
+# arrived anyway. The only way to take back a question was to trigger a
+# real emergency alert to a guardian.
+
+def test_a_press_while_thinking_cancels_the_command(app, monkeypatch, stopped, cues):
+    _playing(monkeypatch, False)
+    app._voice_active.set()
+
+    app._on_repeat_press()
+
+    assert app._voice_cancel.is_set()
+    assert cues == ["stop"]
+
+
+def test_cancelling_does_not_also_repeat(app, monkeypatch, stopped, cues):
+    """The user asked to stop, not to hear the previous answer again."""
+    _playing(monkeypatch, False)
+    app._voice_active.set()
+
+    app._on_repeat_press()
+
+    assert app.executor.intents == []
+
+
+def test_a_press_mid_response_stops_both_the_audio_and_the_pipeline(
+    app, monkeypatch, stopped, cues,
+):
+    """Playing its answer means both are true. Stopping only the speaker
+    would let the pipeline run on into the stage after playback."""
+    _playing(monkeypatch, True)
+    app._voice_active.set()
+
+    app._on_repeat_press()
+
+    assert stopped["stops"] == 1
+    assert app._voice_cancel.is_set()
+    assert cues == ["stop"]
+
+
+def test_the_cancel_reason_distinguishes_a_user_from_an_emergency(app, monkeypatch, stopped, cues):
+    """Both buttons set the same flag, because every pipeline stage wants
+    the same answer. Only the journal afterwards needs to tell them
+    apart."""
+    _playing(monkeypatch, False)
+    app._voice_active.set()
+
+    app._on_repeat_press()
+
+    assert app._cancel_reason() == "user"
+
+
+def test_a_new_command_clears_a_previous_cancel(app, monkeypatch, stopped, cues):
+    """A stale flag would abort the next command before it started."""
+    app._voice_active.set()
+    app._on_repeat_press()
+    assert app._voice_cancel.is_set()
+
+    app._voice_active.clear()
+    monkeypatch.setattr(app, "_play_press_feedback", lambda rising_chime: None)
+    monkeypatch.setattr(app, "_voice_pipeline", lambda: None)
+    app._on_ptt_press()
+
+    assert not app._voice_cancel.is_set()
+    assert app._cancel_reason() == "unknown"
+
+
+# --- a refused press still answers -------------------------------------------
+
+def test_a_ptt_press_while_busy_plays_the_busy_cue(app, monkeypatch, cues):
+    """The press is refused, but a button that produces nothing at all is
+    indistinguishable from a broken one — and this is the button someone
+    reaches for when they think the device stopped listening."""
+    app._voice_active.set()
+
+    app._on_ptt_press()
+
+    assert cues == ["busy"]
+
+
+def test_a_busy_ptt_press_does_not_start_a_second_pipeline(app, monkeypatch, cues):
+    started = []
+    monkeypatch.setattr(app, "_voice_pipeline", lambda: started.append(1))
+    app._voice_active.set()
+
+    app._on_ptt_press()
+
+    assert started == []
