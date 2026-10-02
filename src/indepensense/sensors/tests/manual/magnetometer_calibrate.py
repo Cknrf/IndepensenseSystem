@@ -82,13 +82,18 @@ from indepensense.config import MAG_ADDRESS, MAG_I2C_BUS
 from indepensense.sensors.qmc5883p import QMC5883P, apply_calibration
 from indepensense.voice.audio import play_cue
 
-# Long enough to work through six orientations unhurried, including the
-# time it takes to physically turn the vest between them. The original 30 s
-# assumed a continuous tumble; six discrete positions with a transition
-# between each is a different motion and needs the room. Override with
-# `--seconds` — more is never worse, since the derivation takes extremes
-# and extra samples only improve the odds of reaching them.
-DURATION_S = 60.0
+# Seconds of actual SPINNING per face. This is the knob, not the total.
+#
+# The total used to be, and it made the transition eat the sweep: asking
+# for more time gave you more of both, and shortening the sweep silently
+# shortened the spinning that does the work. Nobody thinks "I want a
+# 90-second sweep"; they think "I want ten seconds to spin at each face".
+# So that is what `--spin` takes, and the total is derived.
+#
+# Ten is about two unhurried rotations, which is comfortable coverage.
+# More is never worse — the derivation takes extremes, so extra samples
+# only improve the odds of reaching them — it just tires the arms.
+SPIN_S = 10.0
 
 # The sweep is paced as six positions: each face of the vest pointed at
 # the floor in turn, spinning at each. A tone marks every changeover, so
@@ -300,14 +305,24 @@ def grade_sweep(samples, offsets, scales):
 
 def main():
     parser = argparse.ArgumentParser(description="Magnetometer calibration sweep.")
-    parser.add_argument(
-        "--seconds", type=float, default=DURATION_S,
-        help=f"how long to sweep (default {DURATION_S:.0f}). Longer is never "
-             f"worse — the derivation takes extremes, so extra samples only "
-             f"improve the odds of reaching them.",
+    knob = parser.add_mutually_exclusive_group()
+    knob.add_argument(
+        "--spin", type=float, default=SPIN_S, metavar="SECONDS",
+        help=f"seconds of spinning per face (default {SPIN_S:.0f}). The "
+             f"{_TURN_LEAD_S:.0f}s changeover is added on top, so the whole "
+             f"sweep takes (spin + {_TURN_LEAD_S:.0f}) x {_SWEEP_POSITIONS}.",
+    )
+    knob.add_argument(
+        "--seconds", type=float, default=None, metavar="SECONDS",
+        help="total sweep length instead, if you would rather cap the whole "
+             "thing. The changeover comes out of this, not on top of it.",
     )
     args = parser.parse_args()
-    duration_s = max(6.0, args.seconds)
+
+    if args.seconds is not None:
+        duration_s = max(6.0, args.seconds)
+    else:
+        duration_s = (max(1.0, args.spin) + _TURN_LEAD_S) * _SWEEP_POSITIONS
 
     mag = QMC5883P(bus_number=MAG_I2C_BUS, address=MAG_ADDRESS)
 
@@ -319,8 +334,10 @@ def main():
     print(f"  1. front    2. back    3. left side")
     print(f"  4. right    5. top     6. bottom")
     print()
-    print(f"Each face gets {segment:.0f}s, counted for you — you never have to")
-    print(f"watch a clock. {duration_s:.0f}s total.")
+    print(f"{segment - _TURN_LEAD_S:.0f}s spinning at each face, then a "
+          f"{_TURN_LEAD_S:.0f}s countdown to")
+    print(f"turn it over. Counted for you — you never have to watch a clock.")
+    print(f"{duration_s:.0f}s in total.")
     print()
     print("Listen for the tones — you do not need to watch this screen:")
     print("  three beeps, then a RISING tone  = start, face 1, spin")
