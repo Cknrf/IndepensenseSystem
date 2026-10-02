@@ -191,6 +191,7 @@ from indepensense.config import (
     OBSTACLE_BUZZER_ENABLED,
     OBSTACLE_DANGER_CM,
     OBSTACLE_DANGER_REPEAT_S,
+    OBSTACLE_READING_MAX_AGE_S,
     OBSTACLE_RELEASE_CM,
     OBSTACLE_WARNING_CM,
     OLLAMA_URL,
@@ -707,6 +708,10 @@ class App:
         # coexist and take turns re-firing.
         self._obstacle_tier: dict[str, str | None] = {}
         self._obstacle_last_fired: dict[str, float] = {}
+        # Last distance seen by each sensor, with the monotonic clock
+        # reading when it arrived. Cached the way `_last_heading_deg` is:
+        # a consumer off the main loop must never touch the UART itself.
+        self._obstacle_reading: dict[str, tuple[float, float]] = {}
 
         # When the emergency alert last went out, on the monotonic clock.
         # Negative infinity rather than 0.0: `time.monotonic()` counts from
@@ -854,6 +859,7 @@ class App:
             places=self.places,
             volume=self.volume,
             heading=self.trusted_heading,
+            obstacle_ahead=self.obstacle_ahead_cm,
             cloud_max_chars=CLOUD_MAX_RESPONSE_CHARS,
             ocr_max_chars=OCR_MAX_CHARS,
             geocode_candidate_limit=GEOCODE_CANDIDATE_LIMIT,
@@ -1172,6 +1178,37 @@ class App:
                     critical=True,
                 )
                 self._set_critical_battery_latch(True)
+
+    def obstacle_ahead_cm(self) -> float | None:
+        """Distance to whatever the forward sensor sees, or None.
+
+        Exists so `vision.describe` can answer with *something* when YOLO
+        recognises nothing. The wearable used to say "I don't see anything
+        I recognize" while a sensor on the same device had an obstacle at
+        42 cm — two subsystems that never spoke to each other.
+
+        The TOP sensor only. BOTTOM points at foot level and therefore
+        sees the ground on most readings, so folding it in would answer
+        "something is 80 centimetres away" to almost every question — true,
+        useless, and the cane already covers that height anyway. TOP is
+        the one looking where the camera looks.
+
+        None rather than a number in three cases, each of which would
+        otherwise produce a confident wrong answer:
+          - no sensor, or no reading yet
+          - the reading is older than `OBSTACLE_READING_MAX_AGE_S`; the
+            DYP-A22 emits at ~10 Hz, so anything older means the sensor
+            has stopped reporting and the user has since moved
+          - nothing is within `OBSTACLE_WARNING_CM`, i.e. there is no
+            obstacle to describe
+        """
+        reading = self._obstacle_reading.get("top")
+        if reading is None:
+            return None
+        distance, stamped_at = reading
+        if time.monotonic() - stamped_at > OBSTACLE_READING_MAX_AGE_S:
+            return None
+        return distance if distance < OBSTACLE_WARNING_CM else None
 
     def latest_heading(self) -> float | None:
         """Most recent compass reading in degrees, calibrated or not.
@@ -1517,6 +1554,12 @@ class App:
             return
 
         distance = reading.distance_cm
+        # Cached for `obstacle_ahead_cm`, which lets `vision.describe`
+        # answer with a distance when the camera recognised nothing.
+        # Stamped with the clock rather than just stored: a reading is
+        # only worth repeating while it is still roughly true.
+        self._obstacle_reading[sensor_name] = (distance, time.monotonic())
+
         previous = self._obstacle_tier.get(sensor_name)
         tier = _obstacle_tier_for(distance, previous)
         self._obstacle_tier[sensor_name] = tier

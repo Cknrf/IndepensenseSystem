@@ -73,6 +73,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "1 kilometer",
         "tl": "isang kilometro",
     },
+    # Close range — an arm's length, not a walk. `speak_distance` cannot
+    # express these: it floors at 10 metres, so an obstacle 40 cm away
+    # would be announced as "10 meters". See `speak_proximity`.
+    "distance.centimeters": {
+        "en": "{value} centimeters",
+        "tl": "{value} sentimetro",
+    },
 
     # --- hardware the user is told to touch ---------------------------------
     # Where the push-to-talk button physically sits on the enclosure, as a
@@ -600,6 +607,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "I don't see anything I recognize right now.",
         "tl": "Wala akong nakikilalang bagay sa ngayon.",
     },
+    # Said instead of the above when the camera recognised nothing but the
+    # forward ultrasonic is reporting something close. The wearable used
+    # to answer "I don't see anything I recognize" while a sensor on the
+    # same device had an obstacle at 42 cm — two subsystems that never
+    # spoke to each other, and the less useful one doing the talking.
+    #
+    # Phrased as "something", never as an identity. The ultrasonic
+    # measures whatever is in its cone, which is not necessarily what the
+    # camera was looking at, so naming it would be a guess dressed up as
+    # a reading.
+    "vision.unidentified_obstacle": {
+        "en": "I can't identify what's in front of you, but something is "
+              "about {distance} away.",
+        "tl": "Hindi ko matukoy kung ano ang nasa harap mo, pero may bagay "
+              "na mga {distance} ang layo.",
+    },
     "vision.i_see": {
         "en": "I see {items}.",
         "tl": "Nakikita ko ang {items}.",
@@ -925,6 +948,28 @@ def speak_distance(metres: float, language: str) -> str:
     if value == 1:
         return get("distance.one_kilometer", language)
     return get("distance.kilometers", language, value=speak_number(value, language))
+
+
+def speak_proximity(centimetres: float, language: str) -> str:
+    """Render a close-range distance — reaching distance, not walking.
+
+    Separate from `speak_distance` because that one is built for
+    navigation and floors at 10 metres: an obstacle 40 cm away would come
+    out as "10 meters", which is worse than saying nothing.
+
+    Rounded to the nearest 10 cm. The DYP-A22 is specified to ±1 cm under
+    ideal conditions and does considerably worse against a soft or angled
+    surface, so a figure like "forty-three centimetres" would claim a
+    precision the sensor does not have and the user cannot act on anyway.
+
+    Floors at 10 cm rather than reporting smaller values honestly: below
+    that the obstacle is already touching, the exact number has stopped
+    mattering, and the DYP-A22's own minimum range is 2 cm.
+    """
+    if centimetres >= 100:
+        return speak_distance(centimetres / 100.0, language)
+    rounded = max(10, _round_half_up(centimetres, 10))
+    return get("distance.centimeters", language, value=speak_number(rounded, language))
 
 
 def speak_number(value: int | float, language: str) -> str:

@@ -77,7 +77,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Critical announcements interrupt whatever is being said, including mid-synthesis
 
 **Computer Vision Awareness**
-- On-demand object detection (YOLOv8)
+- On-demand object detection (YOLOv8), falling back to the forward ultrasonic when the camera recognises nothing — "I can't identify what's in front of you, but something is about 40 centimetres away" rather than "I don't see anything I recognize" with an obstacle at arm's length
 - OCR / text reading (Tesseract, English + Tagalog)
 - Scene description via voice command
 
@@ -431,7 +431,7 @@ than magic words — the full rules and the Tagalog equivalents live in
 | `place.save` | "Save this place as home" | Stores where you are standing, under your own label. Possessives and determiners are ignored when matching, so "my home", "ang bahay ko" and "home"/"bahay" all find the same entry |
 | `place.delete` | "Forget the place saved as home" | |
 | `place.list` | "What places have I saved" | Reads the labels back, up to six, then "and N more". The only way to audit the list without a screen — and `place.delete` needs a name you may have forgotten |
-| `vision.describe` | "What's around me" | Camera + YOLO |
+| `vision.describe` | "What's around me" | Camera + YOLO. When YOLO recognises nothing, answers with the forward ultrasonic's distance instead — "something is about 40 centimetres away". Never alongside a detection: the ultrasonic measures whatever is in its cone, not necessarily the object the camera boxed |
 | `vision.read` | "Read this" | Camera + OCR. Press repeat to stop it mid-read |
 | `device.status` | "How much battery do I have" | Also GPS lock and cellular signal |
 | `system.time` | "What time is it" | |

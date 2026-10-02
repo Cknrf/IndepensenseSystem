@@ -436,3 +436,59 @@ def test_a_tier_is_harder_to_leave_than_to_enter(app):
 
 def _rank(tier):
     return app_module._OBSTACLE_RANK[tier]
+
+
+# --- the cached reading vision.describe reads --------------------------------
+#
+# `vision.describe` used to answer "I don't see anything I recognize"
+# while this very sensor had an obstacle at 42 cm. The cache is the seam
+# that let the two subsystems finally talk.
+
+def test_a_reading_is_cached_for_the_vision_fallback(app):
+    app._check_obstacle_sensor("top", _FixedUltrasonic(42.0))
+
+    assert app.obstacle_ahead_cm() == 42.0
+
+
+def test_nothing_read_yet_is_none(app):
+    assert app.obstacle_ahead_cm() is None
+
+
+def test_a_stale_reading_is_not_reported(app):
+    """The DYP-A22 emits at ~10 Hz, so an old reading means the sensor has
+    stopped reporting — and the user has had a second to move, which at
+    walking pace is about a metre."""
+    app._check_obstacle_sensor("top", _FixedUltrasonic(42.0))
+    distance, stamped_at = app._obstacle_reading["top"]
+    app._obstacle_reading["top"] = (distance, stamped_at - 60.0)
+
+    assert app.obstacle_ahead_cm() is None
+
+
+def test_an_obstacle_out_of_range_is_not_reported(app):
+    """Nothing within warning range means there is nothing to describe.
+    "Something is 350 centimetres away" is not an answer to "what is in
+    front of me"."""
+    app._check_obstacle_sensor("top", _FixedUltrasonic(OBSTACLE_WARNING_CM + 50))
+
+    assert app.obstacle_ahead_cm() is None
+
+
+def test_the_bottom_sensor_is_not_used_for_the_vision_fallback(app):
+    """BOTTOM points at foot level and sees the ground on most readings,
+    so folding it in would answer "something is 80 centimetres away" to
+    almost every question — true, useless, and the cane covers that
+    height anyway."""
+    app._check_obstacle_sensor("bottom", _FixedUltrasonic(42.0))
+
+    assert app.obstacle_ahead_cm() is None
+
+
+def test_the_cache_updates_even_when_no_alert_fires(app, monkeypatch):
+    """Alerts fire on escalation only, so a sensor sitting in one tier is
+    silent — but the distance it reports still has to be current."""
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
+    app._check_obstacle_sensor("top", _FixedUltrasonic(42.0))
+    app._check_obstacle_sensor("top", _FixedUltrasonic(38.0))
+
+    assert app.obstacle_ahead_cm() == 38.0

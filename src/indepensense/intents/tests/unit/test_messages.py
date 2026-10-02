@@ -204,3 +204,39 @@ def test_every_language_renders_every_magnitude():
             rendered = messages.speak_distance(metres, language)
             assert "{" not in rendered, (language, metres, rendered)
             assert "distance." not in rendered, (language, metres, rendered)
+
+
+# --- close-range distances ---------------------------------------------------
+#
+# `speak_distance` is built for navigation and floors at 10 metres, so an
+# obstacle 40 cm away came out as "10 meters" — worse than saying nothing.
+
+@pytest.mark.parametrize("centimetres,expected", [
+    (42.0, "40"),
+    (43.0, "40"),
+    (45.0, "50"),       # halves go up, as everywhere else here
+    (38.0, "40"),
+    (12.0, "10"),
+])
+def test_proximity_rounds_to_ten_centimetres(centimetres, expected):
+    assert expected in messages.speak_proximity(centimetres, "en")
+
+
+def test_proximity_floors_at_ten_centimetres():
+    """Below that the obstacle is already touching, the exact number has
+    stopped mattering, and the sensor's own minimum range is 2 cm."""
+    assert messages.speak_proximity(3.0, "en") == messages.speak_proximity(10.0, "en")
+    assert messages.speak_proximity(0.0, "en").startswith("10")
+
+
+def test_proximity_switches_to_metres_at_a_metre():
+    """A metre is where centimetres stop being the natural unit."""
+    assert "centimeter" not in messages.speak_proximity(150.0, "en")
+
+
+def test_proximity_spells_the_number_out_in_tagalog():
+    """Digits are effectively untrained in the MMS Tagalog voice, so a
+    bare "40" is dropped silently rather than spoken."""
+    spoken = messages.speak_proximity(42.0, "tl")
+    assert "40" not in spoken
+    assert "sentimetro" in spoken

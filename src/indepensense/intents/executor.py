@@ -253,6 +253,13 @@ class IntentExecutor:
         # it is unknown or not yet trustworthy. A callable rather than
         # a value because the user turns; the executor is built once.
         heading: Callable[[], float | None] | None = None,
+        # Distance in cm to whatever the forward ultrasonic sees, or None.
+        # A callable for the same reason `heading` is one: the world moves
+        # and the executor is built once. Lets `vision.describe` answer
+        # with a distance when the camera recognised nothing, instead of
+        # "I don't see anything I recognize" while a sensor on the same
+        # device has an obstacle at 42 cm.
+        obstacle_ahead: Callable[[], float | None] | None = None,
         ocr_max_chars: int = 500,
         cloud_max_chars: int = 500,
         geocode_candidate_limit: int = 10,
@@ -285,6 +292,7 @@ class IntentExecutor:
         self._places = places
         self._volume = volume
         self._heading = heading
+        self._obstacle_ahead = obstacle_ahead
         self._ocr_max_chars = ocr_max_chars
         self._cloud_max_chars = cloud_max_chars
         self._geocode_candidate_limit = geocode_candidate_limit
@@ -705,7 +713,43 @@ class IntentExecutor:
             print(f"[vision] detector error: {exc}", file=sys.stderr, flush=True)
             return messages.get("vision.analyze_failed", self._lang)
 
+        if not detections:
+            # The camera recognised nothing. Before admitting that, ask
+            # the sensor that does not need to recognise anything — the
+            # wearable used to answer "I don't see anything I recognize"
+            # with an obstacle at 42 cm in front of it.
+            return self._describe_unrecognised()
+
         return _describe_scene(detections, self._lang)
+
+    def _describe_unrecognised(self) -> str:
+        """Fall back to the ultrasonic when the camera found nothing.
+
+        Only when the camera found nothing, never alongside a detection:
+        the ultrasonic measures whatever is in its cone, which is not
+        necessarily the object YOLO boxed. "I see a person, one metre
+        away" would read as one measurement and be two guesses.
+
+        A failing sensor costs the extra detail, not the answer — the
+        honest "I don't see anything I recognize" is still there
+        underneath.
+        """
+        if self._obstacle_ahead is None:
+            return messages.get("vision.nothing_recognized", self._lang)
+        try:
+            distance_cm = self._obstacle_ahead()
+        except Exception as exc:
+            print(f"[vision] obstacle distance unavailable: {exc}",
+                  file=sys.stderr, flush=True)
+            return messages.get("vision.nothing_recognized", self._lang)
+
+        if distance_cm is None:
+            return messages.get("vision.nothing_recognized", self._lang)
+        return messages.get(
+            "vision.unidentified_obstacle",
+            self._lang,
+            distance=messages.speak_proximity(distance_cm, self._lang),
+        )
 
     def _handle_vision_read(self, result: IntentResult) -> str:
         """Capture a frame, run Tesseract OCR, speak the extracted text.

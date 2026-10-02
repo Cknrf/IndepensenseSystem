@@ -113,6 +113,15 @@ OBSTACLE_RELEASE_CM = 15.0
 # standing hazard is not forgotten.
 OBSTACLE_DANGER_REPEAT_S = 15.0
 
+# How long a cached ultrasonic reading stays worth repeating.
+#
+# Read by `vision.describe` when the camera recognises nothing, so it can
+# answer "something is about 40 centimetres away" instead of "I don't see
+# anything I recognize". The DYP-A22 emits at ~10 Hz, so a reading older
+# than this means the sensor has stopped reporting — and the user has had
+# a second to move, which at walking pace is about a metre.
+OBSTACLE_READING_MAX_AGE_S = 1.0
+
 # How long the emergency button stays armed-down after firing.
 #
 # Someone who has just pressed a panic button presses it again — because

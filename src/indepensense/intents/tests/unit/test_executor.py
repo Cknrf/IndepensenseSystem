@@ -1308,3 +1308,113 @@ def test_a_truncated_tagalog_list_spells_the_number_out(places):
     response = executor.execute(IntentResult(Intent.PLACE_LIST))
     # "apat" (4), not "4" — the labels themselves still carry digits.
     assert "apat" in response
+
+
+# --- vision falls back to the ultrasonic -------------------------------------
+#
+# The field log: `vision.describe` answered "I don't see anything I
+# recognize right now" while, in the same second, the obstacle sensor on
+# the same device was reporting 42 cm. Two subsystems that never spoke to
+# each other, and the less useful one doing the talking.
+
+class _BlindCamera:
+    def capture(self):
+        return object()          # `_NoDetector` never looks at it
+
+    def close(self):
+        pass
+
+
+class _NoDetector:
+    def detect(self, frame):
+        return []
+
+
+class _SeeingDetector:
+    def detect(self, frame):
+        from indepensense.vision.base import Detection
+        return [Detection(class_name="person", confidence=0.9, bbox=(0, 0, 10, 10))]
+
+
+def _vision_executor(obstacle_ahead=None, detector=None):
+    return IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(),
+        camera=_BlindCamera(),
+        detector=detector or _NoDetector(),
+        obstacle_ahead=obstacle_ahead,
+    )
+
+
+def test_an_unrecognised_scene_reports_the_distance_instead(tmp_path):
+    executor = _vision_executor(obstacle_ahead=lambda: 42.0)
+
+    response = executor.execute(IntentResult(Intent.VISION_DESCRIBE))
+
+    assert "40 centimeters" in response
+    assert "don't see anything" not in response.lower()
+
+
+def test_the_distance_is_rounded_not_quoted_exactly():
+    """The DYP-A22 does considerably worse than its ±1 cm spec against a
+    soft or angled surface, so "forty-three centimetres" would claim a
+    precision the sensor does not have."""
+    executor = _vision_executor(obstacle_ahead=lambda: 43.0)
+
+    assert "40 centimeters" in executor.execute(IntentResult(Intent.VISION_DESCRIBE))
+
+
+def test_nothing_in_range_still_admits_it():
+    """`obstacle_ahead` returning None means no obstacle, a stale reading,
+    or no sensor. All three leave the honest answer in place."""
+    executor = _vision_executor(obstacle_ahead=lambda: None)
+
+    response = executor.execute(IntentResult(Intent.VISION_DESCRIBE))
+    assert "recognize" in response.lower()
+
+
+def test_no_ultrasonic_wired_still_admits_it():
+    response = _vision_executor().execute(IntentResult(Intent.VISION_DESCRIBE))
+    assert "recognize" in response.lower()
+
+
+def test_a_failing_sensor_costs_the_detail_not_the_answer():
+    def _explode():
+        raise OSError("UART gone")
+
+    executor = _vision_executor(obstacle_ahead=_explode)
+
+    response = executor.execute(IntentResult(Intent.VISION_DESCRIBE))
+    assert "recognize" in response.lower()
+
+
+def test_a_recognised_object_is_never_given_a_distance():
+    """The ultrasonic measures whatever is in its cone, which is not
+    necessarily the object YOLO boxed. "I see a person, one metre away"
+    would read as one measurement and be two guesses."""
+    executor = _vision_executor(
+        obstacle_ahead=lambda: 42.0, detector=_SeeingDetector(),
+    )
+
+    response = executor.execute(IntentResult(Intent.VISION_DESCRIBE))
+
+    assert "person" in response.lower()
+    assert "centimeter" not in response.lower()
+
+
+def test_the_fallback_answers_in_the_active_language():
+    language = LanguageState(default="en", supported=("en", "tl"))
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=_StaticGPS(),
+        camera=_BlindCamera(), detector=_NoDetector(),
+        obstacle_ahead=lambda: 42.0, language=language,
+    )
+
+    english = executor.execute(IntentResult(Intent.VISION_DESCRIBE))
+    language.set("tl")
+    tagalog = executor.execute(IntentResult(Intent.VISION_DESCRIBE))
+
+    assert english != tagalog
+    # Digits are effectively untrained in the MMS Tagalog voice.
+    assert "40" not in tagalog
