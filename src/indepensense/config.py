@@ -113,6 +113,25 @@ OBSTACLE_RELEASE_CM = 15.0
 # standing hazard is not forgotten.
 OBSTACLE_DANGER_REPEAT_S = 15.0
 
+# How long the emergency button stays armed-down after firing.
+#
+# Someone who has just pressed a panic button presses it again — because
+# nothing visibly happened, because they are frightened, because their
+# hand is shaking. A field log shows three presses in a row, each one a
+# full alert: three guardian notifications, three SMS attempts and three
+# spoken confirmations talking over each other, all describing one event.
+#
+# Suppression here is only of the *re-send*. The press is still felt
+# (motor pulse) and still cancels whatever voice work is running, because
+# an emergency press must always interrupt — see `_on_emergency_press`.
+#
+# Short on purpose. This is a debounce for a panicking hand, not a rate
+# limit: a genuine second emergency ten seconds after the first is a real
+# thing and must get through. The window is also cleared early when the
+# first alert is reported as having reached nobody, so that pressing again
+# after a failure retries instead of being ignored.
+EMERGENCY_REARM_S = 10.0
+
 # Bench mute for the obstacle buzzer. The active buzzer is deliberately
 # loud — it has to cut through street noise — which makes indoor desk
 # testing unpleasant for everyone in the room. With this False the TOP

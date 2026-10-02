@@ -438,6 +438,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Sending your emergency alert.",
         "tl": "Ipinapadala ko na ang emergency alert mo.",
     },
+    # Answers a second press inside the re-arm window. Deliberately does
+    # not promise help is coming — the device knows the alert was sent,
+    # not that anyone has read it, and the delivery report is the only
+    # thing entitled to speak about whether it arrived.
+    "emergency.already_sent": {
+        "en": "I already sent the alert to your guardian.",
+        "tl": "Naipadala ko na ang alerto sa iyong tagapag-alaga.",
+    },
 
     # --- emergency delivery outcomes ---------------------------------------
     # One per combination of (backend reached, SMS reached). The wearer is

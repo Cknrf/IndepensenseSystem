@@ -437,7 +437,7 @@ than magic words — the full rules and the Tagalog equivalents live in
 | `system.volume` | "Louder" · "Set the volume to 60" | Floor of 20%; the buzzer is unaffected |
 | `system.help` | "What can you do" | |
 | `system.shutdown` | "Shut down" · "Patayin mo ang IndepenSense" | Asks first — a **PTT press** within the confirm window powers the Pi off; silence cancels. Needs the sudoers rule in [`deploy/systemd/README.md`](deploy/systemd/README.md) |
-| `emergency.trigger` | "Help" · "Tulong" | Also the emergency button. A bare cry for help is always an emergency, never a request for the help intent |
+| `emergency.trigger` | "Help" · "Tulong" | Also the emergency button. A bare cry for help is always an emergency, never a request for the help intent. Re-pressing within 10 s does not re-send — the press is still felt and still interrupts whatever is speaking, it just does not notify the guardian twice about one event. The window clears early if the first alert reached nobody, so pressing again after a failure retries |
 | *(anything else)* | — | Forwarded to the cloud LLM when online, otherwise "I didn't catch that" |
 
 **Buttons.** Push-to-talk (left) starts and stops recording, and doubles as

@@ -24,8 +24,13 @@ well-scoped background threads for I/O concerns:
     opening bearing). Both are bounded and both abort on emergency.
   - Emergency button callback: sets cancel flag AND runs the emergency
     handler directly. This preempts voice AND fires the alert without
-    waiting for the voice thread to finish.
-  - Repeat button callback: replays the last navigation instruction.
+    waiting for the voice thread to finish. Re-pressing within
+    `EMERGENCY_REARM_S` suppresses only the re-send; the cancel and the
+    haptic acknowledgement still happen on every press.
+  - Repeat button callback: stops speech, cancels a voice command in
+    flight, or replays the last response — whichever applies. Every
+    press answers with a cue, because silence is also what a dead
+    device sounds like.
   - Warning-pattern threads (per obstacle event, and per navigation
     haptic): play a vibration + buzzer pattern under a mutex so
     overlapping patterns don't race. Every driver's `pulse`/`beep`
@@ -149,6 +154,7 @@ from indepensense.config import (
     DYP_A22_BOTTOM_PORT,
     DYP_A22_TOP_PORT,
     EMERGENCY_BUTTON_GPIO,
+    EMERGENCY_REARM_S,
     GEOCODE_CANDIDATE_LIMIT,
     GRAPHHOPPER_URL,
     GUARDIAN_CACHE_PATH,
@@ -679,6 +685,13 @@ class App:
         # coexist and take turns re-firing.
         self._obstacle_tier: dict[str, str | None] = {}
         self._obstacle_last_fired: dict[str, float] = {}
+
+        # When the emergency alert last went out, on the monotonic clock.
+        # Negative infinity rather than 0.0: `time.monotonic()` counts from
+        # boot on Linux, so a press in the first ten seconds of uptime
+        # would compare against 0.0 and be suppressed as a repeat — the
+        # one case where swallowing an alert is least acceptable.
+        self._last_emergency_fired: float = float("-inf")
 
         # Set by the executor once the user confirms a shutdown; acted on
         # by the voice thread after the goodbye has finished playing.
@@ -1603,9 +1616,45 @@ class App:
         speaker — it could talk over the announcer — and it tied up a
         callback thread for the length of the sentence. Going through the
         announcer fixes both.
+
+        **Re-pressing within `EMERGENCY_REARM_S` does not re-send.** A
+        field log shows three presses in a row producing three guardian
+        notifications, three SMS attempts and three spoken confirmations
+        talking over each other, all describing one event. Someone who has
+        just pressed a panic button presses it again; that is what the
+        button is for and it must not multiply the alert.
+
+        What a suppressed press still does matters as much as what it
+        stops. It cancels voice work — an emergency press must always
+        interrupt, and the user may have started a new command since the
+        first press cleared the flag — and it answers with a motor pulse,
+        because a panic button that gives nothing back reads as one that
+        is not working, which is the worst possible moment for that.
         """
+        # Outside the re-arm check on purpose: see the docstring.
         self._voice_cancel_reason = "emergency"
         self._voice_cancel.set()
+
+        now = time.monotonic()
+        since_last = now - self._last_emergency_fired
+        if since_last < EMERGENCY_REARM_S:
+            print(
+                f"[EMERGENCY BUTTON] Pressed again {since_last:.0f}s after the "
+                f"last alert — not re-sending.",
+                flush=True,
+            )
+            self._play_button_ack()
+            # Only speak into silence. Mid-announcement this would be a
+            # *critical* utterance, which preempts — so it would cut off
+            # the very confirmation the user pressed again to hear.
+            if not is_playing():
+                self._announce(
+                    messages.get("emergency.already_sent", self.language.current),
+                    critical=True,
+                )
+            return
+
+        self._last_emergency_fired = now
         print("\n[EMERGENCY BUTTON] Pressed. Firing alert...", flush=True)
 
         # Immediate haptic + audible ack — user needs to know the alert
@@ -1669,6 +1718,16 @@ class App:
         if delivery.backend_ok and delivery.sms == SMS_SENT:
             print("[alert] delivered on both channels.", flush=True)
             return
+
+        if not delivery.backend_ok and delivery.sms != SMS_SENT:
+            # Nobody was told. Re-arm the emergency button immediately so
+            # pressing again retries instead of being swallowed as a
+            # duplicate — the one situation where a user mashing it is
+            # doing exactly the right thing, and the only one where the
+            # debounce would otherwise work against them.
+            self._last_emergency_fired = float("-inf")
+            print("[alert] nobody reached — emergency button re-armed.",
+                  file=sys.stderr, flush=True)
 
         key = self._DELIVERY_MESSAGES.get((delivery.backend_ok, delivery.sms))
         if key is None:

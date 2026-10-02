@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import pytest
 import requests
 
+from indepensense import app as app_module
 from indepensense.app_mock import MockApp
 from indepensense.feedback.mock import MockBuzzer, MockVibrationMotor
 from indepensense.intents import messages
@@ -24,6 +25,7 @@ from indepensense.safety.base import FallEvent
 from indepensense.sensors.mock import MockMagnetometer
 from indepensense.sensors.base import GPSFix
 from indepensense.telemetry.base import AlertEvent, EventType
+from indepensense.config import EMERGENCY_REARM_S
 from indepensense.conftest import TEST_BACKEND_URL, make_credential
 from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.mock import MockTelemetryClient
@@ -466,3 +468,142 @@ def test_the_delivery_report_follows_the_active_language(speaking_app):
     english = speaking_app.spoken[0][0]
 
     assert tagalog != english
+
+
+# --- the emergency button re-arm window --------------------------------------
+#
+# Three presses in a row in the field log produced three guardian
+# notifications, three SMS attempts and three spoken confirmations talking
+# over each other, all describing one event. Someone who has just pressed
+# a panic button presses it again — that is what the button is for, and it
+# must not multiply the alert.
+
+@pytest.fixture
+def pressable(app, monkeypatch):
+    """An app whose emergency press is instrumented but does no I/O."""
+    app.alert_sink = MockTelemetryClient()
+    app.gps_cache = _StubCache(_fix())
+    app.executor = _StubExecutor()
+    monkeypatch.setattr(app, "_play_emergency_feedback", lambda: None)
+    monkeypatch.setattr(app, "_play_button_ack", lambda: None)
+    monkeypatch.setattr(app, "_announce", lambda text, critical=False: None)
+    monkeypatch.setattr(app_module, "is_playing", lambda: False)
+    return app
+
+
+class _StubExecutor:
+    def __init__(self):
+        self.calls = 0
+
+    def execute(self, result):
+        self.calls += 1
+        return "sending"
+
+
+def test_the_three_press_sequence_sends_one_alert(pressable):
+    """The field log, replayed."""
+    for _ in range(3):
+        pressable._on_emergency_press()
+
+    assert pressable.executor.calls == 1
+
+
+def test_a_suppressed_press_still_cancels_voice_work(pressable):
+    """An emergency press must always interrupt. The user may have started
+    a new command since the first press cleared the flag, and swallowing
+    the cancel would leave the wearable mid-answer during an emergency."""
+    pressable._on_emergency_press()
+    pressable._voice_cancel.clear()          # as a new PTT command would
+
+    pressable._on_emergency_press()
+
+    assert pressable._voice_cancel.is_set()
+
+
+def test_a_suppressed_press_is_still_felt(pressable, monkeypatch):
+    """A panic button that gives nothing back reads as one that is not
+    working — the worst possible moment for that impression."""
+    acks = []
+    monkeypatch.setattr(pressable, "_play_button_ack", lambda: acks.append(1))
+
+    pressable._on_emergency_press()
+    pressable._on_emergency_press()
+
+    assert len(acks) == 1, "the repeat press gave no feedback"
+
+
+def test_a_suppressed_press_does_not_talk_over_the_confirmation(
+    pressable, monkeypatch,
+):
+    """"Already sent" is spoken as *critical*, which preempts — so saying
+    it mid-announcement would cut off the very confirmation the user
+    pressed again to hear."""
+    said = []
+    monkeypatch.setattr(pressable, "_announce",
+                        lambda text, critical=False: said.append(text))
+    monkeypatch.setattr(app_module, "is_playing", lambda: True)
+
+    pressable._on_emergency_press()
+    after_first = list(said)        # the first press speaks its own response
+    pressable._on_emergency_press()
+
+    assert said == after_first, "spoke over the confirmation in progress"
+
+
+def test_a_suppressed_press_answers_into_silence(pressable, monkeypatch):
+    """Press again nine seconds later, after everything has gone quiet,
+    and the user must still be told why nothing happened."""
+    said = []
+    monkeypatch.setattr(pressable, "_announce",
+                        lambda text, critical=False: said.append(text))
+
+    pressable._on_emergency_press()
+    pressable._on_emergency_press()
+
+    assert said[-1] == messages.get("emergency.already_sent", "en")
+
+
+def test_the_window_expires(pressable):
+    """A genuine second emergency ten seconds after the first is a real
+    thing. This is a debounce for a shaking hand, not a rate limit."""
+    pressable._on_emergency_press()
+    pressable._last_emergency_fired -= EMERGENCY_REARM_S + 1
+
+    pressable._on_emergency_press()
+
+    assert pressable.executor.calls == 2
+
+
+def test_a_press_in_the_first_seconds_of_uptime_is_not_suppressed(pressable):
+    """`time.monotonic()` counts from boot on Linux, so a zero sentinel
+    would swallow any press in the first ten seconds of uptime — the one
+    case where losing an alert is least acceptable."""
+    assert pressable._last_emergency_fired == float("-inf")
+
+    pressable._on_emergency_press()
+
+    assert pressable.executor.calls == 1
+
+
+def test_an_alert_that_reached_nobody_re_arms_the_button(pressable):
+    """The one situation where mashing the button is exactly right. A
+    debounce that blocked the retry would work against the user at the
+    worst moment."""
+    pressable._on_emergency_press()
+    assert pressable.executor.calls == 1
+
+    pressable._on_alert_delivery(_emergency(), AlertDelivery(False, SMS_FAILED))
+    pressable._on_emergency_press()
+
+    assert pressable.executor.calls == 2
+
+
+def test_a_partly_delivered_alert_does_not_re_arm(pressable):
+    """One channel through means a guardian knows. Re-sending on the next
+    press would notify them twice about one event."""
+    pressable._on_emergency_press()
+
+    pressable._on_alert_delivery(_emergency(), AlertDelivery(True, SMS_FAILED))
+    pressable._on_emergency_press()
+
+    assert pressable.executor.calls == 1
