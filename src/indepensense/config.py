@@ -274,7 +274,11 @@ MAG_LEFT_AXIS = "+y"
 #      above assume a board lying flat, and a vest-mounted board is not.
 #      Procedure in docs/hardware.md.
 #   2. python -m indepensense.sensors.tests.manual.magnetometer_calibrate
-#      and paste the printed offsets and scales above.
+#      and paste the printed offsets and scales above. It grades its own
+#      sweep and refuses to print values for a bad one — a sweep taken
+#      near steel produces offsets that look entirely reasonable and a
+#      heading that is wrong, so the grade is the only thing between you
+#      and a confident wrong bearing. Do it outdoors, clear of buildings.
 #   3. Check the heading against a phone compass at all four cardinals.
 #   4. Set this True.
 COMPASS_CALIBRATED = False
