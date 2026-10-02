@@ -97,7 +97,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Live monitoring dashboard
 - Emergency notifications
 - User activity and safety logs
-- Battery + cellular signal telemetry
+- Battery + cellular signal telemetry, on a *corrected* percentage — the HAT's fuel gauge reads ~59% on a flat pack, so both low-battery thresholds sat below a floor it never reaches and no warning had ever fired. Cell voltage is checked alongside it as a cross-check that does not depend on trusting the gauge
 
 ## Repository Scope & Collaborator Roles
 

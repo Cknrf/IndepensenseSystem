@@ -23,14 +23,24 @@ from indepensense.telemetry.base import EventType
 from indepensense.telemetry.mock import MockTelemetryClient
 
 
-def _reading(percentage: int, charging: bool = False) -> BatteryReading:
+def _reading(
+    percentage: int,
+    charging: bool = False,
+    cell_mv: int = 3700,
+) -> BatteryReading:
+    """A plausible reading.
+
+    All four cells carry a real voltage. They used to be `(3700, 0, 0, 0)`
+    — a placeholder, harmless while nothing read `is_critical_low`, and
+    silently `True` for every reading the moment `app.py` started to.
+    """
     return BatteryReading(
-        voltage_mv=3700,
+        voltage_mv=cell_mv * 4,
         current_ma=500 if charging else -500,
         percentage=percentage,
         remaining_mah=30 * percentage,
         charging_state="charging" if charging else "discharging",
-        cell_voltages_mv=(3700, 0, 0, 0),
+        cell_voltages_mv=(cell_mv,) * 4,
         time_to_empty_min=0 if charging else 90,
         time_to_full_min=45 if charging else 0,
         timestamp=time.time(),
@@ -398,3 +408,82 @@ def test_a_failing_announcer_still_sets_the_latch(app):
 
     assert plain._low_battery_alerted is True
     assert len(_low_battery_alerts(plain)) == 1
+
+
+# --- the voltage safety net --------------------------------------------------
+#
+# `percentage` is a calibration against one pack, and the whole reason
+# that calibration exists is that the gauge cannot be trusted. Keying
+# every warning to a corrected version of the same untrusted number
+# leaves no cross-check. A cell under 3.15 V is the BMS's own cutoff:
+# measured rather than estimated, and still right if the calibration is
+# wrong. It was written when the driver was, and read by nothing.
+
+def test_a_cell_below_cutoff_warns_even_with_a_healthy_percentage(app):
+    """The failure the gauge cannot catch: it claims plenty of charge
+    while a cell is already at the cutoff."""
+    app.battery = _ScriptedBattery(_reading(80, cell_mv=3100))
+
+    _check_now(app)
+
+    assert app.spoken, "a cell below cutoff said nothing"
+
+
+def test_the_voltage_warning_preempts_speech(app):
+    """Everything else the wearable might be saying stops mattering
+    shortly afterwards."""
+    app.battery = _ScriptedBattery(_reading(80, cell_mv=3100))
+
+    _check_now(app)
+
+    assert app.spoken[0][1] is True
+
+
+def test_a_healthy_pack_does_not_trip_the_voltage_net(app):
+    app.battery = _ScriptedBattery(_reading(80, cell_mv=3700))
+
+    _check_now(app)
+
+    assert app.spoken == []
+
+
+def test_charging_suppresses_the_voltage_warning(app):
+    """A pack being charged back up is not about to die."""
+    app.battery = _ScriptedBattery(_reading(80, charging=True, cell_mv=3100))
+
+    _check_now(app)
+
+    assert app.spoken == []
+
+
+def test_a_garbled_cell_reading_is_not_a_flat_cell(app):
+    """0 mV is a bad I²C read: a 4S pack with a genuinely dead cell could
+    not be powering the Pi asking the question. Believing it would tell
+    the wearer their device is dying on the first garbled frame — spoken,
+    and preempting whatever else was being said."""
+    reading = _reading(80)
+    app.battery = _ScriptedBattery(
+        BatteryReading(
+            voltage_mv=reading.voltage_mv, current_ma=reading.current_ma,
+            percentage=80, remaining_mah=reading.remaining_mah,
+            charging_state="discharging", cell_voltages_mv=(3700, 0, 0, 0),
+            time_to_empty_min=90, time_to_full_min=0, timestamp=time.time(),
+        )
+    )
+
+    _check_now(app)
+
+    assert app.spoken == []
+
+
+def test_the_voltage_net_shares_the_critical_latch(app):
+    """Both mean "this device is about to stop", the wearer can only act
+    on them the same way, and two latches would tell them twice about one
+    event."""
+    app.battery = _ScriptedBattery(_reading(80, cell_mv=3100))
+
+    _check_now(app)
+    spoken_once = len(app.spoken)
+    _check_now(app)
+
+    assert len(app.spoken) == spoken_once

@@ -11,8 +11,17 @@ demo. Ctrl-C to stop.
 With `--csv` this doubles as the fuel-gauge characterisation rig. The
 HAT reports a `percentage` we do not compute and cannot see the firmware
 for, and it has been observed reading ~60% on a pack that then died
-within a minute of the charger coming off. Three columns exist to work
-out why:
+within a minute of the charger coming off — since confirmed across three
+discharges, which is where `config.BATTERY_EMPTY_RAW_PERCENT` comes
+from. Four columns exist to work out what the gauge is really doing:
+
+  `raw_percentage` What the gauge actually said, before the correction
+                  in `WaveshareUPSHatE`. `percentage` is a rescale onto
+                  the pack's real 0-100 and is therefore only as good as
+                  `config.BATTERY_EMPTY_RAW_PERCENT`; re-measuring that
+                  constant needs the uncorrected figure. Plot the two
+                  together and the correction is visible as a straight
+                  line through them.
 
   `mah_per_pct`   `remaining_mah / percentage`. Constant across a whole
                   charge cycle means the gauge is scaling one fixed
@@ -60,6 +69,7 @@ _CSV_COLUMNS = [
     "elapsed_s",
     "state",
     "percentage",
+    "raw_percentage",
     "remaining_mah",
     "mah_per_pct",
     "pack_mv",
@@ -156,6 +166,7 @@ def main():
                         f"{time.monotonic() - started:.1f}",
                         reading.charging_state,
                         reading.percentage,
+                        reading.raw_percentage,
                         reading.remaining_mah,
                         f"{ratio:.2f}",
                         reading.voltage_mv,

@@ -324,7 +324,38 @@ ORIENTATION_TIMEOUT_S = 20.0
 UPS_HAT_I2C_BUS = 1
 UPS_HAT_I2C_ADDRESS = 0x2D
 
-# Low-battery alert thresholds. Fires LOW_BATTERY when percentage drops
+# What the HAT's fuel gauge reports when the pack is actually flat.
+#
+# The gauge does not read 0 at empty. Measured on this unit across three
+# discharges: the Pi lost power, and on reconnecting the charger and
+# reading immediately the gauge showed 59%. So 59 is the real floor and
+# the usable span is 41 raw points, not 100.
+#
+# This was not cosmetic. `LOW_BATTERY_PERCENT` (15) and
+# `CRITICAL_BATTERY_PERCENT` (5) both sit *below* a floor the gauge never
+# reaches, so neither alert had ever fired or could: the wearable gave no
+# warning at all and simply died. `WaveshareUPSHatE` now rescales the raw
+# reading onto 0-100 against this constant, which puts the two thresholds
+# back inside the range the gauge actually produces (raw ~65% and ~61%).
+#
+# Rounded UP from the measured 59, and deliberately so. The error is
+# asymmetric: setting this *below* the true floor warns early, which
+# costs the user nothing, while setting it above reports "10 percent
+# left" on a pack that is already dead — a warning that arrives after it
+# is useful. If a later discharge dies at a higher raw reading, raise
+# this; never lower it to the smallest value ever seen.
+#
+# Re-measure with:
+#   python -m indepensense.power.tests.manual.single_ups_test --csv
+# through a full discharge. Its `mah_per_pct` column also settles whether
+# the gauge is a voltage reading in disguise — if it is, the true curve
+# sags in the lower half and this linear map over-reports in exactly the
+# band the warnings live in. `raw_percentage` is kept on every
+# `BatteryReading` so the correction can always be undone for analysis.
+BATTERY_EMPTY_RAW_PERCENT = 60.0
+
+# Low-battery alert thresholds, in CORRECTED percent (see
+# `BATTERY_EMPTY_RAW_PERCENT`). Fires LOW_BATTERY when percentage drops
 # BELOW `_PERCENT` (once, then latched until it recovers above
 # `_RECOVERY_PERCENT`). This hysteresis prevents flapping alerts at
 # the boundary.

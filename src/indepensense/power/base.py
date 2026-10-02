@@ -26,7 +26,9 @@ class BatteryReading:
     # This matches the raw signed 16-bit value from register 0x20 after
     # two's-complement conversion.
     current_ma: int
-    percentage: int                          # 0-100
+    # Corrected state of charge, 0-100, and the number every consumer
+    # should use. NOT what the gauge reported — see `raw_percentage`.
+    percentage: int
     # Charge the gauge believes is left, in mAh. Read alongside
     # `percentage` because the two together say *how* the HAT estimates
     # state of charge: if `remaining_mah / percentage` stays constant the
@@ -40,6 +42,32 @@ class BatteryReading:
     time_to_empty_min: int                   # 0 when not discharging
     time_to_full_min: int                    # 0 when not charging
     timestamp: float                         # seconds since epoch (from time.time())
+
+    # Exactly what the fuel gauge said, before correction.
+    #
+    # Kept because `percentage` is a calibration against one pack and may
+    # be wrong: without the raw figure a logged discharge cannot be
+    # re-analysed and the constant could never be improved. It is also
+    # the only way to notice the gauge drifting as the pack ages.
+    #
+    # Last, with a default, because only the real driver has a raw value
+    # to report — mocks and tests construct readings directly and should
+    # not have to invent one.
+    raw_percentage: int = -1
+
+    def __post_init__(self) -> None:
+        """Default `raw_percentage` to `percentage` when it was not given.
+
+        A hand-built reading has had no correction applied, so the two are
+        genuinely the same number. The alternative — leaving the sentinel
+        in place — would have a mock claim the gauge reported -1, which a
+        log reader would have to know to ignore.
+
+        `object.__setattr__` because the dataclass is frozen; this runs
+        during construction, before anything can observe the old value.
+        """
+        if self.raw_percentage < 0:
+            object.__setattr__(self, "raw_percentage", self.percentage)
 
     @property
     def is_charging(self) -> bool:
@@ -63,10 +91,26 @@ class BatteryReading:
         We use the fuel-gauge-reported `charging_state` (authoritative)
         rather than the current sign — a briefly-idle moment during
         charging shouldn't trip the critical alarm.
+
+        Implausible cell readings are ignored rather than believed. A
+        cell at 0 mV is a bad I²C read, not a flat cell: a 4S pack with a
+        genuinely dead cell could not be powering the Pi that is asking
+        the question, and the BMS would have cut long before. Without
+        this the first garbled read would tell the wearer their device is
+        about to die — and now that `app.py` acts on this, that warning
+        is spoken and preempts whatever else is being said.
         """
         cutoff_mv = 3150
-        low_cell = any(v < cutoff_mv for v in self.cell_voltages_mv)
-        return low_cell and not self.is_charging
+        # Below this a reading is a fault, not a measurement. Li-ion is
+        # damaged under ~2.5 V and the BMS disconnects well above that,
+        # so nothing between 0 and here is a state a running pack can be
+        # in. Deliberately far below `cutoff_mv`, so a real cell sagging
+        # under load is still believed.
+        implausible_mv = 2000
+        measured = [v for v in self.cell_voltages_mv if v >= implausible_mv]
+        if not measured:
+            return False
+        return min(measured) < cutoff_mv and not self.is_charging
 
 
 class BatteryReader(Protocol):

@@ -125,6 +125,7 @@ from pathlib import Path
 from indepensense.config import (
     BACKEND_URL,
     BATTERY_CHECK_INTERVAL_S,
+    BATTERY_EMPTY_RAW_PERCENT,
     BUZZER_GPIO,
     CAMERA_FPS,
     CAMERA_HEIGHT,
@@ -1134,6 +1135,24 @@ class App:
 
         pct = reading.percentage
 
+        # The critical tier answers to two signals, not one.
+        #
+        # `percentage` is a calibration against one pack
+        # (`BATTERY_EMPTY_RAW_PERCENT`), and the whole reason that
+        # constant exists is that the gauge cannot be trusted — so keying
+        # every warning to a corrected version of the same untrusted
+        # number leaves no cross-check. `is_critical_low` is a cell under
+        # 3.15 V, the BMS's own cutoff: measured rather than estimated,
+        # and still right if the calibration is wrong. It was written
+        # when the driver was, and read by nothing until now.
+        #
+        # Either fires it. BOTH must be clear to release it — a latch
+        # cleared on percentage alone would re-fire the voltage warning
+        # every check for as long as a cell stayed low while the gauge
+        # read healthy, which is precisely the pair of states this
+        # cross-check exists to catch.
+        voltage_critical = reading.is_critical_low
+
         # Hysteresis: only fire if we haven't already alerted, and we're
         # below the fire threshold. Clear the latch once we recover
         # above the recovery threshold (typically higher — e.g. 20% —
@@ -1162,15 +1181,21 @@ class App:
         # Critical tier, checked independently — a device that boots below
         # 5% has both latches unset and should still say the urgent thing.
         if self._critical_battery_alerted:
-            if pct >= CRITICAL_BATTERY_RECOVERY_PERCENT:
+            if pct >= CRITICAL_BATTERY_RECOVERY_PERCENT and not voltage_critical:
                 print(
                     f"[battery] recovered to {pct}% — CRITICAL latch cleared",
                     flush=True,
                 )
                 self._set_critical_battery_latch(False)
         else:
-            if pct < CRITICAL_BATTERY_PERCENT and reading.is_discharging:
-                print(f"[battery] {pct}% — critical, warning the wearer", flush=True)
+            gauge_critical = pct < CRITICAL_BATTERY_PERCENT and reading.is_discharging
+            if gauge_critical or voltage_critical:
+                print(
+                    f"[battery] critical, warning the wearer — "
+                    f"gauge {pct}% (raw {reading.raw_percentage}%), "
+                    f"lowest cell {min(reading.cell_voltages_mv)} mV",
+                    flush=True,
+                )
                 self._announce(
                     messages.get(
                         "battery.critical_warning",
@@ -2850,7 +2875,10 @@ class App:
 
     def _try_open_battery(self) -> WaveshareUPSHatE | None:
         try:
-            return WaveshareUPSHatE(bus_number=UPS_HAT_I2C_BUS)
+            return WaveshareUPSHatE(
+                bus_number=UPS_HAT_I2C_BUS,
+                empty_raw_percent=BATTERY_EMPTY_RAW_PERCENT,
+            )
         except Exception as exc:
             print(
                 f"  UPS HAT unavailable ({exc}). Heartbeats will report 100%.",
