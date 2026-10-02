@@ -240,3 +240,62 @@ def test_proximity_spells_the_number_out_in_tagalog():
     spoken = messages.speak_proximity(42.0, "tl")
     assert "40" not in spoken
     assert "sentimetro" in spoken
+
+
+# --- Tagalog never receives a bare digit -------------------------------------
+#
+# The MMS Tagalog voice has digits in its vocabulary but they are
+# effectively untrained — the MMS-lab corpus writes numbers as words — so
+# "15 porsyento" reaches the speaker as something between garbled and
+# missing. Every battery percentage, volume level, satellite count and
+# signal strength was silently dropping its number; only `speak_distance`
+# had been routed through `speak_number`.
+#
+# These tests enforce it at the `get()` boundary rather than per call
+# site, because the failure is invisible from the code: passing
+# `percent=15` looks correct, reads correctly in English, and is only
+# wrong in a language the author may not speak.
+
+_NUMERIC_SAMPLE = 15
+
+
+def _tagalog_templates_with_fields():
+    """Every Tagalog message and its placeholder names."""
+    import re
+    for key, langs in messages.MESSAGES.items():
+        tl = langs.get("tl", "")
+        fields = re.findall(r"\{(\w+)\}", tl)
+        if fields:
+            yield key, fields
+
+
+@pytest.mark.parametrize("key,fields", list(_tagalog_templates_with_fields()))
+def test_no_tagalog_message_emits_a_bare_digit(key, fields):
+    """Hand every placeholder a number and assert none survives as one."""
+    spoken = messages.get(key, "tl", **{name: _NUMERIC_SAMPLE for name in fields})
+
+    assert not any(character.isdigit() for character in spoken), spoken
+
+
+def test_english_keeps_its_digits():
+    """espeak-ng expands digits correctly for the English voice, and
+    "fifteen percent" read aloud is no clearer than "15 percent"."""
+    assert "15" in messages.get("battery.low_warning", "en", percent=15)
+
+
+def test_floats_are_spelled_out_too():
+    """`speak_distance` passes a rounded float for sub-kilometre values."""
+    spoken = messages.get("distance.kilometers", "tl", value=2.5)
+    assert not any(character.isdigit() for character in spoken), spoken
+
+
+def test_strings_pass_through_untouched():
+    """A pre-formatted value — a clock time, a coordinate — stays exactly
+    as the caller intended rather than being re-interpreted."""
+    assert "2:34 PM" in messages.get("time.current", "tl", time="2:34 PM")
+
+
+def test_a_boolean_is_not_treated_as_a_number():
+    """`bool` is an `int` in Python, so an unguarded isinstance check
+    would turn True into "isa"."""
+    assert "True" in messages.get("generic.error", "tl", error=True)

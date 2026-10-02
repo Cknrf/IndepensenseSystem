@@ -322,12 +322,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "You have {places} saved.",
         "tl": "Naka-save mo ang {places}.",
     },
-    # Tagalog does not inflect the noun for number, so "{count} pa" carries
-    # the plural on its own where English needs "more places" — the same
-    # grammar split `count_label` exists for in scene description.
+    # `get` spells the count out in Tagalog, which brings the linker with
+    # it — `tagalog_counter(4)` is "apat na", and a linker has to attach
+    # to a noun. So the Tagalog sentence names one ("pang lugar") where
+    # English can leave "4 more" bare. The same grammar split that makes
+    # `count_label` exist in scene description.
     "place.list_truncated": {
         "en": "You have {places} saved, and {count} more.",
-        "tl": "Naka-save mo ang {places}, at {count} pa.",
+        "tl": "Naka-save mo ang {places}, at {count} pang lugar.",
     },
 
     # --- volume -------------------------------------------------------------
@@ -1020,8 +1022,32 @@ def get(key: str, language: str, **fields) -> str:
         )
         template = entry[FALLBACK_LANGUAGE]
 
+    # Spell numbers out, here rather than at each call site.
+    #
+    # The MMS Tagalog voice has digits in its vocabulary but they are
+    # effectively untrained — the MMS-lab corpus writes numbers as words
+    # — so "15 porsyento" reaches the speaker as something between
+    # garbled and missing. `speak_distance` already knew this and routed
+    # through `speak_number`; nothing else did, which left every battery
+    # percentage, volume level, satellite count and signal strength
+    # silently dropping its number in Tagalog.
+    #
+    # Centralised because the failure is invisible from the code. A
+    # caller passing `percent=15` looks correct, reads correctly in
+    # English, and is only wrong in a language the author may not speak.
+    # Expecting twelve call sites to remember forever is how it got here.
+    #
+    # Numbers only. Strings pass through untouched, so a pre-formatted
+    # value — a clock time, a coordinate — stays exactly as the caller
+    # intended rather than being re-interpreted.
+    spoken = {
+        name: speak_number(value, language) if isinstance(value, (int, float))
+        and not isinstance(value, bool) else value
+        for name, value in fields.items()
+    }
+
     try:
-        return template.format(**fields)
+        return template.format(**spoken)
     except (KeyError, IndexError) as exc:
         print(f"[messages] {key!r} missing placeholder {exc}", file=sys.stderr)
         return template

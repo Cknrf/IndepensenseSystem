@@ -57,6 +57,8 @@ How Claude collaborates on this thesis project.
 
    Adding a response means adding every language's version. Unit tests enforce full coverage and matching placeholders, so a missing translation is a test failure rather than the wearable saying the wrong thing to the one user who speaks that language.
 
+   **Numbers are spelled out automatically — pass the number, not a string.** `messages.get()` routes any `int`/`float` field through `speak_number`, because digits are effectively untrained in the MMS Tagalog voice and a bare "15" reaches the speaker garbled or missing. That was found late: every battery percentage, volume level, satellite count and signal strength had been dropping its number in Tagalog while reading perfectly in English. Pre-formatting a number into a string bypasses this, so don't — and note the Tagalog numeral brings a linker with it (`apat na`), which has to attach to a noun the English template may not need.
+
    Sentence *structure* may differ per language, not just wording — Tagalog does not inflect nouns for number, so scene description branches per language rather than sharing a pluraliser. Put that kind of grammar in `messages.py`, not in the handler.
 
 7. **Intent parsing is two-stage, and the split is static.**
