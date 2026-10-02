@@ -149,6 +149,17 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "I couldn't find any place matching '{location}'.",
         "tl": "Wala akong nakitang lugar na tumutugma sa '{location}'.",
     },
+    # Said instead of the above when the user has places of their own
+    # saved and none of them matched either. Without it a mistyped or
+    # misheard label looks identical to a place that does not exist, and
+    # the user has no screen to check their list against — they would
+    # keep asking for "my clinic" with no idea the wearable never had it.
+    "nav.place_not_found_nor_saved": {
+        "en": "I couldn't find any place matching '{location}', and you "
+              "don't have a place saved by that name.",
+        "tl": "Wala akong nakitang lugar na tumutugma sa '{location}', at "
+              "wala ka ring naka-save na lugar na ganoon ang pangalan.",
+    },
     "nav.started": {
         "en": "Navigating to {destination}. Total distance {distance}. {first_action}",
         "tl": "Papunta na tayo sa {destination}. Ang kabuuang distansya ay {distance}. {first_action}",

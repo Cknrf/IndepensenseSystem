@@ -1118,3 +1118,84 @@ def test_the_goodbye_follows_the_active_language():
     executor._language = language
 
     assert executor.execute(_shutdown_intent()) == messages.get("shutdown.goodbye", "tl")
+
+
+class _EmptyGeocoder:
+    """Finds nothing — the "that place does not exist" case."""
+
+    def geocode(self, query, limit=5, near=None):
+        return []
+
+    def reverse(self, coordinate):
+        return None
+
+
+def test_the_field_bug_saving_as_my_home_then_asking_for_home(places):
+    """The exact sequence from the test log. "Save this place as my home"
+    stored `my home`; "Can you help me go home?" resolved to `home`, which
+    matched nothing — so the wearable geocoded it, offered an unrelated
+    business, and cancelled on the confirmation timeout. Three times.
+
+    A saved place must win outright: no geocoder, no confirmation."""
+    confirmations = []
+    executor = _place_executor(
+        places,
+        confirmer=lambda question: confirmations.append(question) or True,
+    )
+
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "my home"}))
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "home", "nearest": False},
+    ))
+
+    assert "my home" in response
+    # The part that matters: the user was never asked to approve their own
+    # home, and the geocoder was never consulted.
+    assert confirmations == []
+
+
+def test_a_saved_place_still_wins_when_the_geocoder_is_unreachable(places):
+    """The reason saved places exist at all — the moment someone most
+    needs "take me home" may be the moment they have no data."""
+    executor = _place_executor(places, geocoder=_EmptyGeocoder())
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "bahay ko"}))
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "bahay", "nearest": False},
+    ))
+    assert "bahay ko" in response
+
+
+def test_an_unknown_destination_says_it_is_not_saved_either(places):
+    """With a list of their own that the user cannot see, a misheard label
+    is otherwise indistinguishable from a place that does not exist."""
+    executor = _place_executor(places, geocoder=_EmptyGeocoder())
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "my home"}))
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "my clinic", "nearest": False},
+    ))
+    assert "saved" in response.lower()
+
+
+def test_with_nothing_saved_the_message_does_not_mention_saved_places(places):
+    """Telling a user with an empty list that a place "isn't saved either"
+    is noise — there was never a list to check."""
+    executor = _place_executor(places, geocoder=_EmptyGeocoder())
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False},
+    ))
+    assert "saved" not in response.lower()
+
+
+def test_a_real_destination_still_geocodes_with_places_saved(places):
+    """Saved places must not shadow the world. "Jollibee" is not on the
+    user's list and must still reach the geocoder."""
+    executor = _place_executor(places, confirmer=lambda _q: True)
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "my home"}))
+
+    response = executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False},
+    ))
+    assert "Jollibee" in response

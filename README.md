@@ -62,7 +62,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Turn-by-turn cueing with off-route warnings
 - Destination confirmation before routing — the chosen place is read back with its distance, and nothing starts until the user presses to confirm
 - Candidate re-ranking, so "the nearest Jollibee" is decided locally by distance rather than by the geocoder's own relevance score
-- Saved places — name the spot you are standing in, then "take me home" later, with no geocoder and no network
+- Saved places — name the spot you are standing in, then "take me home" later, with no geocoder and no network. Matched on the name alone: "my home" and "home" are one place, and a saved place skips both the geocoder and the confirmation prompt
 - Progress on demand: how much further there is to walk, measured along the route rather than as the crow flies
 
 **Compass-assisted navigation** *(built, inert until the magnetometer is calibrated on the assembled unit — see `COMPASS_CALIBRATED` in `config.py`)*
@@ -425,7 +425,7 @@ than magic words — the full rules and the Tagalog equivalents live in
 | `navigation.repeat` | "Say that again" | Or press the repeat button |
 | `navigation.location` | "Where am I" | Answers with a place name |
 | `navigation.progress` | "How much further" | Answers with distance along the route |
-| `place.save` | "Save this place as home" | Stores where you are standing, under your own label |
+| `place.save` | "Save this place as home" | Stores where you are standing, under your own label. Possessives and determiners are ignored when matching, so "my home", "ang bahay ko" and "home"/"bahay" all find the same entry |
 | `place.delete` | "Forget the place saved as home" | |
 | `vision.describe` | "What's around me" | Camera + YOLO |
 | `vision.read` | "Read this" | Camera + OCR. Press repeat to stop it mid-read |

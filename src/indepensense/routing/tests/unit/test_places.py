@@ -187,3 +187,92 @@ def test_labels_lists_what_was_saved(tmp_path):
     places.save("home", MANILA)
 
     assert places.labels() == ["home", "work"]
+
+
+# --- possessives are not part of the name ------------------------------------
+#
+# The field bug, in full: the user said "Save this place as my home", which
+# stored the key `my home`. They later said "Can you help me go home?", the
+# NLU extracted `home`, and nothing matched. The wearable geocoded "home",
+# found an unrelated business, asked for confirmation, and cancelled —
+# three times in one session.
+
+@pytest.mark.parametrize("saved,asked", [
+    ("my home", "home"),
+    ("home", "my home"),
+    ("my home", "My Home"),
+    ("the office", "office"),
+    ("my sister's house", "sisters house"),
+    # Tagalog: enclitic possessives and the determiners around them.
+    ("bahay ko", "bahay"),
+    ("aking bahay", "bahay ko"),
+    ("ang bahay namin", "bahay"),
+    ("yung opisina ko", "opisina"),
+])
+def test_a_possessive_does_not_change_which_place_is_meant(places, saved, asked):
+    places.save(saved, LIPA)
+    found = places.find(asked)
+    assert found is not None, f"saved {saved!r}, asked {asked!r}"
+    assert found.coordinate == LIPA
+
+
+def test_the_spoken_label_survives_the_folding(places):
+    """The key is for matching; the user still hears their own words."""
+    places.save("my sister's house", LIPA)
+    assert places.find("sisters house").label == "my sister's house"
+
+
+def test_saving_the_same_place_with_and_without_a_possessive_replaces(places):
+    """"my home" and "home" are one entry, so re-saving moves it rather
+    than leaving two rows the user cannot tell apart."""
+    places.save("my home", LIPA)
+    assert places.save("home", MANILA) is True
+    assert len(places) == 1
+    assert places.find("my home").coordinate == MANILA
+
+
+def test_distinct_places_are_not_collapsed(places):
+    """Only words that cannot distinguish anything are dropped. "nanay"
+    is not one of them — two real places must stay two places."""
+    places.save("bahay ni nanay", LIPA)
+    places.save("bahay ko", MANILA)
+
+    assert len(places) == 2
+    assert places.find("bahay ni nanay").coordinate == LIPA
+    assert places.find("bahay").coordinate == MANILA
+
+
+def test_a_label_that_is_entirely_filler_still_gets_a_key(places):
+    """A key of "" would collide with every other all-filler label and
+    silently overwrite it. Useless beats colliding."""
+    assert places.save("my", LIPA) is False or places.find("my") is not None
+    places.save("the", MANILA)
+    assert places.find("the").coordinate == MANILA
+
+
+def test_deleting_ignores_a_possessive_too(places):
+    """A user who saved "my clinic" and says "forget the clinic" has no
+    other way to correct the entry — no file to edit, no screen to tap."""
+    places.save("my clinic", LIPA)
+    assert places.delete("clinic") is True
+    assert places.find("my clinic") is None
+
+
+def test_a_file_written_before_the_folding_rekeys_itself(tmp_path):
+    """The real places.json on the device has `my home` as its key. That
+    key can no longer be produced by any lookup, so the entry would be
+    unreachable *and* invisible — worse than absent. It is re-derived from
+    the stored label on load instead."""
+    path = tmp_path / "places.json"
+    path.write_text(json.dumps({
+        "my home": {
+            "label": "my home", "lat": 13.9411, "lon": 121.1622,
+            "saved_at": "2026-09-30T12:00:00+00:00",
+        }
+    }))
+
+    places = SavedPlaces(path)
+    found = places.find("home")
+    assert found is not None
+    assert found.label == "my home"
+    assert found.coordinate == LIPA

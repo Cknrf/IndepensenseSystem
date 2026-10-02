@@ -360,9 +360,16 @@ class IntentExecutor:
                 location, limit=self._geocode_candidate_limit, near=start,
             )
             if not hits:
-                return messages.get(
-                    "nav.place_not_found", self._lang, location=location,
+                # Say so explicitly when the user keeps a list of their
+                # own and this was not on it. They cannot glance at that
+                # list, so without this a misheard label is
+                # indistinguishable from a place that does not exist.
+                key = (
+                    "nav.place_not_found_nor_saved"
+                    if self._places is not None and len(self._places) > 0
+                    else "nav.place_not_found"
                 )
+                return messages.get(key, self._lang, location=location)
 
             ranked = rank_candidates(
                 hits,

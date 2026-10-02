@@ -23,6 +23,35 @@ used to match geocoder candidates) so "Mom's House" and "moms house"
 resolve to the same entry, while the original spelling is kept for
 speaking back.
 
+Possessives do not count as part of the name
+--------------------------------------------
+
+That folding alone was not enough, and the gap was found in the field.
+A user said "Save this place as my home", which stored the key `my home`,
+then said "Can you help me go home?", which the NLU resolved to `home` —
+a different key. The saved place was never consulted. The wearable
+geocoded "home", found an unrelated business, asked for confirmation, and
+cancelled. Three times in one session.
+
+Nobody thinks of the possessive as part of a place's name: "my home" and
+"home" are the same place, as are "bahay ko", "aking bahay" and "bahay".
+So `_place_key` drops determiners and possessive particles from both
+sides before comparing, in English and Tagalog alike, and what remains is
+matched exactly.
+
+**Exactly** — not by word overlap. `ranking.name_match_score` is right
+there and scores "house" against "my sister's house" at 1.0, which is the
+problem: a user with both "my house" and "my sister's house" saved would
+be walked to whichever sorted first, with nothing to tell them it had
+guessed. Partial matching is the correct tool for ranking geocoder
+candidates, where the alternative is no result at all. Here the
+alternative is a clean miss, an honest "I don't have a place saved as
+that", and a geocoder lookup — all of which beat walking someone to the
+wrong door.
+
+The key is derived on load, not trusted from the file, so a places.json
+written before this existed re-keys itself the first time it is read.
+
 Durability
 ----------
 
@@ -42,6 +71,38 @@ from pathlib import Path
 
 from indepensense.routing.base import Coordinate
 from indepensense.routing.ranking import normalise_name
+
+
+# Words that carry no part of a place's identity, so "my home", "ang
+# bahay ko" and "home"/"bahay" are the same place. English determiners and
+# possessives, plus the Tagalog linkers and enclitic pronouns that do the
+# same job.
+#
+# Deliberately short. Every word added here is a word the user can no
+# longer use to tell two of their own places apart, so this holds only
+# words that cannot distinguish anything: `ko` ("my") is here, `nanay`
+# ("mother") is emphatically not.
+_FILLER_WORDS = frozenset({
+    # English
+    "my", "the", "a", "an", "our",
+    # Tagalog determiners, linkers and possessive enclitics
+    "ang", "ng", "sa", "na", "yung", "iyong", "ko", "akin", "aking",
+    "amin", "aming", "natin", "namin",
+})
+
+
+def _place_key(label: str) -> str:
+    """Fold a spoken label to the key two phrasings must share.
+
+    Falls back to the plain normalised form when a label is *entirely*
+    filler — "my", "ang akin" — because a key of `""` would silently
+    collide with every other such label and quietly overwrite them. A
+    useless key is still better than a colliding one; `save` rejects an
+    empty one separately.
+    """
+    normalised = normalise_name(label)
+    kept = [word for word in normalised.split() if word not in _FILLER_WORDS]
+    return " ".join(kept) or normalised
 
 
 @dataclass(frozen=True)
@@ -72,11 +133,10 @@ class SavedPlaces:
 
     def find(self, label: str) -> SavedPlace | None:
         """Resolve a spoken label, or None if nothing matches."""
-        key = normalise_name(label)
-        if not key:
+        if not normalise_name(label):
             return None
         with self._lock:
-            return self._places.get(key)
+            return self._places.get(_place_key(label))
 
     def save(self, label: str, coordinate: Coordinate) -> bool:
         """Store `coordinate` under `label`. True if it replaced an entry.
@@ -87,9 +147,9 @@ class SavedPlaces:
         say "updated" rather than "saved", which is the only signal they
         get that something was overwritten.
         """
-        key = normalise_name(label)
-        if not key:
+        if not normalise_name(label):
             return False
+        key = _place_key(label)
         entry = SavedPlace(
             label=label.strip(),
             coordinate=coordinate,
@@ -108,7 +168,7 @@ class SavedPlaces:
         has no other way to correct it — no file to edit, no screen to
         tap. Without this a mistake is permanent.
         """
-        key = normalise_name(label)
+        key = _place_key(label)
         with self._lock:
             if key not in self._places:
                 return False
@@ -153,17 +213,24 @@ class SavedPlaces:
             return {}
 
         places: dict[str, SavedPlace] = {}
-        for key, value in raw.items():
+        for stored_key, value in raw.items():
             try:
-                places[key] = SavedPlace(
-                    label=value["label"],
+                label = value["label"]
+                # Re-derive rather than trusting the file's key. A
+                # places.json written before `_place_key` existed holds
+                # `my home`, which no lookup would ever produce again —
+                # the entry would be unreachable and invisible, which is
+                # worse than absent. Deriving on load re-keys it silently
+                # and correctly, and the next write persists the new form.
+                places[_place_key(label)] = SavedPlace(
+                    label=label,
                     coordinate=Coordinate(lat=value["lat"], lon=value["lon"]),
                     saved_at=value.get("saved_at", ""),
                 )
             except (TypeError, KeyError) as exc:
                 # One malformed entry must not discard the rest — the
                 # others are still somewhere the user needs to get to.
-                print(f"[places] skipping malformed entry {key!r}: {exc}",
+                print(f"[places] skipping malformed entry {stored_key!r}: {exc}",
                       file=sys.stderr, flush=True)
         return places
 
