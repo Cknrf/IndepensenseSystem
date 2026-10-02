@@ -85,6 +85,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Push-to-talk speech input (Whisper STT)
 - LLM-based intent classification (Qwen 3 1.7B via Ollama), with a Mistral cloud fallback for questions no intent covers
 - Natural-language responses (Piper TTS for English, MMS-TTS for Tagalog)
+- Nothing the device does ends in unexplained silence: an empty transcript or a recording too short to hold speech is answered aloud, not swallowed
 - A soft blip while the device is working. Transcription plus local classification is 3-7 s of silence on a Pi, which is indistinguishable from a device that has died; a command answered faster than 1.5 s never blips at all
 - Speech and commands can both be interrupted — the repeat button stops the wearable mid-sentence (which matters when OCR is reading a menu) and cancels a command still being transcribed or classified, so a question asked by mistake can be taken back without waiting out the answer. Every press answers with a short tone, because silence is also what a dead device sounds like
 - Spoken help, so a user who cannot read a manual can ask what the device does

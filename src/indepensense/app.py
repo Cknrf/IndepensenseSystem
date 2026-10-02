@@ -314,6 +314,7 @@ FALL_LOOP_INTERVAL_S = 0.01     # 100 Hz — matches ThresholdFallDetector's tun
 _PRERENDERED: dict[str, str] = {
     "startup": "system.starting",
     "thinking": "cloud.thinking",
+    "not_heard": "voice.nothing_heard",
 }
 
 # Obstacle tiers, ordered. `None` is "clear", so comparing ranks answers
@@ -2050,7 +2051,11 @@ class App:
                 )
                 return
             if duration <= 0.2:
-                print("[PTT] Too short — skipping.", flush=True)
+                # Too brief to hold speech — a double-press, or a bounce.
+                # Say so: the user has had their press chime and would
+                # otherwise get nothing back at all.
+                print("[PTT] Too short — nothing to transcribe.", flush=True)
+                self._speak_prerendered("not_heard")
                 return
 
             # If the recording hit the max-duration cap, the user
@@ -2081,7 +2086,19 @@ class App:
                     ),
                 )
                 print(f"[PTT] Transcript: {transcript.text!r}", flush=True)
-                if self._voice_cancel.is_set() or not transcript.text.strip():
+                # Split from the empty-transcript case below: a cancelled
+                # cycle has already been answered by the stop cue, and
+                # following that with "I didn't hear anything" would
+                # contradict a user who knows perfectly well why it
+                # stopped — they stopped it.
+                if self._voice_cancel.is_set():
+                    return
+                if not transcript.text.strip():
+                    # Whisper heard noise, or nothing. Either way the user
+                    # spoke and got silence back, which is the shape of a
+                    # device that has died.
+                    print("[PTT] Empty transcript — nothing to classify.", flush=True)
+                    self._speak_prerendered("not_heard")
                     return
 
                 intent_result = self.parser.parse(transcript.text)
@@ -2481,26 +2498,38 @@ class App:
         Pre-rendered at startup. It used to be synthesised on every cloud
         question, which put ~1 s of TTS in front of the slowest path the
         device has — adding to the exact wait this sentence exists to
-        excuse. Live synthesis stays as the fallback for the first boot
-        after the message text changes, when no file exists yet.
+        excuse.
+        """
+        self._speak_prerendered("thinking")
+
+    def _speak_prerendered(self, name: str) -> None:
+        """Play a pre-rendered clip in the active language. Never raises.
+
+        Falls back to live synthesis when the file is missing, which is
+        the first boot after that message's text changes. Slower, but a
+        sentence arriving late beats a sentence that never arrives — every
+        caller here is covering a silence the user would otherwise read as
+        a dead device.
         """
         language = self.language.current
         try:
-            path = self._prerendered_path("thinking", language)
+            path = self._prerendered_path(name, language)
             if not path.exists():
                 print(
-                    f"[thinking] no pre-rendered clip at {path.name} — "
+                    f"[{name}] no pre-rendered clip at {path.name} — "
                     f"synthesising.",
                     file=sys.stderr, flush=True,
                 )
                 timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
-                path = VOICE_TEST_DIR / f"{timestamp}_thinking.wav"
+                path = VOICE_TEST_DIR / f"{timestamp}_{name}.wav"
                 self.tts.synthesize(
-                    messages.get("cloud.thinking", language), path, language=language,
+                    messages.get(_PRERENDERED[name], language),
+                    path,
+                    language=language,
                 )
             play(path)
         except Exception as exc:
-            print(f"[thinking] could not speak: {exc}", file=sys.stderr, flush=True)
+            print(f"[{name}] could not speak: {exc}", file=sys.stderr, flush=True)
 
     def _speak_error(self, message: str) -> None:
         """Best-effort audible error message. Never raises."""

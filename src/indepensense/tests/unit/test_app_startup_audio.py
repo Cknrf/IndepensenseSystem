@@ -173,3 +173,50 @@ def test_speaking_thinking_falls_back_when_the_clip_is_missing(app, monkeypatch)
     app._speak_thinking()      # nothing rendered yet
 
     assert played, "said nothing at all"
+
+
+# --- every pre-rendered clip ------------------------------------------------
+
+def test_every_prerendered_clip_is_rendered_for_every_language(app):
+    """Derived from the table rather than listed, so adding an entry to
+    `_PRERENDERED` without a translation fails here rather than at the
+    moment the device needs to speak it."""
+    app._render_prerendered()
+
+    for name in app_module._PRERENDERED:
+        for language in app.language.supported:
+            assert app._prerendered_path(name, language).exists(), (name, language)
+
+
+def test_every_prerendered_clip_has_its_own_path(app):
+    """Two clips sharing a filename would have one silently overwrite the
+    other — and the hash only distinguishes different *text*, not
+    different purposes."""
+    paths = [
+        app._prerendered_path(name, language)
+        for name in app_module._PRERENDERED
+        for language in app.language.supported
+    ]
+    assert len(set(paths)) == len(paths)
+
+
+def test_speaking_an_unheard_notice_plays_the_rendered_clip(app, monkeypatch):
+    played = []
+    monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
+    app._render_prerendered()
+
+    app._speak_prerendered("not_heard")
+
+    assert played == [app._prerendered_path("not_heard", app.language.current)]
+
+
+def test_a_broken_speaker_does_not_break_the_pipeline(app, monkeypatch):
+    """Every caller is covering a silence. A failure here must not turn
+    that into an exception on the voice thread."""
+    def _explode(_path):
+        raise OSError("output device disappeared")
+
+    monkeypatch.setattr(app_module, "play", _explode)
+    app._render_prerendered()
+
+    app._speak_prerendered("not_heard")      # must not raise

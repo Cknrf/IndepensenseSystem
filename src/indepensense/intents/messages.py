@@ -137,6 +137,19 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # --- navigation ---------------------------------------------------------
+    # --- nothing was captured -----------------------------------------------
+    # Spoken when a recording is too short to hold speech, or when Whisper
+    # returns an empty transcript. Both used to end the voice cycle with a
+    # bare `return`: the user heard their stop chime and then nothing at
+    # all, which is exactly what a device that has died sounds like. The
+    # two cases are not separated because the answer is the same — say it
+    # again — and the device cannot honestly tell "you did not speak" from
+    # "I could not make that out".
+    "voice.nothing_heard": {
+        "en": "I didn't hear anything. Please say that again.",
+        "tl": "Wala akong narinig. Pakiulit po.",
+    },
+
     "nav.no_destination_heard": {
         "en": "I didn't hear where you want to go. Please try again.",
         "tl": "Hindi ko narinig kung saan ka gustong pumunta. Pakiulit po.",
