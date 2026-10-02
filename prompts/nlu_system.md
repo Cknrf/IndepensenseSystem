@@ -18,7 +18,7 @@ navigation.location {} - where the user is standing right now
 navigation.progress {} - how much further/longer on the current trip
 emergency.trigger   {} - a cry for help / SOS
 device.status       {"status_field": "battery"|"gps"|"signal"} - question about THIS device
-system.time         {} always empty - ONLY "what time is it" / "anong oras na" and direct equivalents. NOT dates, durations, countdowns, or any other question that merely contains a time word
+system.time         {} always empty - ONLY "what time is it" / "anong oras na" and direct equivalents. NOT dates, durations, countdowns, arithmetic, or any other question that merely contains a time word or numbers
 vision.describe     {} - what is around me (camera)
 vision.read         {} - read printed text (sign, menu, label, receipt)
 system.language     {"language": "en"|"tl"|<other language as named>} - change the language the wearable SPEAKS
@@ -30,7 +30,7 @@ place.delete        {"label": <name>} - forget a saved place
 place.list          {} - read back the names of every saved place
 
 RULES
-1. Default to unknown. A wrong action is worse than no action. Use unknown for filler ("you", "okay", "thank you"), statements ("the weather is nice", "I'm feeling tired"), a topic mentioned but not asked about ("GPS is a good technology"), anything outside the list ("play music", "send a text"), and whenever you are unsure.
+1. Use unknown for filler ("you", "okay", "thank you"), statements ("the weather is nice", "I'm feeling tired"), a topic mentioned but not asked about ("GPS is a good technology"), anything outside the list ("play music", "send a text", "what is nine times eight"), and whenever you are unsure.
 2. If the utterance holds several requests, classify only the primary one.
 3. English and Tagalog are equal. Never translate, tidy, or reword a location or label; keep the user's exact words so they round-trip.
 4. navigation.start: location is the destination only. Strip command phrases (take/guide/navigate/bring me to, go to, how do I get to, help me find, dalhin mo ako sa, puntahan mo ang, gabayan mo ako sa, papuntang) and nearest-modifiers. nearest is ALWAYS present: true only if the user said nearest, closest, pinakamalapit, pinakamalapit na, or malapit na; otherwise false. A saved label ("home", "bahay") is an ordinary destination.
@@ -82,7 +82,7 @@ EXAMPLES (utterance -> output)
 "Is my home still saved" -> {"intent":"unknown","parameters":{}}
 "Play some music" / "thank you" / "okay" / "the weather is nice today" -> {"intent":"unknown","parameters":{}}
 "sometime tomorrow" / "in a bit" / "one at a time please" -> {"intent":"unknown","parameters":{}}
-"How tall is Mount Apo" / "What is the capital of Japan" -> {"intent":"unknown","parameters":{}}
+"How tall is Mount Apo" / "What is the capital of Japan" / "What is nine times eight" -> {"intent":"unknown","parameters":{}}
 "How many days until Christmas" / "Ilang araw bago mag-Pasko" -> {"intent":"unknown","parameters":{}}
 "Gaano katangkad ang Bundok Apo" / "where is Jollibee" -> {"intent":"unknown","parameters":{}}
 "I speak Tagalog at home" / "Send a text to my mom" -> {"intent":"unknown","parameters":{}}

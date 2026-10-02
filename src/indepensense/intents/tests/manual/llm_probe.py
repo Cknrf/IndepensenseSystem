@@ -244,6 +244,17 @@ ADVERSARIAL_CASES = [
     ("one at a time please",             "unknown", {}),
     ("in a bit",                         "unknown", {}),
 
+    # Numbers in a question are not a time either. Field transcripts: the
+    # wearable answered the first of these with the time of day, having
+    # apparently read "5 plus 7" as a clock reading, while classifying two
+    # other phrasings of the same question correctly. Held out from the
+    # prompt on purpose — it teaches the category with a different
+    # arithmetic ("nine times eight"), so matching these is generalisation
+    # rather than lookup. All three belong to the cloud.
+    ("I'm just asking what is the answer 5 plus 7", "unknown", {}),
+    ("I said what's the answer? 5-7",    "unknown", {}),
+    ("magkano ang dalawa plus tatlo",    "unknown", {}),
+
     # "help" in non-emergency context
     ("help me find the pharmacy",        "navigation.start", {"location": "pharmacy"}),
     ("how do I use this",                "system.help", {}),
