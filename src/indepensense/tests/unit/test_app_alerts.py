@@ -520,16 +520,38 @@ def test_a_suppressed_press_still_cancels_voice_work(pressable):
     assert pressable._voice_cancel.is_set()
 
 
-def test_a_suppressed_press_is_still_felt(pressable, monkeypatch):
-    """A panic button that gives nothing back reads as one that is not
-    working — the worst possible moment for that impression."""
-    acks = []
-    monkeypatch.setattr(pressable, "_play_button_ack", lambda: acks.append(1))
+def test_every_press_buzzes_and_vibrates(pressable, monkeypatch):
+    """The buzzer is the only part of this device a *bystander* can
+    perceive, so someone who needs attention now must be able to lean on
+    the button and keep it sounding. Suppressing the alert must not
+    suppress the noise."""
+    patterns = []
+    monkeypatch.setattr(pressable, "_play_emergency_feedback",
+                        lambda: patterns.append(1))
+
+    for _ in range(4):
+        pressable._on_emergency_press()
+
+    assert _wait_for(lambda: len(patterns) == 4), (
+        f"only {len(patterns)} of 4 presses made a sound"
+    )
+    # ...while still having sent exactly one alert.
+    assert pressable.executor.calls == 1
+
+
+def test_the_feedback_does_not_delay_the_alert(pressable, monkeypatch):
+    """Spawned, not inline: a held-down button must not queue ~0.4 s of
+    buzzing in front of the network call that summons help."""
+    import threading
+    released = threading.Event()
+    monkeypatch.setattr(pressable, "_play_emergency_feedback",
+                        lambda: released.wait(timeout=2.0))
 
     pressable._on_emergency_press()
-    pressable._on_emergency_press()
 
-    assert len(acks) == 1, "the repeat press gave no feedback"
+    # The alert went out while the pattern was still playing.
+    assert pressable.executor.calls == 1
+    released.set()
 
 
 def test_a_suppressed_press_does_not_talk_over_the_confirmation(
@@ -548,6 +570,39 @@ def test_a_suppressed_press_does_not_talk_over_the_confirmation(
     pressable._on_emergency_press()
 
     assert said == after_first, "spoke over the confirmation in progress"
+
+
+def test_already_sent_is_spoken_once_per_window(pressable, monkeypatch):
+    """Repeating it on every press would be worse than silence: it is
+    spoken as critical, so each utterance preempts the last and the user
+    hears a stutter of half-sentences."""
+    said = []
+    monkeypatch.setattr(pressable, "_announce",
+                        lambda text, critical=False: said.append(text))
+
+    pressable._on_emergency_press()
+    for _ in range(5):
+        pressable._on_emergency_press()
+
+    already = messages.get("emergency.already_sent", "en")
+    assert said.count(already) == 1
+
+
+def test_a_new_window_speaks_it_again(pressable, monkeypatch):
+    """The latch is per window, not per session — a second real alert
+    resets it, so the next duplicate is answered rather than swallowed."""
+    said = []
+    monkeypatch.setattr(pressable, "_announce",
+                        lambda text, critical=False: said.append(text))
+    already = messages.get("emergency.already_sent", "en")
+
+    pressable._on_emergency_press()
+    pressable._on_emergency_press()
+    pressable._last_emergency_fired -= EMERGENCY_REARM_S + 1
+    pressable._on_emergency_press()          # fires for real, resets the latch
+    pressable._on_emergency_press()
+
+    assert said.count(already) == 2
 
 
 def test_a_suppressed_press_answers_into_silence(pressable, monkeypatch):

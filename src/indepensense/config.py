@@ -121,9 +121,15 @@ OBSTACLE_DANGER_REPEAT_S = 15.0
 # full alert: three guardian notifications, three SMS attempts and three
 # spoken confirmations talking over each other, all describing one event.
 #
-# Suppression here is only of the *re-send*. The press is still felt
-# (motor pulse) and still cancels whatever voice work is running, because
-# an emergency press must always interrupt — see `_on_emergency_press`.
+# Suppression here is only of the *re-send*. Every press still fires the
+# full buzzer-and-motor pattern and still cancels whatever voice work is
+# running. The buzzer especially: it is the only part of this device a
+# bystander can perceive, so someone who needs attention now must be able
+# to lean on the button and keep it sounding. See `_on_emergency_press`.
+#
+# The window is measured from the last alert that actually went out, not
+# from the last press, so a held-down button does not postpone the next
+# send indefinitely — it sends again every `EMERGENCY_REARM_S`.
 #
 # Short on purpose. This is a debounce for a panicking hand, not a rate
 # limit: a genuine second emergency ten seconds after the first is a real

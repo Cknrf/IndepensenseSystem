@@ -692,6 +692,11 @@ class App:
         # would compare against 0.0 and be suppressed as a repeat — the
         # one case where swallowing an alert is least acceptable.
         self._last_emergency_fired: float = float("-inf")
+        # Whether "already sent" has been spoken since the last real
+        # alert. Without it a run of presses queues one critical utterance
+        # each, every one preempting the last, and the user hears a
+        # stutter of half-sentences instead of an answer.
+        self._already_sent_spoken: bool = False
 
         # Set by the executor once the user confirms a shutdown; acted on
         # by the voice thread after the goodbye has finished playing.
@@ -1625,15 +1630,35 @@ class App:
         button is for and it must not multiply the alert.
 
         What a suppressed press still does matters as much as what it
-        stops. It cancels voice work — an emergency press must always
-        interrupt, and the user may have started a new command since the
-        first press cleared the flag — and it answers with a motor pulse,
-        because a panic button that gives nothing back reads as one that
-        is not working, which is the worst possible moment for that.
+        stops:
+
+        - **It cancels voice work.** An emergency press must always
+          interrupt, and the user may have started a new command since the
+          first press cleared the flag.
+        - **It buzzes and vibrates, every time.** Not a token motor pulse:
+          the full emergency pattern. The buzzer is deliberately loud
+          because it is the only part of this device a *bystander* can
+          perceive, so someone who needs attention now must be able to
+          lean on the button and keep it sounding. Suppressing that to
+          avoid "spam" would remove the one channel that reaches the
+          people actually standing nearby.
+        - **It says so, once per window.** Repeating "already sent" on
+          every press would be worse than silence: it is spoken as
+          critical, so each utterance preempts the last and the user hears
+          a stutter of half-sentences.
+
+        The feedback is spawned rather than played inline so a burst of
+        presses neither delays the alert behind ~0.4 s of buzzing nor
+        blocks gpiozero's callback thread. `_warning_lock` inside
+        `_spawn_haptic` serialises the patterns, so held-down presses
+        queue into continuous sound instead of overlapping into mush.
         """
         # Outside the re-arm check on purpose: see the docstring.
         self._voice_cancel_reason = "emergency"
         self._voice_cancel.set()
+
+        # Before the re-arm check, so every press is felt and heard.
+        self._spawn_haptic("emergency-ack", self._play_emergency_feedback)
 
         now = time.monotonic()
         since_last = now - self._last_emergency_fired
@@ -1643,11 +1668,12 @@ class App:
                 f"last alert — not re-sending.",
                 flush=True,
             )
-            self._play_button_ack()
-            # Only speak into silence. Mid-announcement this would be a
-            # *critical* utterance, which preempts — so it would cut off
-            # the very confirmation the user pressed again to hear.
-            if not is_playing():
+            # Once per window, and only into silence. Mid-announcement
+            # this would be a *critical* utterance, which preempts — so it
+            # would cut off the confirmation the user pressed again to
+            # hear, and a run of presses would leave only fragments.
+            if not self._already_sent_spoken and not is_playing():
+                self._already_sent_spoken = True
                 self._announce(
                     messages.get("emergency.already_sent", self.language.current),
                     critical=True,
@@ -1655,11 +1681,8 @@ class App:
             return
 
         self._last_emergency_fired = now
+        self._already_sent_spoken = False
         print("\n[EMERGENCY BUTTON] Pressed. Firing alert...", flush=True)
-
-        # Immediate haptic + audible ack — user needs to know the alert
-        # is being sent before waiting for the spoken confirmation.
-        self._play_emergency_feedback()
 
         try:
             response = self.executor.execute(
