@@ -176,7 +176,12 @@ def choose_signs(samples, horizontal):
     rightward = [o for o in options if o[2] > 0]
     if not rightward:
         return None, None, 0.0, []
-    best = max(rightward, key=lambda o: o[2])
+    # All survivors measure the SAME turn — they differ only by where zero
+    # sits — so this is a stable pick for the caller to start from, not a
+    # determination. `options` is built in a fixed order, so the same vest
+    # gives the same suggestion on every run, which matters when somebody
+    # is working down the list by trial.
+    best = rightward[0]
     return best[0], best[1], best[2], rightward
 
 
@@ -234,27 +239,37 @@ def main():
             _beep(_TONE_BAD)
             return
 
-        print(f"  Saw {turned:.0f}° of rightward turn. Use:")
+        print(f"  Saw {turned:.0f}° of rightward turn — enough to settle which")
+        print("  way round the axes go. Start with:")
         print()
         print(f"      MAG_FORWARD_AXIS = \"{forward}\"")
         print(f"      MAG_LEFT_AXIS    = \"{left}\"")
         print()
-        print("  This makes the heading rotate the correct way — the half that")
-        print("  cannot be fixed later, since a mirrored compass reads")
+        print("  That rotates the heading the correct way, which is the half")
+        print("  that cannot be fixed later — a mirrored compass reads")
         print("  plausibly while sending the user the wrong way.")
 
         if len(candidates) > 1:
             print()
-            print(f"  {len(candidates)} combinations turn the right way and are")
-            print("  indistinguishable without a known bearing. They differ only")
-            print("  by whole 90° steps:")
+            print(f"  It is NOT the only answer. These {len(candidates)} all rotate correctly")
+            print("  and all measured the same turn, so this pass cannot choose")
+            print("  between them — they differ only by where zero sits, in whole")
+            print("  90° steps:")
             for f, l, _t in candidates:
-                print(f"      forward={f}  left={l}")
+                marker = "  <- printed above" if (f, l) == (forward, left) else ""
+                print(f"      forward={f}  left={l}{marker}")
             print()
-            print("  Take the one above, then point the vest at a direction you")
-            print("  know — a street read off a satellite map is enough — and if")
-            print("  the heading is out by about 90, 180 or 270°, step to the")
-            print("  next combination in this list.")
+            print("  Settle it with ONE known bearing. Either:")
+            print("    * read the axis arrows printed on the breakout and work out")
+            print("      which way they point on the assembled vest — no")
+            print("      instrument needed, and it is exact; or")
+            print("    * point the vest along a street you can read off a")
+            print("      satellite map, and if the heading is out by about 90,")
+            print("      180 or 270°, move to the next line in this list.")
+            print()
+            print("  Calibration does not depend on this. `magnetometer_calibrate`")
+            print("  works on the raw chip axes, so run it now and settle the")
+            print("  ambiguity afterwards.")
         _beep(_TONE_GOOD)
     finally:
         mag.close()
