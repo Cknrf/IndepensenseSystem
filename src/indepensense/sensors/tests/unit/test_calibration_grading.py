@@ -240,3 +240,80 @@ def test_no_cue_lands_before_the_sweep_starts():
     """A negative time would fire every warning at once on the first tick."""
     for total in (6.0, 12.0, 60.0, 90.0):
         assert all(at > 0.0 for at, _cue in cue_schedule(total, 6, 2.0)), total
+
+
+# --- the live display --------------------------------------------------------
+#
+# Two states that call for different actions, so reading the wrong one
+# costs a face. The TURN frame names where to go NEXT rather than where
+# you are, since that is the thing about to be needed.
+
+from indepensense.sensors.tests.manual.magnetometer_calibrate import progress_line
+
+SEGMENT = 10.0
+LEAD = 2.0
+
+
+def test_spinning_names_the_current_face():
+    line = progress_line(0, 3.0, SEGMENT, LEAD, 47.0)
+
+    assert "SPIN" in line
+    assert "FRONT DOWN" in line
+
+
+def test_the_changeover_names_the_next_face_not_the_current_one():
+    """Where you are is no longer useful; where you are going is."""
+    line = progress_line(0, 8.5, SEGMENT, LEAD, 47.0)
+
+    assert "TURN" in line
+    assert "BACK DOWN" in line
+    assert "FRONT" not in line
+
+
+def test_the_state_flips_exactly_at_the_lead():
+    assert "SPIN" in progress_line(0, SEGMENT - LEAD - 0.1, SEGMENT, LEAD, 47.0)
+    assert "TURN" in progress_line(0, SEGMENT - LEAD + 0.1, SEGMENT, LEAD, 47.0)
+
+
+def test_the_changeover_counts_down_in_whole_seconds():
+    """Matches the beeps, which are one per second — the digit and the
+    sound have to agree or they fight each other."""
+    assert progress_line(0, 8.0, SEGMENT, LEAD, 47.0).rstrip().endswith("2")
+    assert progress_line(0, 9.0, SEGMENT, LEAD, 47.0).rstrip().endswith("1")
+
+
+def test_the_last_face_never_shows_a_turn():
+    """There is no seventh face. Prompting for one sends the user looking
+    for an instruction that does not exist."""
+    line = progress_line(5, 9.5, SEGMENT, LEAD, 47.0)
+
+    assert "SPIN" in line
+    assert "TURN" not in line
+
+
+def test_the_bar_fills_across_the_face():
+    assert "[..........]" in progress_line(0, 0.0, SEGMENT, LEAD, 47.0)
+    assert "[#####.....]" in progress_line(0, 5.0, SEGMENT, LEAD, 47.0)
+
+
+def test_every_frame_is_the_same_width():
+    """Written with a carriage return, so a short frame must not leave the
+    tail of a long one behind it."""
+    frames = [
+        progress_line(0, 1.0, SEGMENT, LEAD, 47.0),
+        progress_line(0, 9.0, SEGMENT, LEAD, 47.0),      # the short TURN frame
+        progress_line(2, 5.0, SEGMENT, LEAD, 123.4),
+        progress_line(5, 9.9, SEGMENT, LEAD, 7.0),
+    ]
+
+    assert len({len(f) for f in frames}) == 1, [len(f) for f in frames]
+
+
+def test_the_field_magnitude_is_shown_and_labelled_raw():
+    """It swings wildly during an uncalibrated sweep — 16 to 68 uT on this
+    project's own vest — which is the hard-iron offset being measured, not
+    a fault. Labelling it stops that reading as alarming."""
+    line = progress_line(0, 3.0, SEGMENT, LEAD, 47.3)
+
+    assert "47.3" in line
+    assert "raw" in line

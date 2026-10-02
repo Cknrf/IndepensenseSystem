@@ -156,6 +156,53 @@ def _beep(steps) -> None:
         pass
 
 
+# The six faces, in the order the sweep walks them. Named on screen so
+# nobody has to hold the list in their head while holding a vest.
+_FACE_NAMES = ("FRONT", "BACK", "LEFT SIDE", "RIGHT SIDE", "TOP", "BOTTOM")
+
+# Width of the live line, padded so a shorter frame cannot leave the tail
+# of a longer one behind it on the same carriage return.
+_LINE_WIDTH = 76
+
+
+def progress_line(position, within_s, segment_s, lead_s, magnitude_ut,
+                  positions=_SWEEP_POSITIONS):
+    """One frame of the live display.
+
+    Two states, because they call for different actions and reading the
+    wrong one wastes a face: SPIN while the clock runs, TURN during the
+    counted changeover — and the TURN frame names where to go next rather
+    than where you are, since that is the thing about to be needed.
+
+    The magnitude shown is RAW — uncorrected — and labelled as such
+    because it swings wildly during an uncalibrated sweep (16 to 68 uT on
+    this project's own vest) and looks alarming otherwise. That swing is
+    the hard-iron offset the sweep exists to measure, not a fault. The
+    grade afterwards is what judges it.
+
+    Pure, so the wording and the state boundary can be tested rather than
+    inspected by standing in a room holding a vest.
+    """
+    face = _FACE_NAMES[min(position, len(_FACE_NAMES) - 1)]
+    remaining = max(0.0, segment_s - within_s)
+    is_last = position >= positions - 1
+
+    if not is_last and remaining <= lead_s:
+        upcoming = _FACE_NAMES[min(position + 1, len(_FACE_NAMES) - 1)]
+        line = (
+            f"  [{position + 1}/{positions}]  >>> TURN TO {upcoming} DOWN <<<"
+            f"   {math.ceil(remaining)}"
+        )
+    else:
+        filled = int(10 * min(1.0, within_s / segment_s)) if segment_s > 0 else 0
+        bar = "#" * filled + "." * (10 - filled)
+        line = (
+            f"  [{position + 1}/{positions}]  SPIN: {face} DOWN"
+            f"   [{bar}] {remaining:4.1f}s   raw |B| {magnitude_ut:5.1f}"
+        )
+    return f"{line:<{_LINE_WIDTH}}"
+
+
 def cue_schedule(duration_s, positions, lead_s):
     """When each changeover cue falls, as `[(seconds, cue), ...]`.
 
@@ -324,13 +371,19 @@ def main():
                 z_min = reading.magnetic_z if z_min is None else min(z_min, reading.magnetic_z)
                 z_max = reading.magnetic_z if z_max is None else max(z_max, reading.magnetic_z)
 
-                elapsed = time.time() - t_start
+                magnitude = math.sqrt(
+                    reading.magnetic_x ** 2
+                    + reading.magnetic_y ** 2
+                    + reading.magnetic_z ** 2
+                )
                 print(
-                    f"\r  [face {position + 1}/{_SWEEP_POSITIONS}] "
-                    f"[{elapsed:5.1f}s / {duration_s:.0f}s] "
-                    f"x=[{x_min:+7.1f},{x_max:+7.1f}] "
-                    f"y=[{y_min:+7.1f},{y_max:+7.1f}] "
-                    f"z=[{z_min:+7.1f},{z_max:+7.1f}] μT",
+                    "\r" + progress_line(
+                        position,
+                        elapsed - position * segment,
+                        segment,
+                        _TURN_LEAD_S,
+                        magnitude,
+                    ),
                     end="",
                     flush=True,
                 )
