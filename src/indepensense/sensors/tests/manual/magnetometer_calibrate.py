@@ -74,6 +74,7 @@ Silent if there is no audio device — over SSH with no headset attached,
 or on a dev machine — because a calibration helper must not fail on the
 absence of a speaker.
 """
+import argparse
 import math
 import time
 
@@ -81,7 +82,36 @@ from indepensense.config import MAG_ADDRESS, MAG_I2C_BUS
 from indepensense.sensors.qmc5883p import QMC5883P, apply_calibration
 from indepensense.voice.audio import play_cue
 
-DURATION_S = 30.0
+# Long enough to work through six orientations unhurried, including the
+# time it takes to physically turn the vest between them. The original 30 s
+# assumed a continuous tumble; six discrete positions with a transition
+# between each is a different motion and needs the room. Override with
+# `--seconds` — more is never worse, since the derivation takes extremes
+# and extra samples only improve the odds of reaching them.
+DURATION_S = 60.0
+
+# The sweep is paced as six positions: each face of the vest pointed at
+# the floor in turn, spinning at each. A tone marks every changeover, so
+# nobody has to divide the clock in their head while holding a vest.
+#
+# Six because that is every face of a box, which is what guarantees each
+# sensor axis points both along and against the field at some point — the
+# condition the min/max derivation actually depends on.
+_SWEEP_POSITIONS = 6
+
+# Changeover is counted in, not announced at the instant it happens.
+#
+# A single "move now" blip leaves the user spinning right up to it and
+# then scrambling to reposition, which is how a face gets missed. Two low
+# beeps a second apart give warning, and the third sound — higher, so it
+# cannot be mistaken for the other two — means the vest should already be
+# on its next face and spinning again.
+_TONE_TURN = [(520.0, 0.07)]
+_TONE_SPIN = [(900.0, 0.14)]
+
+# How long before the changeover the warning beeps start. One per second,
+# so this is also how many of them there are.
+_TURN_LEAD_S = 2.0
 
 # Audible structure of the sweep, for running it away from the screen.
 # Pitch carries the meaning: rising is progress or success, falling is
@@ -124,6 +154,34 @@ def _beep(steps) -> None:
         play_cue(steps)
     except Exception:
         pass
+
+
+def cue_schedule(duration_s, positions, lead_s):
+    """When each changeover cue falls, as `[(seconds, cue), ...]`.
+
+    `cue` is `"turn"` for a warning beep or `"spin"` for the go tone. The
+    go tone lands exactly on a face boundary; the warnings lead it by one
+    second each.
+
+    Pure and computed up front, so the pacing can be checked against a
+    clock in a test rather than by standing in a room holding a vest.
+
+    Degrades rather than misleads when there is no room for a lead-in: a
+    segment shorter than the warning window drops the warnings and keeps
+    the go tones, because knowing *when* to move matters more than being
+    warned about it.
+    """
+    segment = duration_s / positions
+    lead = min(lead_s, max(0.0, segment - 1.0))
+    beeps = int(lead)
+
+    events = []
+    for boundary in range(1, positions):
+        at = boundary * segment
+        for countdown in range(beeps, 0, -1):
+            events.append((at - countdown, "turn"))
+        events.append((at, "spin"))
+    return events
 
 
 def grade_sweep(samples, offsets, scales):
@@ -185,17 +243,34 @@ def grade_sweep(samples, offsets, scales):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Magnetometer calibration sweep.")
+    parser.add_argument(
+        "--seconds", type=float, default=DURATION_S,
+        help=f"how long to sweep (default {DURATION_S:.0f}). Longer is never "
+             f"worse — the derivation takes extremes, so extra samples only "
+             f"improve the odds of reaching them.",
+    )
+    args = parser.parse_args()
+    duration_s = max(6.0, args.seconds)
+
     mag = QMC5883P(bus_number=MAG_I2C_BUS, address=MAG_ADDRESS)
 
-    print(f"Rotate the wearable through ALL orientations for the next "
-          f"{DURATION_S:.0f} seconds:")
-    print("  - Point the front UP, DOWN, LEFT, RIGHT, FORWARD, BACKWARD")
-    print("  - Roll it, tilt it, swing it")
-    print("  - The more coverage, the better the calibration")
+    segment = duration_s / _SWEEP_POSITIONS
+    print(f"Hold the vest away from your body. Treat it as a box with six")
+    print(f"faces. Point each face at the FLOOR in turn, and spin the vest")
+    print(f"round while it is there.")
     print()
+    print(f"  1. front    2. back    3. left side")
+    print(f"  4. right    5. top     6. bottom")
+    print()
+    print(f"Each face gets {segment:.0f}s, counted for you — you never have to")
+    print(f"watch a clock. {duration_s:.0f}s total.")
     print()
     print("Listen for the tones — you do not need to watch this screen:")
-    print("  three beeps, then a RISING tone  = start tumbling")
+    print("  three beeps, then a RISING tone  = start, face 1, spin")
+    print("  two LOW beeps                    = finish up, start repositioning")
+    print("  one HIGHER tone                  = you should be on the next face")
+    print("                                     now — start spinning again")
     print("  a FALLING tone                   = stop, sweep finished")
     print("  a rising three-note chime        = PASS, numbers are printed here")
     print("  two low slow tones               = FAIL, come back and re-run")
@@ -219,7 +294,23 @@ def main():
     t_start = time.time()
     sample_count = 0
     try:
-        while time.time() - t_start < DURATION_S:
+        schedule = cue_schedule(duration_s, _SWEEP_POSITIONS, _TURN_LEAD_S)
+        next_cue = 0
+        position = 0
+        while time.time() - t_start < duration_s:
+            elapsed = time.time() - t_start
+            # Walk the schedule rather than recomputing boundaries: the
+            # cue times are decided once, up front, where they can be
+            # tested without a magnetometer or a stopwatch.
+            while next_cue < len(schedule) and schedule[next_cue][0] <= elapsed:
+                _, cue = schedule[next_cue]
+                next_cue += 1
+                if cue == "turn":
+                    _beep(_TONE_TURN)
+                else:
+                    position += 1
+                    _beep(_TONE_SPIN)
+
             reading = mag.read()
             if reading is not None:
                 sample_count += 1
@@ -235,7 +326,8 @@ def main():
 
                 elapsed = time.time() - t_start
                 print(
-                    f"\r  [{elapsed:5.1f}s / {DURATION_S:.0f}s] "
+                    f"\r  [face {position + 1}/{_SWEEP_POSITIONS}] "
+                    f"[{elapsed:5.1f}s / {duration_s:.0f}s] "
                     f"x=[{x_min:+7.1f},{x_max:+7.1f}] "
                     f"y=[{y_min:+7.1f},{y_max:+7.1f}] "
                     f"z=[{z_min:+7.1f},{z_max:+7.1f}] μT",

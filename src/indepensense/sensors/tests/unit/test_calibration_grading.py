@@ -175,3 +175,68 @@ def test_every_verdict_carries_advice():
     ):
         _mean, _spread, _verdict, advice = _grade(samples)
         assert advice.strip()
+
+
+# --- changeover pacing -------------------------------------------------------
+#
+# A single "move now" blip left the user spinning right up to it and then
+# scrambling to reposition, which is how a face gets missed — and a missed
+# face is exactly what leaves an axis short of its extreme. Two warning
+# beeps lead the changeover; the third sound means the vest should already
+# be on its next face.
+
+from indepensense.sensors.tests.manual.magnetometer_calibrate import cue_schedule
+
+
+def test_every_face_boundary_gets_a_go_tone():
+    schedule = cue_schedule(60.0, 6, 2.0)
+    go_times = [at for at, cue in schedule if cue == "spin"]
+
+    # Five changeovers between six faces; the first face starts on the
+    # sweep's own start tone and the last ends on the finish tone.
+    assert go_times == [10.0, 20.0, 30.0, 40.0, 50.0]
+
+
+def test_the_warnings_lead_the_changeover_by_one_second_each():
+    schedule = cue_schedule(60.0, 6, 2.0)
+    first = [(at, cue) for at, cue in schedule if at <= 10.0]
+
+    assert first == [(8.0, "turn"), (9.0, "turn"), (10.0, "spin")]
+
+
+def test_the_count_matches_the_lead():
+    """One beep per second of lead, so the user can count them."""
+    for lead, expected in ((2.0, 2), (3.0, 3), (1.0, 1)):
+        schedule = cue_schedule(60.0, 6, lead)
+        warnings = [at for at, cue in schedule if cue == "turn" and at < 10.0]
+        assert len(warnings) == expected, lead
+
+
+def test_a_longer_sweep_keeps_the_same_lead():
+    """More time per face buys more spinning, not a longer countdown —
+    the repositioning takes what it takes."""
+    schedule = cue_schedule(90.0, 6, 2.0)
+    first = [(at, cue) for at, cue in schedule if at <= 15.0]
+
+    assert first == [(13.0, "turn"), (14.0, "turn"), (15.0, "spin")]
+
+
+def test_cues_are_in_time_order():
+    """The loop walks this list without sorting it."""
+    times = [at for at, _cue in cue_schedule(90.0, 6, 2.0)]
+
+    assert times == sorted(times)
+
+
+def test_a_segment_too_short_to_lead_still_marks_the_boundaries():
+    """Degrades rather than misleads: knowing *when* to move matters more
+    than being warned about it, so the warnings go and the go tones stay."""
+    schedule = cue_schedule(6.0, 6, 2.0)      # 1 s per face
+
+    assert [cue for _at, cue in schedule] == ["spin"] * 5
+
+
+def test_no_cue_lands_before_the_sweep_starts():
+    """A negative time would fire every warning at once on the first tick."""
+    for total in (6.0, 12.0, 60.0, 90.0):
+        assert all(at > 0.0 for at, _cue in cue_schedule(total, 6, 2.0)), total
