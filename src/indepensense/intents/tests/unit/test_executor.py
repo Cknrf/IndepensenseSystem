@@ -1199,3 +1199,112 @@ def test_a_real_destination_still_geocodes_with_places_saved(places):
         Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False},
     ))
     assert "Jollibee" in response
+
+
+# --- place.list --------------------------------------------------------------
+#
+# The only way someone without a screen can audit their own list. Without
+# it a forgotten label is unreachable *and* undeletable: `place.delete`
+# needs the name, and not knowing the name is the situation they are in.
+
+def test_listing_saved_places_names_them(places):
+    executor = _place_executor(places)
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
+    executor.execute(IntentResult(Intent.PLACE_DELETE, {"label": "nothing"}))
+
+    response = executor.execute(IntentResult(Intent.PLACE_LIST))
+    assert "home" in response
+
+
+def test_listing_uses_the_labels_as_spoken(places):
+    """The key is folded for matching; the user hears their own words."""
+    executor = _place_executor(places)
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "my sister's house"}))
+
+    assert "my sister's house" in executor.execute(IntentResult(Intent.PLACE_LIST))
+
+
+def test_listing_nothing_says_how_to_save(places):
+    """An empty list is the moment a user most needs to be told the
+    feature exists — they have just asked for something they have never
+    used."""
+    response = _place_executor(places).execute(IntentResult(Intent.PLACE_LIST))
+
+    assert "save" in response.lower()
+
+
+def test_listing_without_a_places_store_degrades(places):
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=_StaticGPS(), places=None,
+    )
+    response = executor.execute(IntentResult(Intent.PLACE_LIST))
+    assert response.strip() != ""
+
+
+def test_a_long_list_is_capped_and_says_how_many_were_held_back(places):
+    """Speech is serial — a dozen labels read at someone is a wait, not a
+    list. The count must still be spoken, or the answer is quietly wrong
+    about what the user has."""
+    executor = _place_executor(places)
+    for n in range(10):
+        executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": f"place {n}"}))
+
+    response = executor.execute(IntentResult(Intent.PLACE_LIST))
+
+    spoken = sum(1 for n in range(10) if f"place {n}" in response)
+    assert spoken == 6, f"expected the cap, spoke {spoken}"
+    assert "4" in response          # "and 4 more"
+
+
+def test_a_short_list_is_not_truncated(places):
+    executor = _place_executor(places)
+    for label in ("home", "work", "clinic"):
+        executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": label}))
+
+    response = executor.execute(IntentResult(Intent.PLACE_LIST))
+    assert all(label in response for label in ("home", "work", "clinic"))
+    assert "more" not in response.lower()
+
+
+def test_the_listed_order_is_stable_across_calls(places):
+    """The "and four more" tail must hide the same four every time, or a
+    user checking twice gets two different answers to one question."""
+    executor = _place_executor(places)
+    for label in ("zebra", "apple", "mango", "banana", "cherry", "date", "elder"):
+        executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": label}))
+
+    first = executor.execute(IntentResult(Intent.PLACE_LIST))
+    second = executor.execute(IntentResult(Intent.PLACE_LIST))
+    assert first == second
+
+
+def test_listing_answers_in_the_active_language(places):
+    language = LanguageState(default="en", supported=("en", "tl"))
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=_StaticGPS(),
+        places=places, language=language,
+    )
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "bahay"}))
+
+    english = executor.execute(IntentResult(Intent.PLACE_LIST))
+    language.set("tl")
+    tagalog = executor.execute(IntentResult(Intent.PLACE_LIST))
+
+    assert english != tagalog
+    assert "bahay" in tagalog
+
+
+def test_a_truncated_tagalog_list_spells_the_number_out(places):
+    """Digits are effectively untrained in the MMS Tagalog voice, so a
+    bare "4" is dropped silently rather than spoken."""
+    language = LanguageState(default="tl", supported=("en", "tl"))
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=_StaticGPS(),
+        places=places, language=language,
+    )
+    for n in range(10):
+        executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": f"lugar {n}"}))
+
+    response = executor.execute(IntentResult(Intent.PLACE_LIST))
+    # "apat" (4), not "4" — the labels themselves still carry digits.
+    assert "apat" in response

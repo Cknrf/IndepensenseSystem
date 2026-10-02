@@ -33,6 +33,7 @@ class Intent(Enum):
     SYSTEM_SHUTDOWN = "system.shutdown"
     PLACE_SAVE = "place.save"
     PLACE_DELETE = "place.delete"
+    PLACE_LIST = "place.list"
     UNKNOWN = "unknown"
 
 

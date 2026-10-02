@@ -155,6 +155,13 @@ ENGLISH_CASES = [
     ("Remember this as my sister's house", "place.save", {"label": "my sister's house"}),
     ("Forget the place saved as work",   "place.delete", {"label": "work"}),
     ("Take me home",                     "navigation.start", {"location": "home"}),
+    # place.list names no place, so unlike its siblings the fast path can
+    # answer it. The pair below is the boundary that matters: asking what
+    # is ON the list, versus asking about one entry of it — the second has
+    # no intent and must stay `unknown`.
+    ("Which places do you have saved for me", "place.list", {}),
+    ("Say the names of the places I kept", "place.list", {}),
+    ("Do you still remember my home",    "unknown", {}),
 
     # --- system.shutdown ---
     ("Shut down the device",             "system.shutdown", {}),
@@ -201,6 +208,9 @@ TAGALOG_CASES = [
 
     ("I-save mo ito bilang bahay",                    "place.save",          {"label": "bahay"}),
     ("Kalimutan mo ang bahay",                        "place.delete",        {"label": "bahay"}),
+    ("Ano-ano ang mga lugar na naitabi ko",           "place.list",          {}),
+    ("Pakisabi ang mga lugar na tinago mo",           "place.list",          {}),
+    ("Natatandaan mo pa ba ang klinika ko",           "unknown",             {}),
 
     ("Ano ang kaya mong gawin",                       "system.help",         {}),
     ("Paano ito gamitin",                             "system.help",         {}),

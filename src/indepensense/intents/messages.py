@@ -286,6 +286,30 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Hindi ako makakapag-save ng lugar sa ngayon.",
     },
 
+    # --- listing saved places -----------------------------------------------
+    # Spoken, so length is the whole design problem — a dozen labels read
+    # at someone is not a list, it is a wait. `_MAX_SPOKEN_PLACES` caps it
+    # and `place.list_truncated` says how many were held back, so the
+    # count is never silently wrong. The repeat button stops playback
+    # mid-sentence, which is the escape hatch for a long one.
+    "place.list_empty": {
+        "en": "You haven't saved any places yet. You can say, "
+              "save this place as home.",
+        "tl": "Wala ka pang naka-save na lugar. Pwede mong sabihin, "
+              "i-save mo ito bilang bahay.",
+    },
+    "place.list": {
+        "en": "You have {places} saved.",
+        "tl": "Naka-save mo ang {places}.",
+    },
+    # Tagalog does not inflect the noun for number, so "{count} pa" carries
+    # the plural on its own where English needs "more places" — the same
+    # grammar split `count_label` exists for in scene description.
+    "place.list_truncated": {
+        "en": "You have {places} saved, and {count} more.",
+        "tl": "Naka-save mo ang {places}, at {count} pa.",
+    },
+
     # --- volume -------------------------------------------------------------
     # The confirmation is spoken AT the new volume, the same trick the
     # language switch uses: hearing it is the verification. A user who asks
@@ -333,12 +357,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "I am IndepenSense. I help you walk safely and independently. "
               "You can ask me where you are, what is around you, have me read "
               "text out loud, or tell me where you want to go. You can also "
-              "say save this place as home, and later say take me home.",
+              "say save this place as home, ask what places you have saved, "
+              "and later say take me home.",
         "tl": "Ako si IndepenSense. Tinutulungan kitang makapaglakad nang "
               "ligtas at malaya. Puwede mong itanong kung nasaan ka, kung ano "
               "ang nasa paligid mo, pabasahin ang nakasulat, o sabihin kung "
               "saan mo gustong pumunta. Puwede mo ring sabihing i-save mo ito "
-              "bilang bahay, at mamaya ay dalhin mo ako sa bahay.",
+              "bilang bahay, itanong kung anong mga lugar ang naka-save mo, "
+              "at mamaya ay dalhin mo ako sa bahay.",
     },
 
     # --- location -----------------------------------------------------------
@@ -864,7 +890,7 @@ def speak_distance(metres: float, language: str) -> str:
     """
     rounded_m = round_speech_distance(metres)
     if rounded_m < _KILOMETRE_M:
-        return get("distance.meters", language, value=_speech_value(rounded_m, language))
+        return get("distance.meters", language, value=speak_number(rounded_m, language))
 
     km = rounded_m / 1000.0
     if rounded_m >= _WHOLE_KILOMETRE_M:
@@ -877,11 +903,18 @@ def speak_distance(metres: float, language: str) -> str:
 
     if value == 1:
         return get("distance.one_kilometer", language)
-    return get("distance.kilometers", language, value=_speech_value(value, language))
+    return get("distance.kilometers", language, value=speak_number(value, language))
 
 
-def _speech_value(value: int | float, language: str) -> str:
-    """The form a number takes inside a template, for the given language."""
+def speak_number(value: int | float, language: str) -> str:
+    """The form a number takes inside a template, for the given language.
+
+    Public because `get()` does not convert numeric fields — callers hand
+    it finished strings — so anything putting a number into a Tagalog
+    message has to come through here. Digits are effectively untrained in
+    the MMS-TTS Tagalog voice (see `voice/mms.py`), which makes this the
+    difference between a spoken number and a dropped one.
+    """
     if language == "tl":
         return tagalog_counter(value)
     return str(value)

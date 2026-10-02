@@ -159,6 +159,13 @@ def _first_action_description(route: Route, language: str) -> str:
 # too long and overwhelms the listener. Cap at 5 most-frequent classes.
 _MAX_SCENE_ITEMS = 5
 
+# Cap on saved-place labels read aloud in one answer, for the same reason
+# `_MAX_SCENE_ITEMS` exists: speech is serial and a long list is a wait,
+# not information. The count of what was held back is spoken, so the
+# number is never silently wrong — and the repeat button stops playback
+# mid-sentence for anyone who has heard enough.
+_MAX_SPOKEN_PLACES = 6
+
 
 def _describe_scene(detections: list[Detection], language: str) -> str:
     """Build a spoken description from a list of YOLO detections.
@@ -328,6 +335,7 @@ class IntentExecutor:
             Intent.SYSTEM_HELP:         self._handle_system_help,
             Intent.SYSTEM_VOLUME:       self._handle_system_volume,
             Intent.PLACE_SAVE:          self._handle_place_save,
+            Intent.PLACE_LIST:          self._handle_place_list,
             Intent.PLACE_DELETE:        self._handle_place_delete,
         }
 
@@ -778,6 +786,39 @@ class IntentExecutor:
         replaced = self._places.save(label, position)
         key = "place.updated" if replaced else "place.saved"
         return messages.get(key, self._lang, label=label)
+
+    def _handle_place_list(self, result: IntentResult) -> str:
+        """Read back the labels the user has saved.
+
+        The only way someone without a screen can audit their own list.
+        Without it a forgotten label is unreachable *and* undeletable:
+        `place.delete` needs the name, and not knowing the name is exactly
+        the situation they are in. They re-save under a name they do
+        remember and the orphan stays forever.
+
+        Capped at `_MAX_SPOKEN_PLACES`. Speech is serial — a dozen labels
+        read at someone is a wait, not a list — and the count of what was
+        held back is spoken rather than dropped, so the number is never
+        quietly wrong. Alphabetical because `SavedPlaces.labels()` sorts:
+        the order has to be stable across calls, or the "and four more"
+        tail would hide a different four each time.
+        """
+        if self._places is None:
+            return messages.get("place.unavailable", self._lang)
+
+        labels = self._places.labels()
+        if not labels:
+            return messages.get("place.list_empty", self._lang)
+
+        spoken = labels[:_MAX_SPOKEN_PLACES]
+        remaining = len(labels) - len(spoken)
+        places = messages.join_items(spoken, self._lang)
+        if remaining:
+            return messages.get(
+                "place.list_truncated", self._lang,
+                places=places, count=messages.speak_number(remaining, self._lang),
+            )
+        return messages.get("place.list", self._lang, places=places)
 
     def _handle_place_delete(self, result: IntentResult) -> str:
         label = (result.parameters.get("label") or "").strip()

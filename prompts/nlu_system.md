@@ -27,6 +27,7 @@ system.volume       {"direction": "up"|"down"} OR {"level": 20-100} - never both
 system.shutdown     {} - power the whole device OFF
 place.save          {"label": <name>} - remember the CURRENT position under a name
 place.delete        {"label": <name>} - forget a saved place
+place.list          {} - read back the names of every saved place
 
 RULES
 1. Default to unknown. A wrong action is worse than no action. Use unknown for filler ("you", "okay", "thank you"), statements ("the weather is nice", "I'm feeling tired"), a topic mentioned but not asked about ("GPS is a good technology"), anything outside the list ("play music", "send a text"), and whenever you are unsure.
@@ -41,6 +42,7 @@ RULES
 10. system.volume: louder/increase/raise/palakasin/lakasan -> "up"; quieter/softer/lower/pahinaan/hinaan -> "down"; a number -> level only.
 11. system.shutdown is ONLY for powering the device off. "Stop" / "ihinto" is navigation.stop; "turn the volume off" / "mute" is system.volume down; "shut up" / "tumahimik ka" is unknown.
 12. place.save / place.delete: label is the name only. Strip "save this (place) as", "remember this as", "call this", "forget", "delete (the place)", "i-save mo ito bilang", "tandaan mo ito bilang", "tawagin mo itong", "kalimutan mo ang", "burahin mo ang". place.save is always the current position; naming somewhere the user is not ("save Jollibee as my favourite") -> unknown.
+13. place.list asks what the user has saved, never names one place. It takes no parameters. "What places have I saved" / "Anong mga lugar ang naka-save" -> place.list. Asking about ONE named place ("is my home saved", "do you still have the clinic") -> unknown; there is no intent for checking a single label. Asking where a saved place IS ("where is my home") -> unknown. Asking to GO to one -> navigation.start.
 
 EXAMPLES (utterance -> output)
 "Navigate to SM Lipa" -> {"intent":"navigation.start","parameters":{"location":"SM Lipa","nearest":false}}
@@ -75,6 +77,9 @@ EXAMPLES (utterance -> output)
 "Save Jollibee as my favourite" -> {"intent":"unknown","parameters":{}}
 "Forget the place saved as home" -> {"intent":"place.delete","parameters":{"label":"home"}}
 "Kalimutan mo ang bahay" -> {"intent":"place.delete","parameters":{"label":"bahay"}}
+"What places have I saved" -> {"intent":"place.list","parameters":{}}
+"Anong mga lugar ang naka-save ko" -> {"intent":"place.list","parameters":{}}
+"Is my home still saved" -> {"intent":"unknown","parameters":{}}
 "Play some music" / "thank you" / "okay" / "the weather is nice today" -> {"intent":"unknown","parameters":{}}
 "sometime tomorrow" / "in a bit" / "one at a time please" -> {"intent":"unknown","parameters":{}}
 "How tall is Mount Apo" / "What is the capital of Japan" -> {"intent":"unknown","parameters":{}}

@@ -157,20 +157,24 @@ history the monitor does not keep.
 asks for it and accepts a rough answer.
 
 ### Listing saved places aloud
-**Status:** parked · **Raised:** 2026-09-13
+**Status:** shipped 2026-10-02 · **Raised:** 2026-09-13
 
-There is `place.save` and `place.delete` but no `place.list`. A user who
-forgets what they saved something as cannot ask; they re-save it under a
-name they do remember, which works but leaves an orphan.
+Was parked on the objection that a spoken list of a dozen labels is a wait
+with no way to skip. Both halves of that turned out to be answerable:
+`_MAX_SPOKEN_PLACES` caps the reading at six and speaks the count held
+back, so the answer is never quietly wrong about what the user has; and
+the repeat button already stops playback mid-sentence
+(`app._on_repeat_press`), which is the skip that was thought missing.
 
-`SavedPlaces.labels()` already exists and returns them sorted, so the
-handler is a few lines. Parked because the list is spoken, and a user with a
-dozen places gets a dozen labels read at them with no way to skip — the same
-objection that kept the help response short. Worth doing with a cap, or not
-at all.
+Shipped after the possessive-matching fix, which made the underlying
+problem concrete rather than theoretical: a label saved as "my home" and
+asked for as "home" was unreachable, and the user had no way to discover
+why. `place.list` is the audit surface for exactly that.
 
-**Revisit when:** anyone accumulates enough saved places to lose track, or
-`place.delete` is observed failing because the label was misremembered.
+Answerable by the embedding fast path — it names no place, so there is no
+span to extract. The boundary the bank has to hold is "what is on my list"
+against "is my home saved"; the second has no intent and lives under
+`__escalate__:place`.
 
 ### Distance to a place other than the current destination
 **Status:** parked · **Raised:** 2026-09-13

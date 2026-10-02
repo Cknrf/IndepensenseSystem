@@ -347,6 +347,33 @@ Anong sabi ng papel na ito
 Pakibasa ang resibo
 Basahin mo nga ang nasa harap
 
+## place.list
+
+# Answerable by the fast path, unlike its `place.save` / `place.delete`
+# siblings: it names no place, so there is no span to extract. The
+# distinction the examples have to carry is between asking about the
+# *list* and asking about *one entry on it* — "what have I saved" against
+# "is my home saved". Only the first is this intent; the second has no
+# intent at all and sits under `__escalate__:place` below.
+
+What places have I saved
+Which places have I saved
+List my saved places
+What are my saved places
+Read back my saved places
+Tell me the places I saved
+What locations do I have saved
+Name the places you remember for me
+What have I saved so far
+
+Anong mga lugar ang naka-save ko
+Anong mga lugar ang na-save ko
+Ilista mo ang mga naka-save kong lugar
+Basahin mo ang mga naka-save na lugar
+Sabihin mo ang mga lugar na tinandaan mo
+Anong mga lugar ang natatandaan mo
+Ano-ano ang mga naka-save kong lugar
+
 ## device.status:battery
 
 How much battery is left
@@ -574,6 +601,23 @@ Tandaan mo itong lugar bilang panaderya
 Tawagin mo itong opisina
 Burahin mo ang klinika sa listahan
 Kalimutan mo na ang panaderya
+
+# Asking about ONE saved place is not `place.list`, and there is no intent
+# for it. These sit a short distance from the `place.list` section above —
+# both are questions about saved places — so they have to be here
+# explicitly or the matcher will read the list intent out of them and
+# answer "you have home, the clinic and the bakery" to someone who asked
+# a yes/no question about one of them.
+Is my home still saved
+Do you still have the clinic saved
+Did I save the bakery
+Where is my home saved
+Is the office on my list
+
+Naka-save pa ba ang bahay ko
+Nandiyan pa ba ang klinika
+Na-save ko ba ang panaderya
+Nasaan ang naka-save kong bahay
 
 ## __escalate__:volume_level
 

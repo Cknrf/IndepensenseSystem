@@ -427,6 +427,7 @@ than magic words — the full rules and the Tagalog equivalents live in
 | `navigation.progress` | "How much further" | Answers with distance along the route |
 | `place.save` | "Save this place as home" | Stores where you are standing, under your own label. Possessives and determiners are ignored when matching, so "my home", "ang bahay ko" and "home"/"bahay" all find the same entry |
 | `place.delete` | "Forget the place saved as home" | |
+| `place.list` | "What places have I saved" | Reads the labels back, up to six, then "and N more". The only way to audit the list without a screen — and `place.delete` needs a name you may have forgotten |
 | `vision.describe` | "What's around me" | Camera + YOLO |
 | `vision.read` | "Read this" | Camera + OCR. Press repeat to stop it mid-read |
 | `device.status` | "How much battery do I have" | Also GPS lock and cellular signal |
