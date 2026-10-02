@@ -84,13 +84,34 @@ DYP_A22_TOP_PORT = "/dev/ttyAMA0"
 DYP_A22_BOTTOM_PORT = "/dev/ttyAMA4"
 DYP_A22_BAUDRATE = 115200
 
-# Obstacle warning thresholds and cooldown. The main app polls both
-# ultrasonic sensors in the fall-detection loop and fires vibration +
-# (for TOP only) buzzer alerts when the reading crosses into the
-# warning or danger zone. See app.py for the full pattern definitions.
+# Obstacle warning thresholds. The main app polls both ultrasonic sensors
+# in the fall-detection loop and fires vibration + (for TOP only) buzzer
+# alerts when the reading crosses into the warning or danger zone. See
+# app.py for the full pattern definitions.
 OBSTACLE_WARNING_CM = 100.0      # early notice — obstacle within reach
 OBSTACLE_DANGER_CM = 50.0        # imminent — user should stop
-OBSTACLE_COOLDOWN_S = 2.0        # per sensor: don't fire the same tier again
+
+# How far the obstacle has to recede before that tier can fire again.
+#
+# Without it, alerts repeated on a fixed cooldown for as long as anything
+# stayed in range: a field log shows `danger at 42 cm` firing every two
+# seconds for minutes, each one a motor pulse. Walking a corridor with a
+# wall an arm's length away would buzz continuously, and a signal that
+# never stops is one the wearer learns to ignore.
+#
+# A plain "only fire when the distance changes" rule does not work either,
+# and the reason is the cane itself: a hand holding it moves centimetres
+# without the user going anywhere, so the reading is never still. The band
+# has to be wide enough to swallow that jitter — 15 cm is comfortably
+# above the sway seen sitting still, and well below the 50 cm step between
+# tiers, so a genuine approach still crosses it.
+OBSTACLE_RELEASE_CM = 15.0
+
+# Backstop re-notify for the DANGER tier only. Someone walking a long wall
+# at 42 cm should not be told once and then left; someone at 80 cm does
+# not need reminding at all. Long enough not to nag, short enough that a
+# standing hazard is not forgotten.
+OBSTACLE_DANGER_REPEAT_S = 15.0
 
 # Bench mute for the obstacle buzzer. The active buzzer is deliberately
 # loud — it has to cut through street noise — which makes indoor desk

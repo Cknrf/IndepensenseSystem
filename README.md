@@ -56,7 +56,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 ## Core Features
 
 **Navigation Assistance**
-- Real-time obstacle detection
+- Real-time obstacle detection, alerting on an obstacle getting *closer* rather than on one merely being present — a tier fires once on entry and re-arms only after the obstacle recedes past a hysteresis band, so a cane that is never quite still does not buzz continuously. The danger tier alone repeats, so a standing hazard is not announced once and forgotten
 - Multi-sensor distance estimation
 - Audio + vibration directional feedback
 - Turn-by-turn cueing with off-route warnings

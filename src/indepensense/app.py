@@ -56,11 +56,21 @@ Two DYP-A22 sensors mounted on the cane, both forward-facing:
     vibration only — the user's cane already detects most of these by
     touch, so we notify without nagging.
 
-Two thresholds: 100 cm (warning) and 50 cm (danger). 2 s cooldown per
-(sensor, tier) so a lingering obstacle doesn't spam.
+Two thresholds: 100 cm (warning) and 50 cm (danger). Alerts fire on an
+obstacle getting *closer*, not on one being present: entering a tier
+alerts once, staying in it is silent, and the tier re-arms only once the
+obstacle has receded `OBSTACLE_RELEASE_CM` past the threshold it came in
+on. The danger tier alone repeats, every `OBSTACLE_DANGER_REPEAT_S`.
+
+That replaced a flat 2 s cooldown which re-fired for as long as anything
+stayed in range — on the bench it produced 136 motor pulses in four and a
+half minutes against a wall that never moved. Hysteresis rather than a
+"did the distance change" test because the cane is held in a hand: the
+reading is never still, so only a band wide enough to swallow that sway
+distinguishes an approach from a wobble.
 
 `config.OBSTACLE_BUZZER_ENABLED` mutes the TOP sensor's beep for indoor
-bench testing — vibration, tiering and cooldowns are untouched. It must
+bench testing — vibration, tiering and latching are untouched. It must
 be True on the deployed device.
 
 Shutdown
@@ -172,8 +182,9 @@ from indepensense.config import (
     NLU_TIMEOUT_S,
     NLU_WARMUP_TIMEOUT_S,
     OBSTACLE_BUZZER_ENABLED,
-    OBSTACLE_COOLDOWN_S,
     OBSTACLE_DANGER_CM,
+    OBSTACLE_DANGER_REPEAT_S,
+    OBSTACLE_RELEASE_CM,
     OBSTACLE_WARNING_CM,
     OLLAMA_URL,
     ORIENTATION_ALIGNED_TOLERANCE_DEG,
@@ -277,6 +288,46 @@ from indepensense.voice.whisper import FasterWhisperSTT
 
 
 FALL_LOOP_INTERVAL_S = 0.01     # 100 Hz — matches ThresholdFallDetector's tuning
+
+# Obstacle tiers, ordered. `None` is "clear", so comparing ranks answers
+# "did this get worse?" without a chain of string equality checks.
+_OBSTACLE_RANK: dict[str | None, int] = {None: 0, "warning": 1, "danger": 2}
+
+
+def _obstacle_tier_for(distance_cm: float, current: str | None) -> str | None:
+    """Which tier a reading puts a sensor in, given where it already was.
+
+    Schmitt-trigger behaviour: a tier is *entered* at its threshold but
+    only *left* once the obstacle has receded `OBSTACLE_RELEASE_CM`
+    further. Without that gap a reading hovering on a threshold flips tier
+    on every frame, and since each entry fires a motor pulse, a cane held
+    still at 50 cm would buzz at the sensor's 10 Hz frame rate.
+
+    A free function because it is pure arithmetic over two config values
+    and its own argument — no device, no clock, no app state — which is
+    what lets the hysteresis table be asserted directly instead of
+    inferred from how often a mock motor twitched.
+    """
+    danger_exit = OBSTACLE_DANGER_CM + OBSTACLE_RELEASE_CM
+    warning_exit = OBSTACLE_WARNING_CM + OBSTACLE_RELEASE_CM
+
+    if current == "danger":
+        if distance_cm < danger_exit:
+            return "danger"
+        # Receded out of danger, but possibly only into warning. Use the
+        # warning tier's *exit* threshold here too: an obstacle leaving
+        # should not have to cross a different line than one approaching.
+        return "warning" if distance_cm < warning_exit else None
+
+    if current == "warning":
+        if distance_cm < OBSTACLE_DANGER_CM:
+            return "danger"
+        return "warning" if distance_cm < warning_exit else None
+
+    # Clear: both tiers use their entry thresholds.
+    if distance_cm < OBSTACLE_DANGER_CM:
+        return "danger"
+    return "warning" if distance_cm < OBSTACLE_WARNING_CM else None
 GPS_CACHE_INTERVAL_S = 1.0       # 1 Hz — GPS itself only emits ~1 Hz NMEA anyway
 
 
@@ -621,6 +672,12 @@ class App:
         # Cooldowns: last time each (sensor, tier) fired. Prevents spam
         # when an obstacle lingers in a zone. Keys look like
         # "top:warning", "bottom:danger", etc.
+        # Per sensor: the tier it is currently in (None = clear) and when
+        # that tier last fired. Keyed by sensor rather than by
+        # (sensor, tier) — a sensor is in exactly one tier at a time, and
+        # the old per-tier key is what let a warning and a danger latch
+        # coexist and take turns re-firing.
+        self._obstacle_tier: dict[str, str | None] = {}
         self._obstacle_last_fired: dict[str, float] = {}
 
         # Set by the executor once the user confirms a shutdown; acted on
@@ -1380,12 +1437,28 @@ class App:
     # ---------------------------------------------------------------- obstacles
 
     def _check_obstacle_sensor(self, sensor_name: str, sensor: DYPA22 | None) -> None:
-        """Poll one ultrasonic sensor and fire a warning if in range.
+        """Poll one ultrasonic sensor and alert on a *newly* closer obstacle.
 
-        Called from the main 100 Hz loop. Returns fast when the sensor
-        has no fresh frame (which is 9 out of 10 ticks — DYP-A22 emits
-        at ~10 Hz). Cooldowns prevent spamming when an obstacle stays
-        in a zone.
+        Called from the main 100 Hz loop. Returns fast when the sensor has
+        no fresh frame (which is 9 out of 10 ticks — DYP-A22 emits at
+        ~10 Hz).
+
+        Fires on **escalation**, not on presence. Entering a tier alerts
+        once; staying in it is silent; receding past the release threshold
+        re-arms it. The one exception is the danger tier, which repeats
+        every `OBSTACLE_DANGER_REPEAT_S` so a standing hazard is not
+        announced once and then forgotten.
+
+        This replaced a fixed two-second cooldown that re-fired for as
+        long as anything stayed in range — a field log shows `danger at
+        42 cm` every two seconds for minutes, each one a motor pulse.
+        Hysteresis is what makes "newly closer" survive a cane that is
+        never quite still; see `OBSTACLE_RELEASE_CM`.
+
+        A de-escalation is deliberately silent. Dropping from danger back
+        to warning means the hazard is receding, and announcing that with
+        the warning pattern would spend the user's attention to tell them
+        something is getting better.
         """
         if sensor is None:
             return
@@ -1398,25 +1471,34 @@ class App:
             return
 
         distance = reading.distance_cm
-        if distance < OBSTACLE_DANGER_CM:
-            tier = "danger"
-        elif distance < OBSTACLE_WARNING_CM:
-            tier = "warning"
-        else:
-            return   # safe zone; nothing to fire
+        previous = self._obstacle_tier.get(sensor_name)
+        tier = _obstacle_tier_for(distance, previous)
+        self._obstacle_tier[sensor_name] = tier
 
-        # Cooldown per (sensor, tier). A moving obstacle that crosses
-        # from warning into danger will fire "danger" immediately even
-        # if "warning" fired a moment ago — different key.
-        key = f"{sensor_name}:{tier}"
-        now = time.monotonic()
-        last_fired = self._obstacle_last_fired.get(key, 0.0)
-        if now - last_fired < OBSTACLE_COOLDOWN_S:
+        if tier is None:
+            # Clear. The re-arm already happened by storing None above.
+            if previous is not None:
+                print(
+                    f"[obstacle:{sensor_name}] clear at {distance:.0f} cm",
+                    flush=True,
+                )
             return
-        self._obstacle_last_fired[key] = now
 
+        now = time.monotonic()
+        escalated = _OBSTACLE_RANK[tier] > _OBSTACLE_RANK[previous]
+        if escalated:
+            reason = "entered"
+        elif tier == "danger" and (
+            now - self._obstacle_last_fired.get(sensor_name, 0.0)
+            >= OBSTACLE_DANGER_REPEAT_S
+        ):
+            reason = "still"
+        else:
+            return
+
+        self._obstacle_last_fired[sensor_name] = now
         print(
-            f"[obstacle:{sensor_name}] {tier} at {distance:.0f} cm",
+            f"[obstacle:{sensor_name}] {tier} at {distance:.0f} cm ({reason})",
             flush=True,
         )
 
