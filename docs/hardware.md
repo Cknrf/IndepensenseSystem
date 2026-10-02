@@ -473,7 +473,21 @@ vest**, which puts the board normal (z) front-to-back and makes y vertical —
 so heading will come from z and x, with the signs depending on which face
 points outward.
 
-Determine the signs on the assembled unit, away from metal:
+`magnetometer_axes` does all of this by measurement and says the answer
+out loud, which matters because turning the vest and reading a scrolling
+terminal are not things one person does at once:
+
+```bash
+python -m indepensense.sensors.tests.manual.magnetometer_axes
+```
+
+It needs no compass. Pass 1 finds the vertical axis and refuses to guess
+when the motion was a tumble rather than a turn; pass 2 fixes the
+mirroring, which is the half no offset can correct. What it cannot
+determine without a known bearing — where zero is, to within a whole
+number of 90° steps — it reports rather than invents.
+
+The manual procedure it replaces, for reference:
 
 1. **Confirm which axis is the board normal.** Rotate the unit about the
    vertical axis (as if the wearer were turning on the spot). Two axes trace a
