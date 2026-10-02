@@ -15,6 +15,7 @@ import pytest
 
 from indepensense import app as app_module
 from indepensense.app_mock import MockApp
+from indepensense.feedback.mock import MockButton
 from indepensense.voice.base import Transcript, TranscriptSegment
 
 
@@ -43,6 +44,9 @@ def pipeline(monkeypatch, tmp_path):
     """
     app = MockApp()
     app.stt = _StubSTT("navigate to the cafeteria")
+    # `_on_ptt_press` sets this before spawning the voice thread. The
+    # pipeline is called directly here, so the fixture stands in for it.
+    app._voice_active.set()
     state = {"duration": 3.0, "spoken": [], "played": []}
 
     monkeypatch.setattr(app_module, "record_until_button",
@@ -144,3 +148,120 @@ def test_the_voice_active_latch_is_always_released(pipeline):
     app._voice_pipeline()
 
     assert not app._voice_active.is_set()
+
+
+# --- the button is reclaimed before the long wait ----------------------------
+#
+# `record_until_button` replaces the PTT handler with its own "stop
+# recording" closure, and that closure is dead the moment it returns.
+# Restoring only in the pipeline's `finally` left the button pointing at
+# it for the whole 3-7 s of transcription and classification — the one
+# press in the system that produced no sound, no log and no effect at
+# all, during the exact wait that makes a user press something.
+
+def test_the_button_is_reclaimed_as_soon_as_recording_ends(monkeypatch, tmp_path):
+    """Asserted at the moment STT runs, not at the end — the end is when
+    the `finally` would have fixed it anyway."""
+    app = MockApp()
+    app.ptt_button = MockButton()
+    app.ptt_button.on("pressed", lambda: None)      # the recorder's closure
+    # `_on_ptt_press` sets this before spawning the thread; calling the
+    # pipeline directly has to stand in for that, or a press lands in a
+    # state the real device never reaches.
+    app._voice_active.set()
+    handler_during_stt = []
+
+    class _WatchingSTT(_StubSTT):
+        def transcribe(self, audio_path, language="en", initial_prompt=None):
+            handler_during_stt.append(app.ptt_button._handlers.get("pressed"))
+            return super().transcribe(audio_path, language, initial_prompt)
+
+    app.stt = _WatchingSTT("navigate to the cafeteria")
+    monkeypatch.setattr(app_module, "record_until_button", lambda *a, **k: 3.0)
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+    monkeypatch.setattr(app, "_play_press_feedback", lambda rising_chime: None)
+    monkeypatch.setattr(app_module, "VOICE_TEST_DIR", tmp_path)
+
+    app._voice_pipeline()
+
+    assert handler_during_stt == [app._on_ptt_press]
+
+
+def test_a_press_while_thinking_reaches_the_busy_cue(monkeypatch, tmp_path):
+    """The user-visible point of the reclaim: the press now lands on a
+    live handler and is answered, instead of vanishing."""
+    app = MockApp()
+    app.ptt_button = MockButton()
+    app.ptt_button.on("pressed", lambda: None)
+    app._voice_active.set()
+    cues: list[str] = []
+    monkeypatch.setattr(app_module, "play_busy_cue", lambda: cues.append("busy"))
+
+    class _PressingSTT(_StubSTT):
+        def transcribe(self, audio_path, language="en", initial_prompt=None):
+            app.ptt_button.press()       # impatient user, mid-transcription
+            return super().transcribe(audio_path, language, initial_prompt)
+
+    app.stt = _PressingSTT("navigate to the cafeteria")
+    monkeypatch.setattr(app_module, "record_until_button", lambda *a, **k: 3.0)
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+    monkeypatch.setattr(app, "_play_press_feedback", lambda rising_chime: None)
+    monkeypatch.setattr(app_module, "VOICE_TEST_DIR", tmp_path)
+
+    app._voice_pipeline()
+
+    assert cues == ["busy"]
+
+
+def test_a_press_while_thinking_does_not_start_a_second_recording(
+    monkeypatch, tmp_path,
+):
+    """Reclaiming the button must not also make it usable — one voice
+    thread at a time, or two recordings fight for the microphone."""
+    app = MockApp()
+    app.ptt_button = MockButton()
+    app._voice_active.set()
+    recordings = []
+
+    class _PressingSTT(_StubSTT):
+        def transcribe(self, audio_path, language="en", initial_prompt=None):
+            app.ptt_button.press()
+            return super().transcribe(audio_path, language, initial_prompt)
+
+    app.stt = _PressingSTT("navigate to the cafeteria")
+
+    def _record(*_a, **_k):
+        recordings.append(1)
+        return 3.0
+
+    monkeypatch.setattr(app_module, "record_until_button", _record)
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+    monkeypatch.setattr(app_module, "play_busy_cue", lambda: None)
+    monkeypatch.setattr(app, "_play_press_feedback", lambda rising_chime: None)
+    monkeypatch.setattr(app_module, "VOICE_TEST_DIR", tmp_path)
+
+    app._voice_pipeline()
+
+    assert recordings == [1]
+
+
+def test_the_button_is_reclaimed_even_when_the_pipeline_fails_early(
+    monkeypatch, tmp_path,
+):
+    """The `finally` backstop still earns its place: a path that never
+    reaches the recorder has not reclaimed anything."""
+    app = MockApp()
+    app.ptt_button = MockButton()
+    app.ptt_button.on("pressed", lambda: None)
+    app._voice_active.set()
+
+    def _explode(*_a, **_k):
+        raise OSError("microphone gone")
+
+    monkeypatch.setattr(app_module, "record_until_button", _explode)
+    monkeypatch.setattr(app, "_speak_error", lambda message: None)
+    monkeypatch.setattr(app_module, "VOICE_TEST_DIR", tmp_path)
+
+    app._voice_pipeline()
+
+    assert app.ptt_button._handlers["pressed"] == app._on_ptt_press

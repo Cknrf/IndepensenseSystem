@@ -2043,6 +2043,28 @@ class App:
         except Exception as exc:
             print(f"[feedback] cue error: {exc}", file=sys.stderr, flush=True)
 
+    def _reclaim_ptt_button(self) -> None:
+        """Point the PTT button back at `_on_ptt_press`. Never raises.
+
+        Four things borrow that button and must hand it back:
+        `record_until_button`, the destination confirmation, the
+        turn-to-face orientation, and the pipeline's own `finally` as a
+        backstop. Idempotent, so calling it twice costs nothing and the
+        backstop stays safe.
+
+        A missing button is not an error — the wearable runs without one
+        in degraded setups — and a failure here must not propagate,
+        because every caller is in a `finally` cleaning up after
+        something else.
+        """
+        if self.ptt_button is None:
+            return
+        try:
+            self.ptt_button.on("pressed", self._on_ptt_press)
+        except Exception as exc:
+            print(f"[PTT] could not reclaim the button: {exc}",
+                  file=sys.stderr, flush=True)
+
     def _play_press_feedback(self, rising_chime: bool) -> None:
         """PTT start/stop feedback: all-motor pulse + audio chime.
 
@@ -2107,6 +2129,23 @@ class App:
                 cancel_event=self._voice_cancel,
                 max_duration_s=PTT_MAX_RECORDING_S,
             )
+            # Take the button back immediately, not in the `finally`.
+            #
+            # `record_until_button` replaces the handler with its own
+            # "stop recording" closure, and that closure is dead the
+            # moment it returns. Restoring only at the end left the
+            # button pointing at it for the whole 3-7 s of transcription
+            # and classification — the one press in the system that
+            # produced no sound, no log and no effect whatsoever, during
+            # the exact wait that makes a user press something.
+            #
+            # Safe here rather than later: the press that ended the
+            # recording has already been consumed, gpiozero debounces at
+            # 50 ms, and `_voice_active` is still set, so a further press
+            # now reaches `_on_ptt_press` and is answered with the busy
+            # cue. The `finally` keeps its own call as the backstop for
+            # the paths that never reach this line.
+            self._reclaim_ptt_button()
             print(f"[PTT] Captured {duration:.1f} s of audio.", flush=True)
 
             if self._voice_cancel.is_set():
@@ -2232,12 +2271,10 @@ class App:
             # broken TTS doesn't cascade into an infinite error loop.
             self._speak_error("Something went wrong. Please try again.")
         finally:
-            # Restore our PTT handler — record_until_button overwrote it.
-            if self.ptt_button is not None:
-                try:
-                    self.ptt_button.on("pressed", self._on_ptt_press)
-                except Exception:
-                    pass
+            # Backstop: every path that reached the recorder has already
+            # reclaimed the button, but the ones that failed before it
+            # have not.
+            self._reclaim_ptt_button()
             self._voice_active.clear()
 
     def _orient_towards_route(self) -> None:
@@ -2346,11 +2383,7 @@ class App:
             # must not cost the user the route they just asked for.
             print(f"[orient] error: {exc}", file=sys.stderr, flush=True)
         finally:
-            if self.ptt_button is not None:
-                try:
-                    self.ptt_button.on("pressed", self._on_ptt_press)
-                except Exception:
-                    pass
+            self._reclaim_ptt_button()
 
     def _confirm_destination(self, question: str) -> bool:
         """Speak `question`, then wait for a PTT press meaning "yes".
@@ -2407,10 +2440,7 @@ class App:
             self._waiting_paused.clear()
             # Hand the button back even if speaking or waiting blew up,
             # or the next press would land on a dead handler.
-            try:
-                self.ptt_button.on("pressed", self._on_ptt_press)
-            except Exception:
-                pass
+            self._reclaim_ptt_button()
 
         if confirmed.is_set():
             print("[nav] destination confirmed.", flush=True)
