@@ -569,6 +569,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Cellular is connected, but signal strength is not reported.",
         "tl": "Konektado ang cellular, ngunit hindi maipakita ang lakas ng signal.",
     },
+    # Said when the modem has a network but no data bearer is up.
+    # "Registered" and "connected" are different states and used to share
+    # an answer, so a user asking "is there internet right now" could be
+    # told the signal was strong while nothing could reach the internet.
+    # The strength is still worth saying — it is why the connection may
+    # be failing — but the headline has to be that data is not working.
+    "cellular.registered_no_data": {
+        "en": "There is a cellular network at {quality} percent signal, "
+              "but no data connection.",
+        "tl": "May cellular network na {quality} porsyento ang signal, "
+              "pero walang data connection.",
+    },
     "cellular.strong": {
         "en": "Cellular signal is strong, at {quality} percent.",
         "tl": "Malakas ang cellular signal, {quality} porsyento.",
@@ -580,6 +592,27 @@ MESSAGES: dict[str, dict[str, str]] = {
     "cellular.weak": {
         "en": "Cellular signal is weak, at {quality} percent.",
         "tl": "Mahina ang cellular signal, {quality} porsyento.",
+    },
+    # Same three, naming the network generation. Separate messages rather
+    # than a sentence assembled from fragments: where the generation goes
+    # is a grammar question, and building it by concatenation is how one
+    # language ends up reading as a translation of the other. An
+    # unrecognised radio standard falls back to the three above and the
+    # generation is simply left unsaid.
+    "cellular.strong_on": {
+        "en": "Cellular signal is strong, at {quality} percent, on {technology}.",
+        "tl": "Malakas ang cellular signal sa {technology}, "
+              "{quality} porsyento.",
+    },
+    "cellular.medium_on": {
+        "en": "Cellular signal is medium, at {quality} percent, on {technology}.",
+        "tl": "Katamtaman ang cellular signal sa {technology}, "
+              "{quality} porsyento.",
+    },
+    "cellular.weak_on": {
+        "en": "Cellular signal is weak, at {quality} percent, on {technology}.",
+        "tl": "Mahina ang cellular signal sa {technology}, "
+              "{quality} porsyento.",
     },
 
     # --- time ---------------------------------------------------------------

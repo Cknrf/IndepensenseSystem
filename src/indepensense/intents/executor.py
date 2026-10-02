@@ -167,6 +167,33 @@ _MAX_SCENE_ITEMS = 5
 # mid-sentence for anyone who has heard enough.
 _MAX_SPOKEN_PLACES = 6
 
+# ModemManager's access-technology names, mapped to the generation people
+# actually say. mmcli reports the radio standard (`lte`, `umts`, `hspa`);
+# nobody asks whether they are on UMTS.
+#
+# Spoken as a bare "4G" rather than translated, because the generation
+# names are read identically in both languages — a Tagalog speaker asks
+# for "apat G" no more than an English one asks for "fourth generation".
+#
+# Not in `messages.py` despite being user-facing: these are mmcli's
+# vocabulary, and the mapping is protocol knowledge about what that tool
+# emits rather than a sentence anyone would translate. An unrecognised
+# value maps to nothing and the generation is simply left unsaid — a
+# wrong generation is worse than no generation, and new radio standards
+# keep arriving.
+_NETWORK_GENERATIONS = {
+    "5gnr": "5G",
+    "lte": "4G",
+    "hspa+": "3G",
+    "hspa": "3G",
+    "hsupa": "3G",
+    "hsdpa": "3G",
+    "umts": "3G",
+    "edge": "2G",
+    "gprs": "2G",
+    "gsm": "2G",
+}
+
 
 def _describe_scene(detections: list[Detection], language: str) -> str:
     """Build a spoken description from a list of YOLO detections.
@@ -668,6 +695,7 @@ class IntentExecutor:
 
         state = ""
         quality: int | None = None
+        technology = ""
         for line in r.stdout.splitlines():
             if "modem.generic.state " in line and ":" in line:
                 state = line.split(":", 1)[1].strip()
@@ -676,6 +704,13 @@ class IntentExecutor:
                     quality = int(line.split(":", 1)[1].strip())
                 except ValueError:
                     pass
+            elif "access-technologies.value" in line and ":" in line:
+                # mmcli numbers these (`...value[1]`) and can list more
+                # than one while handing over between networks. The first
+                # non-empty is the one in use.
+                value = line.split(":", 1)[1].strip()
+                if value and value != "--" and not technology:
+                    technology = value.lower()
 
         if "failed" in state:
             return messages.get("cellular.check_sim", self._lang)
@@ -686,11 +721,25 @@ class IntentExecutor:
 
         if quality is None:
             return messages.get("cellular.no_quality", self._lang)
-        if quality >= 60:
-            return messages.get("cellular.strong", self._lang, quality=quality)
-        if quality >= 30:
-            return messages.get("cellular.medium", self._lang, quality=quality)
-        return messages.get("cellular.weak", self._lang, quality=quality)
+
+        # "Registered" is not "connected". The first means the modem has
+        # a network; the second means a data bearer is actually up. They
+        # used to share an answer, so a user asking "is there internet
+        # right now" — a phrasing in the example bank — could be told the
+        # signal was strong while nothing could reach the internet.
+        if state == "registered":
+            return messages.get(
+                "cellular.registered_no_data", self._lang, quality=quality,
+            )
+
+        strength = "strong" if quality >= 60 else "medium" if quality >= 30 else "weak"
+        spoken_technology = _NETWORK_GENERATIONS.get(technology, "")
+        if spoken_technology:
+            return messages.get(
+                f"cellular.{strength}_on", self._lang,
+                quality=quality, technology=spoken_technology,
+            )
+        return messages.get(f"cellular.{strength}", self._lang, quality=quality)
 
     def _handle_system_time(self, result: IntentResult) -> str:
         now = datetime.now()

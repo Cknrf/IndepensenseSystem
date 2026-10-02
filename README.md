@@ -433,7 +433,7 @@ than magic words — the full rules and the Tagalog equivalents live in
 | `place.list` | "What places have I saved" | Reads the labels back, up to six, then "and N more". The only way to audit the list without a screen — and `place.delete` needs a name you may have forgotten |
 | `vision.describe` | "What's around me" | Camera + YOLO. When YOLO recognises nothing, answers with the forward ultrasonic's distance instead — "something is about 40 centimetres away". Never alongside a detection: the ultrasonic measures whatever is in its cone, not necessarily the object the camera boxed |
 | `vision.read` | "Read this" | Camera + OCR. Press repeat to stop it mid-read |
-| `device.status` | "How much battery do I have" | Also GPS lock and cellular signal |
+| `device.status` | "How much battery do I have" | Also GPS lock, and cellular signal — strength as strong/medium/weak with the percentage and the network generation ("strong, at 72 percent, on 4G"). Distinguishes a modem that is *registered* but has no data bearer from one that is actually connected |
 | `system.time` | "What time is it" | |
 | `system.language` | "Switch to English" · "Lumipat sa Ingles" | Confirms in the language switched *to* |
 | `system.volume` | "Louder" · "Set the volume to 60" | Floor of 20%; the buzzer is unaffected |
