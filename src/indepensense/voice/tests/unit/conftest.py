@@ -107,6 +107,13 @@ class _FakeAudio:
         start, stop, _ = index.indices(self.shape[0])
         return _FakeAudio(max(0, stop - start), self.shape[1])
 
+    def copy(self) -> "_FakeAudio":
+        # The recording paths copy each block out of the callback buffer,
+        # which PortAudio reuses — without it every frame would alias the
+        # same memory. Real arrays have this; the fake needs it to let the
+        # recording functions run at all.
+        return _FakeAudio(self.shape[0], self.shape[1])
+
 
 class _FakeSoundDevice(types.ModuleType):
     """Hands out `_FakeStream`s and refuses to be used the old way.

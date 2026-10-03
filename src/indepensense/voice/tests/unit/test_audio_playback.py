@@ -318,17 +318,76 @@ def test_every_sound_reinitialises(fake_sd, fake_sf, wav, reinit_calls):
     assert len(reinit_calls) == 3
 
 
-def test_recording_reinitialises_too(fake_sd, fake_sf, tmp_path, reinit_calls):
-    """Input counts as well as output — the count exists to stop a cue
-    tearing PortAudio down under a live microphone, so both sides have to
-    register."""
+def test_recording_counts_but_does_not_reinitialise(fake_sd, fake_sf, tmp_path,
+                                                    reinit_calls):
+    """Input registers in the count but skips the refresh.
+
+    The count is the safety half: it stops a cue on another thread
+    tearing PortAudio down while the microphone is live. The refresh is
+    the latency half, and input does not need it — `mic_onset_test` on
+    the Pi captured 2.004 s of a 2 s recording with and without it alike,
+    so the ~69 ms it cost sat between the chime and the microphone going
+    live for no reason."""
     from indepensense.feedback.mock import MockButton
 
     audio.record_until_button(MockButton(), tmp_path / "in.wav",
                               max_duration_s=0.05)
 
-    assert reinit_calls == [1]
+    assert reinit_calls == [], "recording paid for a refresh it does not need"
     assert audio._portaudio_streams == 0
+
+
+def test_every_recording_path_skips_the_refresh():
+    """All three of them, not just the one the wearable uses.
+
+    Checked by reading the source rather than by running each function:
+    `record` finishes with `np.concatenate` over its captured blocks,
+    which the fake's array stand-in cannot satisfy, and bending the fake
+    into a real array for one assertion would make every other test in
+    this file depend on numpy being installed.
+
+    Crude, but it guards the thing that is actually at risk — a call site
+    added or edited without the keyword, which would silently put ~69 ms
+    back in front of every recording with no test turning red."""
+    import inspect
+
+    for function in (audio.record, audio.record_until_enter,
+                     audio.record_until_button):
+        source = inspect.getsource(function)
+        assert "_claim_portaudio(refresh=False)" in source, (
+            f"{function.__name__} refreshes PortAudio; input does not need it"
+        )
+        assert "_release_portaudio()" in source, (
+            f"{function.__name__} would leak the stream count"
+        )
+
+
+def test_playback_still_refreshes():
+    """The counterpart. Output is the side that does need it, and a
+    blanket `refresh=False` would silence every cue again."""
+    import inspect
+
+    source = inspect.getsource(audio._write_blocks)
+    assert "_claim_portaudio()" in source
+    assert "refresh=False" not in source
+
+
+def test_a_cue_during_a_recording_still_cannot_tear_portaudio_down(fake_sd,
+                                                                   fake_sf,
+                                                                   wav):
+    """The reason recordings still take part in the count at all.
+
+    Pressing repeat mid-recording plays the stop cue while the input
+    stream is live, and terminating PortAudio under it is the C-level
+    double free, not a clipped cue."""
+    audio._claim_portaudio(refresh=False)       # as a live recording would
+    try:
+        audio.play(wav)
+        assert fake_sd.streams[-1].blocks, "the cue did not play"
+    finally:
+        audio._release_portaudio()
+
+    assert fake_sd.unsafe_reinits == []
 
 
 def test_the_count_returns_to_zero(fake_sd, fake_sf, wav, reinit_calls):
@@ -416,6 +475,7 @@ def test_playback_never_builds_a_stream_on_a_stale_context(fake_sd, fake_sf, wav
 
 def test_recording_never_builds_a_stream_on_a_stale_context(fake_sd, fake_sf,
                                                             tmp_path):
+    """It does not refresh, so nothing should invalidate it either."""
     from indepensense.feedback.mock import MockButton
 
     for n in range(3):

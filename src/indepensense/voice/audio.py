@@ -201,8 +201,22 @@ def _reinitialise_portaudio() -> bool:
     return sd._initialized == 1
 
 
-def _claim_portaudio() -> None:
-    """Re-initialise PortAudio and register a stream about to open.
+def _claim_portaudio(refresh: bool = True) -> None:
+    """Register a stream about to open, re-initialising PortAudio first.
+
+    `refresh=False` registers the stream without re-initialising. Used by
+    the three recording functions: **input is not affected by the
+    discard**, measured on the Pi with `mic_onset_test` — three trials
+    per condition, 2 s each, and a stream opened with no re-init captured
+    2.004 s of a 2.000 s recording, identical to one opened with. Only
+    short *output* needs the adjacency.
+
+    Recording still takes part in the count, which is the half that
+    matters for safety: it stops a cue on another thread tearing PortAudio
+    down while the microphone is live. It simply no longer pays ~69 ms to
+    refresh a context it does not need, and that 69 ms sat between the
+    PTT chime ending and the microphone going live — dead time the user
+    may already be speaking into.
 
     Called immediately before the stream is constructed, never after:
     `Pa_Terminate` invalidates every existing stream pointer, so a stream
@@ -217,7 +231,7 @@ def _claim_portaudio() -> None:
     """
     global _portaudio_streams
     with _portaudio_lock:
-        if _portaudio_streams == 0:
+        if refresh and _portaudio_streams == 0:
             _reinitialise_portaudio()
         _portaudio_streams += 1
 
@@ -272,9 +286,10 @@ def record(
     blocks: list = []
 
     # Counted so a cue played on another thread cannot re-initialise
-    # PortAudio out from under a live recording — and claimed before the
-    # stream exists, since a re-init invalidates existing pointers.
-    _claim_portaudio()
+    # PortAudio out from under a live recording. No refresh: input does
+    # not suffer the discard that short output does, measured rather than
+    # assumed — see `_claim_portaudio`.
+    _claim_portaudio(refresh=False)
     try:
         stream = sd.InputStream(
             samplerate=samplerate,
@@ -320,7 +335,9 @@ def record_until_enter(
     def _callback(indata, _frame_count, _time_info, _status):
         frames.append(indata.copy())
 
-    _claim_portaudio()
+    # Counted but not refreshed — input is unaffected by the discard
+    # that silences short output. See `_claim_portaudio`.
+    _claim_portaudio(refresh=False)
     try:
         stream = sd.InputStream(
             samplerate=samplerate,
@@ -395,7 +412,9 @@ def record_until_button(
 
     button.on("pressed", _on_press)
 
-    _claim_portaudio()
+    # Counted but not refreshed — input is unaffected by the discard
+    # that silences short output. See `_claim_portaudio`.
+    _claim_portaudio(refresh=False)
     try:
         stream = sd.InputStream(
             samplerate=samplerate,
