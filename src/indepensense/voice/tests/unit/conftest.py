@@ -28,6 +28,8 @@ class _FakeStream:
     def __init__(self, owner: "_FakeSoundDevice", kwargs: dict):
         self.owner = owner
         self.kwargs = kwargs
+        # Which PortAudio lifetime this stream's pointer belongs to.
+        self.generation = owner.generation
         self.started = 0
         self.stopped = 0
         self.aborted = 0
@@ -47,6 +49,16 @@ class _FakeStream:
         self.close()
 
     def start(self) -> None:
+        # `Pa_Terminate` invalidates every stream built before it. The
+        # device reports it exactly like this, and nothing else in the
+        # fake would notice — which is how a version that re-initialised
+        # *after* building the stream passed every test and then failed
+        # on the first cue.
+        if self.generation != self.owner.generation:
+            raise RuntimeError(
+                "Error starting stream: Invalid stream pointer "
+                "[PaErrorCode -9988]"
+            )
         self.started += 1
         with self.owner.lock:
             self.owner.live += 1
@@ -118,6 +130,7 @@ class _FakeSoundDevice(types.ModuleType):
         self.reinits = 0
         self.unsafe_reinits: list[int] = []
         self._initialized = 1        # as `import sounddevice` leaves it
+        self.generation = 0          # bumped by every _initialize
         self.fail_initialize = False
 
     # Present because `audio.py` calls them before every stream, and a
@@ -150,6 +163,7 @@ class _FakeSoundDevice(types.ModuleType):
         if self.fail_initialize:
             raise RuntimeError("Error initializing PortAudio [PaErrorCode -9986]")
         self._initialized += 1
+        self.generation += 1
 
     def OutputStream(self, **kwargs) -> _FakeStream:     # noqa: N802 — mirrors sounddevice
         if self._initialized <= 0:
@@ -201,10 +215,12 @@ def fake_sd(monkeypatch, fake_sf) -> _FakeSoundDevice:
     audio._playing.clear()
     audio._stop_requested.clear()
     audio._portaudio_streams = 0
+    audio._portaudio_fresh = True
     yield sd
     audio._playing.clear()
     audio._stop_requested.clear()
     audio._portaudio_streams = 0
+    audio._portaudio_fresh = True
     assert not sd.unsafe_reinits, (
         f"PortAudio was re-initialised with {sd.unsafe_reinits} stream(s) "
         "live — that is the double free, not a clipped cue"

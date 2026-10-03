@@ -100,6 +100,13 @@ _playing = threading.Event()
 _portaudio_lock = threading.Lock()
 _portaudio_streams = 0
 
+# True when PortAudio has been initialised and nothing has opened a stream
+# on it since — i.e. the next stream will be a "first" stream.
+#
+# Importing sounddevice initialises it, so the first sound of the process
+# already enjoys that and needs no work done for it.
+_portaudio_fresh = True
+
 
 # Bound on the unwind loop below. PortAudio's init count should never be
 # above 1 here, so anything past a couple of passes means the counter is
@@ -107,76 +114,123 @@ _portaudio_streams = 0
 _MAX_TERMINATE_PASSES = 4
 
 
-def _reinitialise_portaudio() -> None:
+def _reinitialise_portaudio() -> bool:
     """Restore the first-stream-of-a-process condition. Never raises.
+
+    Returns True only if PortAudio is up and freshly initialised. The
+    caller must not record the context as fresh on a False — a failed
+    re-init leaves the library *down*, and treating that as fresh would
+    skip the refresh on the next sound and build a stream on a corpse.
 
     Caller must hold `_portaudio_lock` and must have verified that no
     stream is open. Uses `sounddevice`'s private `_terminate`/`_initialize`
     because PortAudio exposes no public way to do this and nothing else
     makes a second short sound audible.
 
+    The target is a single invariant: **`sd._initialized == 1` on exit**.
+
     `Pa_Initialize`/`Pa_Terminate` are *reference counted* — PortAudio
     only really shuts down when the count reaches zero — and sounddevice
-    mirrors the count in `sd._initialized`. Two consequences shape this
-    function, and both were found by experiment rather than reading:
+    mirrors that count in `sd._initialized`. Aiming at the invariant
+    rather than issuing a fixed pair of calls is what makes this safe in
+    the three states that actually occur, all found by experiment:
 
-      * The count must be driven to zero or nothing is torn down and the
-        re-init silently does nothing. Importing sounddevice leaves it at
-        1, so normally that is a single `_terminate()`; the loop is there
-        because an unbalanced count would otherwise disable the fix for
-        the rest of the run with no symptom but the cues going quiet.
+      * **Count 1**, the normal case: one teardown, one initialise.
 
-      * `_initialize()` must be attempted *unconditionally*. Calling
-        `_terminate()` on an already-terminated PortAudio raises
+      * **Count 0**, after a failed `Pa_Initialize` — a USB
+        re-enumeration can cause one. Tearing down again raises
         `paNotInitialized`, so the obvious `try: terminate(); initialize()`
-        skips the initialise and leaves the library terminated for good —
-        every later stream then dies with `Error querying device -1` and
-        the wearable is silent until it is restarted. A transient
-        `Pa_Initialize` failure, which a USB re-enumeration can cause, was
-        enough to reach that state permanently.
+        skips the initialise and leaves the library down *for good*: every
+        later stream dies with `Error querying device -1` and the wearable
+        is mute until it is restarted. Here the teardown is simply skipped
+        and the initialise brings it back.
+
+      * **Count above 1**: a single teardown would shut nothing down and
+        the re-init would silently stop working, the only symptom being
+        the cues going quiet again. The loop unwinds it.
+
+    A teardown that fails while the count is still positive leaves the
+    initialise alone deliberately — raising it would push the count up
+    instead, and the drift is unbounded across calls.
     """
     import sounddevice as sd
 
-    # `_initialized` is private too. Absent it, fall back to one pass:
-    # the count is 1 in every case we can actually observe.
-    passes = getattr(sd, "_initialized", 1)
-    if not isinstance(passes, int) or passes < 0:
-        passes = 1
+    # `_initialized` is private too. Without it the count cannot be
+    # managed at all, so fall back to one best-effort pair.
+    if not isinstance(getattr(sd, "_initialized", None), int):
+        try:
+            sd._terminate()
+        except Exception:
+            pass                        # already down; the initialise matters
+        try:
+            sd._initialize()
+        except Exception as exc:
+            print(f"[audio] PortAudio is down and could not be restarted: {exc}",
+                  file=sys.stderr, flush=True)
+            return False
+        return True
 
-    for _ in range(min(passes, _MAX_TERMINATE_PASSES)):
+    for _ in range(_MAX_TERMINATE_PASSES):
+        if sd._initialized <= 0:
+            break
         try:
             sd._terminate()
         except Exception as exc:
-            # Already down, which is fine — the initialise below is what
-            # actually matters.
-            print(f"[audio] PortAudio teardown skipped: {exc}",
+            print(f"[audio] PortAudio teardown failed: {exc}",
                   file=sys.stderr, flush=True)
             break
 
-    try:
-        sd._initialize()
-    except Exception as exc:
-        # Now the library IS terminated and every stream will fail. Say so
-        # plainly: this is the one path where the device goes silent, and
-        # the next sound retries from the top.
-        print(f"[audio] PortAudio is down and could not be restarted: {exc}",
-              file=sys.stderr, flush=True)
+    if sd._initialized <= 0:
+        try:
+            sd._initialize()
+        except Exception as exc:
+            # The library IS down and every stream will now fail. Say so
+            # plainly; the next sound retries from the top.
+            print(f"[audio] PortAudio is down and could not be restarted: {exc}",
+                  file=sys.stderr, flush=True)
+            return False
+
+    return sd._initialized == 1
 
 
 def _claim_portaudio() -> None:
-    """Register a stream about to open, re-initialising if it is the only one."""
-    global _portaudio_streams
+    """Register a stream about to open, refreshing PortAudio if it is stale.
+
+    Normally a no-op, because `_release_portaudio` has already done the
+    work. It stays here as the correctness backstop: if a release was
+    skipped or its re-init failed, the stream must not be built on a
+    stale context.
+    """
+    global _portaudio_streams, _portaudio_fresh
     with _portaudio_lock:
-        if _portaudio_streams == 0:
+        if _portaudio_streams == 0 and not _portaudio_fresh:
             _reinitialise_portaudio()
+        # Consumed: this stream is the "first" one, so the next is not.
+        _portaudio_fresh = False
         _portaudio_streams += 1
 
 
 def _release_portaudio() -> None:
-    """Register a stream that has closed."""
-    global _portaudio_streams
+    """Register a stream that has closed, and refresh PortAudio for the next.
+
+    The re-init runs *here*, after the sound, rather than before the next
+    one — measured at **96 ms on the Pi** (2 ms on a Mac; it re-enumerates
+    every ALSA device). Paid at claim time that lands on the start of a
+    200 ms cue and, worse, between the PTT chime and the microphone going
+    live, where it eats the first tenth of a second of whatever the user
+    says. Paid here it falls in the gap between sounds, where nobody is
+    waiting for it.
+
+    It costs nothing in correctness: `_claim_portaudio` still refreshes a
+    stale context, so a skipped or failed release degrades to the old
+    timing rather than to a clipped cue.
+    """
+    global _portaudio_streams, _portaudio_fresh
     with _portaudio_lock:
         _portaudio_streams = max(0, _portaudio_streams - 1)
+        if _portaudio_streams == 0:
+            _portaudio_fresh = _reinitialise_portaudio()
+
 
 
 def is_playing() -> bool:
