@@ -155,6 +155,15 @@ _TONE_BAD = [(420.0, 0.30), (300.0, 0.45)]
 # what that face was measuring, not sampling luck.
 _FACE_RESIDUAL_TOLERANCE = 0.12
 
+# How many median-absolute-deviations from the median before a corrected
+# magnitude is "far out". Four is roughly 2.7 sigma for well-behaved data
+# — loose enough not to count the tails of an honest sweep.
+_OUTLIER_MADS = 4.0
+
+# Below this the least-squares fit has nothing to work with and min/max
+# is no worse. Six unknowns, so this is a wide margin, not a tight one.
+_MIN_FIT_SAMPLES = 50
+
 _GOOD_SPREAD_PCT = 10.0
 _MARGINAL_SPREAD_PCT = 20.0
 
@@ -409,7 +418,132 @@ def grade_sweep(samples, offsets, scales):
     return mean, spread_pct, verdict, advice
 
 
-def calibration_from_samples(samples):
+def reject_outliers(samples, tolerance=_OUTLIER_MADS):
+    """Drop samples that cannot be on the same ellipsoid as the rest.
+
+    Returns `(kept, dropped_count)`.
+
+    Needed because *both* derivations collapse under a single bad
+    reading, which was not obvious and is worth stating plainly:
+    min/max takes its answer straight from the extremes, and least
+    squares weights by the square of the residual, so a frame reading
+    900 uT outvotes a thousand good ones. Injecting two corrupted frames
+    into a clean sweep moved the min/max offset from 12.0 to 25.0 and the
+    fitted one to -537.7. Robustness has to happen before either.
+
+    The test is distance from a provisional centre — the per-axis median,
+    which no single outlier can move — judged against the median absolute
+    deviation of those distances rather than their standard deviation,
+    since the outliers would otherwise inflate the measure meant to catch
+    them. Deliberately loose: the distances vary honestly between the
+    ellipsoid's shortest and longest semi-axis, and discarding real
+    coverage to tidy the numbers is the one thing worse than keeping a
+    stray sample.
+    """
+    if len(samples) < _MIN_FIT_SAMPLES:
+        return list(samples), 0
+
+    centre = [statistics.median([s[axis] for s in samples]) for axis in (0, 1, 2)]
+    distances = [
+        math.dist(sample, centre)
+        for sample in samples
+    ]
+    middle = statistics.median(distances)
+    deviation = statistics.median([abs(d - middle) for d in distances])
+    if deviation <= 0:
+        return list(samples), 0
+
+    kept = [
+        sample
+        for sample, distance in zip(samples, distances)
+        if abs(distance - middle) <= tolerance * deviation
+    ]
+    if len(kept) < _MIN_FIT_SAMPLES:
+        # Rejecting this much means the assumption behind the test is
+        # wrong, not that the data is. Keep everything and let the grade
+        # report the mess honestly.
+        return list(samples), 0
+    return kept, len(samples) - len(kept)
+
+
+def fit_ellipsoid(samples):
+    """Least-squares fit of an axis-aligned ellipsoid. `(offsets, scales)`.
+
+    The model is the same one `config.py` stores — a per-axis offset and
+    a per-axis scale — so this is a better way of finding the same six
+    numbers, not a different calibration.
+
+    Why not min/max
+    ---------------
+
+    The min/max derivation takes each axis' offset from exactly two
+    samples: the largest and the smallest. Everything in between is
+    discarded. That makes it exact on a perfectly swept sphere and
+    fragile on anything else, in two ways that both bit on the real vest:
+
+      * **One corrupted reading moves an extreme.** The magnetometer is
+        on a bit-banged I2C bus, where a mangled frame is a transport
+        failure, not a magnetic one. Injecting three bad frames into an
+        otherwise clean 1150-sample sweep moved the derived field from
+        42 uT to 502 uT — and because the offsets themselves were wrong,
+        every corrected magnitude was wrong with them. No statistic
+        computed afterwards can separate that from real distortion.
+
+      * **An axis that never quite reaches its extreme is biased.** Six
+        faces, each rotated about one axis, trace six circles rather than
+        a filled sphere. The true extremes may simply never be sampled,
+        and min/max cannot tell "not reached" from "reached".
+
+    A least-squares fit uses every sample for every parameter, so one bad
+    reading is one vote among a thousand and an unreached extreme is
+    interpolated rather than guessed.
+
+    Returns `None` when the fit is degenerate — too few samples, or a
+    sweep so flat the system is ill-conditioned — leaving the caller to
+    fall back rather than hand back nonsense with a confident face.
+    """
+    import numpy as np                  # lazy: Pi-only at module import time
+
+    if len(samples) < _MIN_FIT_SAMPLES:
+        return None
+
+    data = np.asarray(samples, dtype=float)
+    x, y, z = data[:, 0], data[:, 1], data[:, 2]
+
+    # ((v - c) / s)^2 summed = 1, expanded into terms linear in the
+    # unknowns:  a.x^2 + a.y^2 + a.z^2 + b.x + b.y + b.z = 1
+    design = np.column_stack([x * x, y * y, z * z, x, y, z])
+    try:
+        solution, _residuals, rank, _sv = np.linalg.lstsq(
+            design, np.ones(len(data)), rcond=None
+        )
+    except np.linalg.LinAlgError:
+        return None
+    if rank < 6:
+        return None
+
+    quad = solution[:3]
+    lin = solution[3:]
+    if np.any(quad <= 0):
+        # Not an ellipsoid — the sweep did not enclose a volume.
+        return None
+
+    centre = -lin / (2.0 * quad)
+    # Recover the scale factor dropped when the constant was normalised.
+    normaliser = 1.0 + float(np.sum(quad * centre * centre))
+    if normaliser <= 0:
+        return None
+    semi_axes = 1.0 / np.sqrt(quad * normaliser)
+    if not np.all(np.isfinite(semi_axes)) or np.any(semi_axes <= 0):
+        return None
+
+    # Same convention as the min/max path: normalise the three axes to
+    # their mean so a sphere comes out a sphere at roughly true scale.
+    scales = float(np.mean(semi_axes)) / semi_axes
+    return tuple(float(c) for c in centre), tuple(float(s) for s in scales)
+
+
+def calibration_from_minmax(samples):
     """Derive `(offsets, scales, spans)` from raw `(x, y, z)` triples.
 
     Hard-iron offset is the centre of each axis' range; soft-iron scale
@@ -454,6 +588,76 @@ def calibration_from_samples(samples):
     return offsets, scales, spans
 
 
+def calibration_from_samples(samples):
+    """Best available `(offsets, scales, spans)` for `samples`.
+
+    Prefers the least-squares fit and falls back to min/max when the fit
+    is degenerate. `spans` always comes from the observed extremes — it
+    describes the sweep's coverage, which is a property of what was
+    recorded rather than of how it was fitted.
+    """
+    kept, _dropped = reject_outliers(samples)
+
+    offsets, scales, spans = calibration_from_minmax(kept)
+
+    fitted = fit_ellipsoid(kept)
+    if fitted is not None:
+        offsets, scales = fitted
+    return offsets, scales, spans
+
+
+def corrected_magnitudes(samples, offsets, scales) -> list[float]:
+    """Field strength after calibration, one per sample."""
+    return [
+        math.sqrt(
+            apply_calibration(x, offsets[0], scales[0]) ** 2
+            + apply_calibration(y, offsets[1], scales[1]) ** 2
+            + apply_calibration(z, offsets[2], scales[2]) ** 2
+        )
+        for x, y, z in samples
+    ]
+
+
+def spread_profile(magnitudes) -> dict:
+    """Peak-to-peak spread beside a robust one, and the outlier count.
+
+    `grade_sweep` measures peak-to-peak on purpose — a stray sample at an
+    extreme is exactly what poisons a min/max calibration, and a standard
+    deviation over several hundred readings would average it away. The
+    cost of that choice is that the verdict cannot tell *one corrupted
+    reading* from *a genuinely distorted field*, and those need opposite
+    responses: filter the sample, or go and stand somewhere else.
+
+    So this reports both. If the middle 90% is tight while peak-to-peak
+    is dreadful, a handful of readings are wild and the sweep itself is
+    fine. That is a live possibility on this build — the magnetometer
+    sits on a bit-banged I2C bus, where a corrupted frame is a transport
+    failure rather than a magnetic one.
+
+    Outliers are counted against the median absolute deviation rather
+    than the standard deviation, because the outliers would otherwise
+    inflate the very measure used to detect them.
+    """
+    ordered = sorted(magnitudes)
+    count = len(ordered)
+    median = statistics.median(ordered)
+    low = ordered[int(0.05 * count)]
+    high = ordered[min(count - 1, int(0.95 * count))]
+    deviation = statistics.median([abs(m - median) for m in ordered])
+
+    wild = [m for m in ordered
+            if deviation > 0 and abs(m - median) > _OUTLIER_MADS * deviation]
+    return {
+        "median": median,
+        "peak_to_peak_pct": (ordered[-1] - ordered[0]) / median * 100 if median else 0.0,
+        "middle_pct": (high - low) / median * 100 if median else 0.0,
+        "wild": len(wild),
+        "count": count,
+        "lowest": ordered[0],
+        "highest": ordered[-1],
+    }
+
+
 def print_result(samples, diagnosis=()) -> bool:
     """Grade a sweep, print the verdict, and print the values if it passed.
 
@@ -469,14 +673,26 @@ def print_result(samples, diagnosis=()) -> bool:
               f"for address 0x{MAG_ADDRESS:02X}.")
         return False
 
+    kept, dropped = reject_outliers(samples)
+    if dropped:
+        print(f"{dropped} of {len(samples)} samples discarded as impossible "
+              "— they could not")
+        print("lie on the same sphere as the rest. On this build that points at")
+        print("the bit-banged I2C bus mangling frames, not at anything magnetic;")
+        print("a handful is normal, a large fraction means check the wiring.")
+        print()
+
     span_avg = sum(spans) / 3
-    print(f"{len(samples)} samples.")
+    print(f"{len(kept)} samples.")
     print()
     print(f"Axis half-spans: x={spans[0]:.1f}  y={spans[1]:.1f}  "
           f"z={spans[2]:.1f} \u03bcT (mean {span_avg:.1f})")
     print()
 
-    mean_ut, spread_pct, verdict, advice = grade_sweep(samples, offsets, scales)
+    # Graded on the kept samples: a discarded frame's corrected
+    # magnitude is meaningless and would dominate a peak-to-peak
+    # measure purely by being wrong.
+    mean_ut, spread_pct, verdict, advice = grade_sweep(kept, offsets, scales)
 
     # Printed before the values, not after. The whole point is to be read
     # by somebody about to copy six numbers into config.py.
@@ -508,6 +724,23 @@ def print_result(samples, diagnosis=()) -> bool:
     _beep(_TONE_BAD if verdict.startswith("BAD") else _TONE_GOOD)
 
     if verdict.startswith("BAD"):
+        profile = spread_profile(corrected_magnitudes(kept, offsets, scales))
+        print(f"  Spread, two ways:")
+        print(f"    peak to peak   {profile['peak_to_peak_pct']:6.1f}%   "
+              f"({profile['lowest']:.1f} to {profile['highest']:.1f} \u03bcT) "
+              "- what the verdict uses")
+        print(f"    middle 90%     {profile['middle_pct']:6.1f}%   "
+              "- the same sweep with the extremes ignored")
+        print(f"    far-out samples {profile['wild']:5d} of {profile['count']}")
+        print()
+        if profile["middle_pct"] <= _GOOD_SPREAD_PCT < profile["peak_to_peak_pct"]:
+            print("  The bulk of the sweep is tight and only a few readings are")
+            print("  wild, which is not what a distorted field looks like \u2014")
+            print("  distortion moves whole stretches of a sweep, not isolated")
+            print("  samples. Re-running outdoors will probably not help; the")
+            print("  remaining strays are on the wire, not in the room.")
+            print()
+
         for line in diagnosis:
             print(line)
         print()

@@ -219,5 +219,120 @@ def test_both_modes_derive_the_same_calibration(store):
     for index, face in enumerate(FACES):
         store.record(face, samples[index::len(FACES)])
 
-    assert calibration_from_samples(store.samples()) == \
-           calibration_from_samples(sorted(samples, key=lambda s: s[0]))
+    from_faces = calibration_from_samples(store.samples())
+    from_one_run = calibration_from_samples(sorted(samples, key=lambda s: s[0]))
+
+    # `approx`, not `==`: the least-squares fit sums over the samples, so
+    # a different ordering moves the result in the last few bits. What
+    # must hold is that the two modes agree to far better than anybody
+    # could measure, not that they are bit-identical.
+    for mine, theirs in zip(from_faces, from_one_run):
+        assert mine == pytest.approx(theirs, rel=1e-6)
+
+
+# --- robustness of the derivation -------------------------------------------
+#
+# The first real sweep graded BAD at 134.8% spread, and the cause was not
+# the environment: min/max takes each axis' offset from exactly two
+# samples out of 1150, so anything that disturbs an extreme decides the
+# answer. A least-squares fit uses every sample — but weights by the
+# square of the residual, so one 900 uT frame outvotes a thousand good
+# ones. Both collapse under a single bad reading, which is why rejection
+# has to happen before either.
+
+def _circles(centre=(12.0, -5.0, 3.0), scales=(1.0, 1.25, 0.85), radius=42.0,
+             per=120, faces=6):
+    """Six circles, as six single-axis rotations actually produce.
+
+    Not a filled sphere: rotating a vest about one axis traces a circle,
+    so this is the coverage the real procedure gives, extremes and all.
+    """
+    points = []
+    for face in range(faces):
+        tilt = math.pi * face / faces
+        for i in range(per):
+            angle = 2 * math.pi * i / per
+            unit = (math.cos(angle),
+                    math.sin(angle) * math.cos(tilt),
+                    math.sin(angle) * math.sin(tilt))
+            points.append(tuple(centre[axis] + radius * unit[axis] / scales[axis]
+                                for axis in (0, 1, 2)))
+    return points
+
+
+def test_the_fit_recovers_the_offset_from_single_axis_circles():
+    """The coverage the real procedure gives, not an idealised sphere."""
+    offsets, _scales, _spans = calibration_from_samples(_circles())
+
+    assert offsets == pytest.approx((12.0, -5.0, 3.0), abs=0.5)
+
+
+def test_one_corrupted_frame_does_not_decide_the_answer():
+    """The regression. Two bad frames moved the min/max offset from 12.0
+    to 25.0 and the unguarded fit to -537.7."""
+    points = _circles()
+    points[300] = (900.0, -12.0, 5.0)
+    points[500] = (-850.0, 4.0, 2.0)
+
+    offsets, _scales, _spans = calibration_from_samples(points)
+
+    assert offsets == pytest.approx((12.0, -5.0, 3.0), abs=0.5)
+
+
+def test_many_corrupted_frames_are_still_survivable():
+    """A bit-banged bus does not mangle exactly one frame."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        reject_outliers,
+    )
+
+    points = _circles()
+    for index in range(0, len(points), 60):
+        points[index] = (600.0 + index, -12.0, 5.0)
+
+    _kept, dropped = reject_outliers(points)
+    offsets, _scales, _spans = calibration_from_samples(points)
+
+    assert dropped == len(range(0, len(points), 60))
+    assert offsets == pytest.approx((12.0, -5.0, 3.0), abs=0.5)
+
+
+def test_a_clean_sweep_loses_no_samples():
+    """Discarding real coverage to tidy the numbers is worse than keeping
+    a stray, so the rejection must be inert on good data."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        reject_outliers,
+    )
+
+    _kept, dropped = reject_outliers(_circles())
+
+    assert dropped == 0
+
+
+def test_the_fit_recovers_soft_iron_scales():
+    points = _circles(scales=(1.0, 1.25, 0.85))
+
+    _offsets, scales, _spans = calibration_from_samples(points)
+
+    # Ratios, not absolutes: the convention normalises to the mean axis.
+    assert scales[1] / scales[0] == pytest.approx(1.25, rel=0.05)
+    assert scales[2] / scales[0] == pytest.approx(0.85, rel=0.05)
+
+
+def test_a_flat_sweep_falls_back_rather_than_inventing_an_ellipsoid():
+    """One plane of rotation does not enclose a volume. Better to decline
+    than to return six confident numbers from a degenerate system."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        fit_ellipsoid,
+    )
+
+    flat = [(x, y, 3.0) for x, y, _z in _circles(faces=1)]
+
+    assert fit_ellipsoid(flat) is None
+
+
+def test_too_few_samples_to_fit_falls_back():
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        fit_ellipsoid,
+    )
+
+    assert fit_ellipsoid(_sphere(count=10)) is None
