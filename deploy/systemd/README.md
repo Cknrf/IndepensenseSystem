@@ -77,6 +77,29 @@ An empty grep and an audible greeting mean it is working. If the greeting
 is silent, this is the first thing to check — before suspecting the audio
 device, the Piper voices, or the code.
 
+### Audio needs a second extra step: stop PipeWire suspending the output
+
+```bash
+mkdir -p ~/.config/wireplumber/wireplumber.conf.d
+cp ../pipewire/51-no-suspend.conf ~/.config/wireplumber/wireplumber.conf.d/
+systemctl --user restart wireplumber
+```
+
+WirePlumber suspends the audio node after a few seconds idle, and the
+resume swallows roughly the first **0.7-0.9 seconds** of whatever plays
+next. Speech mostly survives that — it runs for seconds, so it loses its
+opening and context covers the gap. The short non-speech cues do not
+survive it at all: the PTT press chime, the stop cue, the busy cue and
+the waiting blip are each shorter than the window, so they vanish
+completely.
+
+That is a silent failure of the entire acknowledgement vocabulary for a
+user who cannot see the device, and no amount of buffering in the
+application fixes it — see the measurements in the config file itself.
+
+Verify: `python -m indepensense.voice.tests.manual.cue_test` and listen.
+Every cue must be audible, including the ones after a long pause.
+
 ### Powering off by voice
 
 The `system.shutdown` intent runs `sudo systemctl poweroff`, and the

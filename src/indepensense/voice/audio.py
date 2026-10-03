@@ -44,20 +44,6 @@ DEFAULT_SAMPLERATE_HZ = 16000   # Whisper expects 16 kHz mono; Piper output is r
 # no benefit the user could hear.
 _BLOCK_FRAMES = 512
 
-# Silence written ahead of every sound, to be eaten by the underrun that
-# happens while the stream is starting. See `_write_blocks`.
-#
-# 0.2 s because the symptom it fixes was severe — on the Pi, every cue
-# after the first arrived as a tick rather than a tone, so hundreds of
-# milliseconds were going missing, not tens. It is latency added to every
-# sound the device makes, which is the cost; an acknowledgement nobody
-# hears is worse than one that arrives a fifth of a second late.
-#
-# Reduce it only with a device in front of you and the cue test running:
-# the right value is hardware-dependent, and too small fails silently in
-# exactly the way this was found.
-_PRIME_S = 0.2
-
 # Serialises playback. Two concurrent output streams on one device do not
 # crash — they talk over each other, which for this wearable is the same
 # failure the announcer exists to prevent. Held for the length of an
@@ -296,32 +282,18 @@ def _write_blocks(audio, samplerate: int) -> None:
     `stop()`s on the way out: `stop()` drains the buffer, which would keep
     talking for a few dozen milliseconds after the user asked for silence.
 
-    Opens with `_PRIME_S` of silence. `with stream:` *starts* the stream,
-    at which point PortAudio begins pulling frames — but nothing has been
-    written yet, so it pulls an empty buffer and the opening of the sound
-    is lost to the underrun. On the device this was plainly audible: the
-    first cue after a pause played in full, every one after it arrived as
-    a faint tick, which is the tail of a sound whose head never made it
-    out. A cold device masked it, because the hardware start-up delay was
-    long enough for the first write to land first.
-
-    Silence rather than a larger buffer or `latency="high"` because it is
-    the one fix that costs nothing but time: no change to the ownership
-    rule the module docstring rests on, no change to the `_BLOCK_FRAMES`
-    granularity that sets stop latency, and it is equally correct whether
-    the underrun lasts one block or ten.
+    Writes the caller's audio and nothing else. A previous version opened
+    with 0.2 s of silence, on the theory that the stream's first blocks
+    were lost to a start-up underrun. They are not: `audio_probe` showed
+    the stream negotiating the right rate and consuming 1.0 s of audio in
+    0.96 s on every attempt, first or fiftieth. What actually swallowed
+    short sounds was PipeWire resuming a suspended device — fixed in
+    `deploy/pipewire/`, not here. The padding only moved the sound later
+    into a window that was already being discarded, which made it worse.
     """
-    import numpy as np
     import sounddevice as sd
 
     channels = audio.shape[1]
-    # Written as its own blocks rather than concatenated onto `audio`:
-    # the caller's array is left untouched, which keeps this working for
-    # anything array-like that `soundfile` hands back and avoids copying
-    # a whole utterance to prepend a fifth of a second to it.
-    silence = np.zeros((_BLOCK_FRAMES, channels), dtype="float32")
-    prime_blocks = int(_PRIME_S * samplerate / _BLOCK_FRAMES)
-
     stream = sd.OutputStream(
         samplerate=samplerate,
         channels=channels,
@@ -332,11 +304,6 @@ def _write_blocks(audio, samplerate: int) -> None:
     # path including an exception. That single close is the invariant the
     # old `sd.play` global broke.
     with stream:
-        for _ in range(prime_blocks):
-            if _stop_requested.is_set():
-                stream.abort()
-                return
-            stream.write(silence)
         for start in range(0, len(audio), _BLOCK_FRAMES):
             if _stop_requested.is_set():
                 stream.abort()

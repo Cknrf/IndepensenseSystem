@@ -273,7 +273,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | STT — microphone → text | `python -m indepensense.voice.tests.manual.stt_test` |
 | TTS — text → speaker | `python -m indepensense.voice.tests.manual.tts_test` — uses the engine for `DEFAULT_LANGUAGE`: Piper for `en`, MMS for `tl` |
 | Full echo — mic → text → speech | `python -m indepensense.voice.tests.manual.echo_test` |
-| Button cues — are the five non-speech sounds distinguishable by ear? | `python -m indepensense.voice.tests.manual.cue_test` — plays the rising/falling chimes, the stop cue, the busy cue and the waiting blip, then the two easiest to confuse back to back and five seconds of blipping. Run through the real headset at normal volume; a cue that is clear on a laptop speaker can vanish under traffic noise |
+| Button cues — are the five non-speech sounds distinguishable by ear? | `python -m indepensense.voice.tests.manual.cue_test` — plays the rising/falling chimes, the stop cue, the busy cue and the waiting blip, then the two easiest to confuse back to back and five seconds of blipping. Run through the real headset at normal volume; a cue that is clear on a laptop speaker can vanish under traffic noise. **Needs `deploy/pipewire/51-no-suspend.conf` installed**, or every cue after a pause is silent |
 
 ### Power
 
@@ -393,6 +393,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 
 | Symptom | Likely cause / fix |
 |---|---|
+| Short beeps and cues are inaudible, but speech is fine | PipeWire suspends the audio node when idle and the resume swallows ~0.7-0.9 s. Speech is long enough to survive losing its opening; a 200 ms cue is not. Install `deploy/pipewire/51-no-suspend.conf` — see `deploy/systemd/README.md`. Symptom to recognise: the *first* sound after a pause plays, every one after it does not |
 | `i2cdetect` doesn't show a device | SDA/SCL swapped, wrong bus (IMU and UPS HAT are on bus 1, the compass on bus 4), missing `i2c-gpio` overlay, or the device isn't powered |
 | `/dev/i2c-4` missing entirely | The `i2c4` overlay is Pi 4 only and fails silently on a Pi 5 — use the `i2c-gpio` line from [`docs/hardware.md`](docs/hardware.md) |
 | `[Errno 121] Remote I/O error`, or a device that enumerates but fails on first write | Marginal I²C bus — too many breakout pull-ups in parallel. A phantom address in `i2cdetect` confirms it. See the compass section of [`docs/hardware.md`](docs/hardware.md) |
