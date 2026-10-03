@@ -367,15 +367,78 @@ def test_the_guard_does_not_block_playback(fake_sd, fake_sf, wav, reinit_calls):
 def test_a_failing_reinit_does_not_break_playback(fake_sd, fake_sf, wav, monkeypatch):
     """`_terminate`/`_initialize` are sounddevice private API. If a future
     version removes them the cues clip again — the device must not go
-    silent altogether."""
+    silent altogether, so the real function swallows the failure."""
     def _explode():
         raise AttributeError("module 'sounddevice' has no attribute '_terminate'")
 
-    monkeypatch.setattr(audio, "_reinitialise_portaudio", _explode)
+    monkeypatch.setattr(fake_sd, "_terminate", _explode, raising=False)
     audio._portaudio_streams = 0
 
-    with pytest.raises(AttributeError):
-        audio.play(wav)
+    audio.play(wav)
 
-    # The count must still unwind, or every later sound loses the re-init.
+    assert fake_sd.streams and fake_sd.streams[0].blocks, "playback was lost"
     assert audio._portaudio_streams == 0
+
+
+# --- ordering: the re-init must come BEFORE the stream exists ----------------
+#
+# The eight tests above all passed against a version that re-initialised
+# PortAudio *after* constructing the stream, because a fake stream does
+# not care that the library was torn down underneath it. The device did:
+#
+#     PortAudioError: Error starting stream: Invalid stream pointer [-9988]
+#
+# `Pa_Terminate` invalidates every existing stream pointer, so a stream
+# built first and claimed second is dead before `with stream:` starts it.
+# Worse, it failed on the FIRST cue — the one case the count lets the
+# re-init run — so the fix turned a silent cue into a crash.
+#
+# Asserting a call count cannot catch that. Only the sequence can.
+
+@pytest.fixture
+def call_order(fake_sd, monkeypatch):
+    """Records re-initialisations and stream constructions in order."""
+    events = []
+    monkeypatch.setattr(audio, "_reinitialise_portaudio",
+                        lambda: events.append("reinit"))
+
+    original = fake_sd.OutputStream
+
+    def _recording_stream(**kwargs):
+        events.append("stream")
+        return original(**kwargs)
+
+    monkeypatch.setattr(fake_sd, "OutputStream", _recording_stream)
+    monkeypatch.setattr(fake_sd, "InputStream", _recording_stream)
+    audio._portaudio_streams = 0
+    yield events
+    audio._portaudio_streams = 0
+
+
+def test_playback_reinitialises_before_opening_the_stream(fake_sd, fake_sf, wav,
+                                                          call_order):
+    audio.play(wav)
+
+    assert call_order == ["reinit", "stream"], (
+        "the stream was built before the re-init, so its pointer is stale"
+    )
+
+
+def test_recording_reinitialises_before_opening_the_stream(fake_sd, fake_sf,
+                                                           tmp_path, call_order):
+    from indepensense.feedback.mock import MockButton
+
+    audio.record_until_button(MockButton(), tmp_path / "in.wav",
+                              max_duration_s=0.05)
+
+    assert call_order == ["reinit", "stream"]
+
+
+def test_a_guarded_sound_still_opens_its_stream(fake_sd, fake_sf, wav, call_order):
+    """With the re-init skipped there is nothing to order — but the stream
+    must still be built, or the guard would silence the device."""
+    audio._portaudio_streams = 1
+
+    audio.play(wav)
+
+    assert call_order == ["stream"]

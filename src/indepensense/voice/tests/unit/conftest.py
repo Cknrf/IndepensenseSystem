@@ -115,6 +115,25 @@ class _FakeSoundDevice(types.ModuleType):
         self.after_write = None
         self.raise_on_write = False
         self.global_calls: list[str] = []
+        self.reinits = 0
+        self.unsafe_reinits: list[int] = []
+
+    # Present because `audio.py` calls them before every stream, and a
+    # fake without them sends the real `_reinitialise_portaudio` down its
+    # except branch — which still works, but prints a warning per sound
+    # and would bury a genuine regression in the noise.
+    #
+    # A re-init with a stream live is the double free. It is *recorded*
+    # rather than raised because `_reinitialise_portaudio` swallows every
+    # exception by design, so an assertion thrown here would be caught
+    # and the test would pass anyway.
+    def _terminate(self) -> None:
+        if self.live:
+            self.unsafe_reinits.append(self.live)
+        self.reinits += 1
+
+    def _initialize(self) -> None:
+        pass
 
     def OutputStream(self, **kwargs) -> _FakeStream:     # noqa: N802 — mirrors sounddevice
         stream = _FakeStream(self, kwargs)
@@ -163,9 +182,15 @@ def fake_sd(monkeypatch, fake_sf) -> _FakeSoundDevice:
     # silently change the meaning of every test after it.
     audio._playing.clear()
     audio._stop_requested.clear()
+    audio._portaudio_streams = 0
     yield sd
     audio._playing.clear()
     audio._stop_requested.clear()
+    audio._portaudio_streams = 0
+    assert not sd.unsafe_reinits, (
+        f"PortAudio was re-initialised with {sd.unsafe_reinits} stream(s) "
+        "live — that is the double free, not a clipped cue"
+    )
 
 
 @pytest.fixture

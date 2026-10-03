@@ -173,16 +173,17 @@ def record(
     remaining = int(duration_s * samplerate)
     blocks: list = []
 
-    stream = sd.InputStream(
-        samplerate=samplerate,
-        channels=channels,
-        dtype="int16",
-        blocksize=_BLOCK_FRAMES,
-    )
     # Counted so a cue played on another thread cannot re-initialise
-    # PortAudio out from under a live recording.
+    # PortAudio out from under a live recording — and claimed before the
+    # stream exists, since a re-init invalidates existing pointers.
     _claim_portaudio()
     try:
+        stream = sd.InputStream(
+            samplerate=samplerate,
+            channels=channels,
+            dtype="int16",
+            blocksize=_BLOCK_FRAMES,
+        )
         with stream:
             while remaining > 0:
                 data, _overflowed = stream.read(min(_BLOCK_FRAMES, remaining))
@@ -221,14 +222,14 @@ def record_until_enter(
     def _callback(indata, _frame_count, _time_info, _status):
         frames.append(indata.copy())
 
-    stream = sd.InputStream(
-        samplerate=samplerate,
-        channels=channels,
-        dtype="int16",
-        callback=_callback,
-    )
     _claim_portaudio()
     try:
+        stream = sd.InputStream(
+            samplerate=samplerate,
+            channels=channels,
+            dtype="int16",
+            callback=_callback,
+        )
         with stream:
             # input() blocks until Enter; the callback keeps filling `frames`.
             input("  (recording — press Enter to stop) ")
@@ -296,14 +297,14 @@ def record_until_button(
 
     button.on("pressed", _on_press)
 
-    stream = sd.InputStream(
-        samplerate=samplerate,
-        channels=channels,
-        dtype="int16",
-        callback=_audio_callback,
-    )
     _claim_portaudio()
     try:
+        stream = sd.InputStream(
+            samplerate=samplerate,
+            channels=channels,
+            dtype="int16",
+            callback=_audio_callback,
+        )
         with stream:
             # Poll both stop_event (button press) and cancel_event (external
             # abort like the emergency button) on a short interval. 50 ms is
@@ -379,17 +380,20 @@ def _write_blocks(audio, samplerate: int) -> None:
     import sounddevice as sd
 
     channels = audio.shape[1]
-    stream = sd.OutputStream(
-        samplerate=samplerate,
-        channels=channels,
-        dtype="float32",
-        blocksize=_BLOCK_FRAMES,
-    )
-    # `with` starts the stream and closes it exactly once, on every exit
-    # path including an exception. That single close is the invariant the
-    # old `sd.play` global broke.
+    # Claimed BEFORE the stream is constructed. `Pa_Terminate` invalidates
+    # every existing stream pointer, so a stream built first and claimed
+    # second fails to start with `Invalid stream pointer`.
     _claim_portaudio()
     try:
+        stream = sd.OutputStream(
+            samplerate=samplerate,
+            channels=channels,
+            dtype="float32",
+            blocksize=_BLOCK_FRAMES,
+        )
+        # `with` starts the stream and closes it exactly once, on every
+        # exit path including an exception. That single close is the
+        # invariant the old `sd.play` global broke.
         with stream:
             for start in range(0, len(audio), _BLOCK_FRAMES):
                 if _stop_requested.is_set():
