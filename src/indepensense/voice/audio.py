@@ -32,6 +32,7 @@ serialised by `_playback_lock`, and stopping is a flag the *playing* thread
 reads, not a call another thread makes into PortAudio. No thread can close a
 stream it did not open, by construction rather than by discipline.
 """
+import sys
 import threading
 from pathlib import Path
 
@@ -65,6 +66,76 @@ _stop_requested = threading.Event()
 # acknowledgement tone, and counting it as "speaking" would make a
 # stop-talking press land on nothing during the gap after a PTT press.
 _playing = threading.Event()
+
+
+# --- PortAudio has to be re-initialised between streams ----------------------
+#
+# Only the FIRST stream of a process plays a short sound. Every stream
+# after it silently discards roughly its first 0.8 s, so a 0.2 s cue
+# vanishes entirely while a 1 s tone is merely clipped — which is why
+# speech always worked and the acknowledgement cues never did.
+#
+# Measured on the device, all within one process:
+#
+#     short #1   audible        long tone   audible
+#     short #2   SILENT         short #3    SILENT
+#
+# and the same cue played by a fresh `python -c` each time — five
+# processes — was audible five times out of five. `aplay` likewise. The
+# device was never at fault, and neither was PipeWire: `blocksize`,
+# `latency`, an explicit `stop()` before close, and `sd.play()` itself
+# all failed identically.
+#
+# `Pa_Terminate()` + `Pa_Initialize()` restores whatever state the first
+# stream of a process enjoys, and short sounds play every time.
+#
+# Guarded by a stream count, and that guard is the important part.
+# Terminating PortAudio while any stream is live — including the
+# microphone's `InputStream` during a recording — is the same C-level
+# double free that `sd.play` caused, and the overlap is real: pressing
+# repeat mid-recording plays the stop cue while `record_until_button`
+# still holds its input stream. So the count covers input and output
+# alike, and when anything is open the re-init is skipped: a clipped cue
+# is a poor outcome, a segfault is not one at all.
+_portaudio_lock = threading.Lock()
+_portaudio_streams = 0
+
+
+def _reinitialise_portaudio() -> None:
+    """Restore the first-stream-of-a-process condition. Never raises.
+
+    Caller must hold `_portaudio_lock` and must have verified that no
+    stream is open. Uses `sounddevice`'s private `_terminate`/`_initialize`
+    because PortAudio exposes no public way to do this and nothing else
+    makes a second short sound audible.
+    """
+    import sounddevice as sd
+
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception as exc:
+        # The library is in whatever state it was; every sound still
+        # opens its own stream and the worst case is the clipping this
+        # exists to remove.
+        print(f"[audio] could not re-initialise PortAudio: {exc}",
+              file=sys.stderr, flush=True)
+
+
+def _claim_portaudio() -> None:
+    """Register a stream about to open, re-initialising if it is the only one."""
+    global _portaudio_streams
+    with _portaudio_lock:
+        if _portaudio_streams == 0:
+            _reinitialise_portaudio()
+        _portaudio_streams += 1
+
+
+def _release_portaudio() -> None:
+    """Register a stream that has closed."""
+    global _portaudio_streams
+    with _portaudio_lock:
+        _portaudio_streams = max(0, _portaudio_streams - 1)
 
 
 def is_playing() -> bool:
@@ -108,11 +179,17 @@ def record(
         dtype="int16",
         blocksize=_BLOCK_FRAMES,
     )
-    with stream:
-        while remaining > 0:
-            data, _overflowed = stream.read(min(_BLOCK_FRAMES, remaining))
-            blocks.append(data.copy())
-            remaining -= len(data)
+    # Counted so a cue played on another thread cannot re-initialise
+    # PortAudio out from under a live recording.
+    _claim_portaudio()
+    try:
+        with stream:
+            while remaining > 0:
+                data, _overflowed = stream.read(min(_BLOCK_FRAMES, remaining))
+                blocks.append(data.copy())
+                remaining -= len(data)
+    finally:
+        _release_portaudio()
 
     audio = np.concatenate(blocks, axis=0)
     sf.write(str(output_path), audio, samplerate, subtype="PCM_16")
@@ -150,9 +227,13 @@ def record_until_enter(
         dtype="int16",
         callback=_callback,
     )
-    with stream:
-        # input() blocks until Enter; the callback keeps filling `frames`.
-        input("  (recording — press Enter to stop) ")
+    _claim_portaudio()
+    try:
+        with stream:
+            # input() blocks until Enter; the callback keeps filling `frames`.
+            input("  (recording — press Enter to stop) ")
+    finally:
+        _release_portaudio()
 
     if not frames:
         # Write ~0.1 s of silence so downstream code has a valid WAV to open.
@@ -221,17 +302,21 @@ def record_until_button(
         dtype="int16",
         callback=_audio_callback,
     )
-    with stream:
-        # Poll both stop_event (button press) and cancel_event (external
-        # abort like the emergency button) on a short interval. 50 ms is
-        # imperceptible latency for the user but fine-grained enough that
-        # an emergency preemption feels instant.
-        deadline = time.monotonic() + max_duration_s
-        while time.monotonic() < deadline:
-            if stop_event.wait(timeout=0.05):
-                break
-            if cancel_event is not None and cancel_event.is_set():
-                break
+    _claim_portaudio()
+    try:
+        with stream:
+            # Poll both stop_event (button press) and cancel_event (external
+            # abort like the emergency button) on a short interval. 50 ms is
+            # imperceptible latency for the user but fine-grained enough that
+            # an emergency preemption feels instant.
+            deadline = time.monotonic() + max_duration_s
+            while time.monotonic() < deadline:
+                if stop_event.wait(timeout=0.05):
+                    break
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+    finally:
+        _release_portaudio()
 
     if not frames:
         sf.write(
@@ -303,12 +388,16 @@ def _write_blocks(audio, samplerate: int) -> None:
     # `with` starts the stream and closes it exactly once, on every exit
     # path including an exception. That single close is the invariant the
     # old `sd.play` global broke.
-    with stream:
-        for start in range(0, len(audio), _BLOCK_FRAMES):
-            if _stop_requested.is_set():
-                stream.abort()
-                return
-            stream.write(audio[start:start + _BLOCK_FRAMES])
+    _claim_portaudio()
+    try:
+        with stream:
+            for start in range(0, len(audio), _BLOCK_FRAMES):
+                if _stop_requested.is_set():
+                    stream.abort()
+                    return
+                stream.write(audio[start:start + _BLOCK_FRAMES])
+    finally:
+        _release_portaudio()
 
 
 def play(audio_path: Path) -> None:

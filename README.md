@@ -393,7 +393,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Short beeps and cues are inaudible, but speech is fine | A USB headset's own amplifier mutes when the wire goes quiet and takes ~0.7-1.0 s to wake, which is longer than any cue. Handled by the keepalive in `voice/audio.py`, which holds the device open — nothing to configure. Symptom to recognise: the *first* sound after a pause plays and every one after it does not, and a different headset behaves perfectly |
+| Short beeps and cues are inaudible, but speech is fine | Only the first PortAudio stream of a process plays a short sound; later ones discard ~0.8 s, which erases a 0.2 s cue and merely clips a sentence. `voice/audio.py` re-initialises PortAudio before each stream when no other is open. Symptom to recognise: the *first* sound of a run plays and none after it do, while `aplay` — a fresh process each time — plays every one |
 | `i2cdetect` doesn't show a device | SDA/SCL swapped, wrong bus (IMU and UPS HAT are on bus 1, the compass on bus 4), missing `i2c-gpio` overlay, or the device isn't powered |
 | `/dev/i2c-4` missing entirely | The `i2c4` overlay is Pi 4 only and fails silently on a Pi 5 — use the `i2c-gpio` line from [`docs/hardware.md`](docs/hardware.md) |
 | `[Errno 121] Remote I/O error`, or a device that enumerates but fails on first write | Marginal I²C bus — too many breakout pull-ups in parallel. A phantom address in `i2cdetect` confirms it. See the compass section of [`docs/hardware.md`](docs/hardware.md) |

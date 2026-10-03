@@ -273,3 +273,109 @@ def test_a_cue_with_no_steps_plays_nothing(fake_sd):
     audio.play_cue([])
 
     assert fake_sd.streams == []
+
+
+# --- PortAudio re-initialisation ---------------------------------------------
+#
+# Only the FIRST stream of a process plays a short sound; every stream
+# after it discards roughly its first 0.8 s, so a 0.2 s cue vanishes while
+# a 1 s tone is merely clipped. Measured on the device: short #1 audible,
+# short #2 silent, long tone audible, short #3 silent — and the same cue
+# played by five separate processes was audible five times.
+#
+# `Pa_Terminate` + `Pa_Initialize` restores the first-stream condition.
+# The guard around it is the dangerous part: terminating PortAudio while
+# any stream is live is the same C-level double free that `sd.play`
+# caused.
+
+@pytest.fixture
+def reinit_calls(fake_sd, monkeypatch):
+    """Records each PortAudio re-initialisation."""
+    calls = []
+    monkeypatch.setattr(audio, "_reinitialise_portaudio", lambda: calls.append(1))
+    audio._portaudio_streams = 0
+    yield calls
+    audio._portaudio_streams = 0
+
+
+def test_playback_reinitialises_portaudio(fake_sd, fake_sf, wav, reinit_calls):
+    audio.play(wav)
+
+    assert reinit_calls == [1]
+
+
+def test_every_sound_reinitialises(fake_sd, fake_sf, wav, reinit_calls):
+    """Not just the first — the second sound is the one that was silent."""
+    audio.play(wav)
+    audio.play(wav)
+    audio.play(wav)
+
+    assert len(reinit_calls) == 3
+
+
+def test_recording_reinitialises_too(fake_sd, fake_sf, tmp_path, reinit_calls):
+    """Input counts as well as output — the count exists to stop a cue
+    tearing PortAudio down under a live microphone, so both sides have to
+    register."""
+    from indepensense.feedback.mock import MockButton
+
+    audio.record_until_button(MockButton(), tmp_path / "in.wav",
+                              max_duration_s=0.05)
+
+    assert reinit_calls == [1]
+    assert audio._portaudio_streams == 0
+
+
+def test_the_count_returns_to_zero(fake_sd, fake_sf, wav, reinit_calls):
+    """A leaked count would disable the re-init for the rest of the run,
+    and the symptom would be cues going quiet again."""
+    audio.play(wav)
+
+    assert audio._portaudio_streams == 0
+
+
+def test_the_count_returns_to_zero_when_a_stream_raises(fake_sd, fake_sf, wav,
+                                                        reinit_calls):
+    fake_sd.raise_on_write = True
+
+    with pytest.raises(Exception):
+        audio.play(wav)
+
+    assert audio._portaudio_streams == 0
+
+
+def test_no_reinit_while_another_stream_is_open(fake_sd, fake_sf, wav, reinit_calls):
+    """The guard that matters. Terminating PortAudio under a live
+    recording is a segfault, not a clipped cue — so a sound played while
+    the microphone is open skips the re-init rather than risking it."""
+    audio._portaudio_streams = 1          # as if a recording were running
+
+    audio.play(wav)
+
+    assert reinit_calls == [], "re-initialised with a stream still open"
+
+
+def test_the_guard_does_not_block_playback(fake_sd, fake_sf, wav, reinit_calls):
+    """Skipping the re-init costs the fix, not the sound."""
+    audio._portaudio_streams = 1
+
+    audio.play(wav)
+
+    assert fake_sd.streams and fake_sd.streams[0].blocks
+
+
+def test_a_failing_reinit_does_not_break_playback(fake_sd, fake_sf, wav, monkeypatch):
+    """`_terminate`/`_initialize` are sounddevice private API. If a future
+    version removes them the cues clip again — the device must not go
+    silent altogether."""
+    def _explode():
+        raise AttributeError("module 'sounddevice' has no attribute '_terminate'")
+
+    monkeypatch.setattr(audio, "_reinitialise_portaudio", _explode)
+    audio._portaudio_streams = 0
+
+    with pytest.raises(AttributeError):
+        audio.play(wav)
+
+    # The count must still unwind, or every later sound loses the re-init.
+    assert audio._portaudio_streams == 0
