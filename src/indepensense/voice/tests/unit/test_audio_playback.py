@@ -548,3 +548,81 @@ def test_the_count_stays_balanced_across_many_sounds(fake_sd, fake_sf, wav):
         audio.play(wav)
 
     assert fake_sd._initialized == 1
+
+
+# --- cue proportions ---------------------------------------------------------
+#
+# The waiting blip was reported as "no sound at all" and was not a code
+# fault: at 45 ms and 0.12 amplitude it was specified below audibility.
+# Loudness is not amplitude alone — the ear integrates energy over roughly
+# 200 ms, so a tone shorter than that is heard quieter in proportion to
+# its length as well. Energy goes as amplitude squared times duration,
+# which is 20·log10(A) + 10·log10(T) in decibels.
+#
+# These tests pin the *proportions* rather than the raw numbers, so the
+# cues stay tellable apart and audible if anyone retunes them. They are
+# the only automatic guard there is: whether a cue can actually be heard
+# is a question for `cue_test` and a pair of ears.
+
+def _cue_seconds(steps, gap_s: float = 0.03) -> float:
+    return sum(d for _, d in steps) + gap_s * (len(steps) - 1)
+
+
+def _level_db(steps, amplitude: float) -> float:
+    """Rough perceived level, relative to a 1.0-amplitude 1-second tone."""
+    import math
+
+    # Capped at the ear's integration window: past ~200 ms a longer tone
+    # is not heard as louder, only as longer.
+    seconds = min(_cue_seconds(steps), 0.2)
+    return 20.0 * math.log10(amplitude) + 10.0 * math.log10(seconds)
+
+
+def test_the_waiting_blip_is_quieter_than_the_cues_but_still_audible():
+    """It recurs every 1.2 s while the device thinks, so it must read as
+    background — but the version that was 14 dB down was simply gone."""
+    stop = _level_db(audio._STOP_CUE, 0.3)
+    blip = _level_db(audio._WAITING_TICK, audio._WAITING_AMPLITUDE)
+
+    assert blip < stop - 2.0, "a background blip must not rival an answer cue"
+    assert blip > stop - 9.0, (
+        f"the blip is {stop - blip:.1f} dB below the stop cue; past about "
+        "9 it stops being heard at all"
+    )
+
+
+def test_no_cue_is_shorter_than_the_ear_can_register():
+    """Below ~60 ms a tone is heard as a click of indeterminate pitch, and
+    these cues are told apart by pitch."""
+    for name, steps in (("stop", audio._STOP_CUE),
+                        ("busy", audio._BUSY_CUE),
+                        ("waiting", audio._WAITING_TICK)):
+        for _frequency, seconds in steps:
+            assert seconds >= 0.06, f"{name}: a {seconds * 1000:.0f} ms tone is a click"
+
+
+def test_the_falling_chime_is_longer_than_the_rising_one(fake_sd, fake_sf):
+    """The rising chime is a "go" and delays the user speaking; the falling
+    one is a "got it" with nothing waiting on it, and at 120 ms it was
+    heard as truncated."""
+    pytest.importorskip("numpy")
+
+    audio.play_chime(rising=True)
+    rising = sum(fake_sd.streams[-1].blocks)
+
+    audio.play_chime(rising=False)
+    falling = sum(fake_sd.streams[-1].blocks)
+
+    assert falling > rising * 1.5, (
+        f"falling {falling} frames vs rising {rising} — not distinguishable"
+    )
+
+
+def test_an_explicit_chime_duration_still_wins(fake_sd, fake_sf):
+    """The per-direction defaults must not take the override away — the
+    manual cue test and the latency bench both set it."""
+    pytest.importorskip("numpy")
+
+    audio.play_chime(rising=False, duration_s=0.05)
+
+    assert sum(fake_sd.streams[-1].blocks) == int(22050 * 0.05)

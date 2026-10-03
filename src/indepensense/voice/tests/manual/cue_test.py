@@ -20,6 +20,12 @@ What to check, in this order:
   3. **Busy cue** answers a press that was refused. It should sound like
      a refusal, flat rather than falling, in the way a telephone busy
      signal does.
+  4. **Waiting blip** must be *audible but not demanding*. It repeats
+     every ~1.2 s while the device thinks, so it should sit under the
+     other cues without disappearing. It originally did disappear — 45 ms
+     at 0.12 amplitude put it about 14 dB below the stop cue, which reads
+     as a dead feature rather than a quiet one. If it is inaudible again,
+     that is this number, not a fault in the code.
 
 Run on the Pi, through the actual headset, at the volume the device
 normally uses — a cue that is clear on a laptop speaker can disappear

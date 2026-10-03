@@ -641,10 +641,22 @@ def play_busy_cue() -> None:
 # A single soft blip, repeated by the caller while the device is working.
 # Quieter and shorter than the cues above on purpose: those are answers to
 # a press and are heard once, this one recurs for several seconds and is
-# background. At 0.3 amplitude it reads as the device beeping AT you; at
-# 0.12 it reads as the device being busy.
-_WAITING_TICK = [(520.0, 0.045)]
-_WAITING_AMPLITUDE = 0.12
+# background. At 0.3 amplitude it reads as the device beeping AT you.
+#
+# It was originally 45 ms at 0.12 and was completely inaudible on the
+# headset, which read as a bug and was not one — it was specified too
+# small to hear. The ear integrates loudness over roughly 200 ms, so a
+# tone shorter than that is perceived quieter in proportion to its
+# length, on top of whatever its amplitude says. Against the 200 ms stop
+# cue that put it about 6 dB down on duration and another 8 dB down on
+# amplitude: ~14 dB, which is not "quieter" but gone. Worse, `_tone`
+# fades 8 ms at each end, so 16 of those 45 ms were ramp.
+#
+# 120 ms at 0.18 lands ~6 dB under the stop cue: clearly softer, which is
+# the design intent, and clearly there. Keep both numbers in mind when
+# tuning — halving the duration costs as much as halving the amplitude.
+_WAITING_TICK = [(520.0, 0.12)]
+_WAITING_AMPLITUDE = 0.18
 
 
 def play_waiting_tick() -> None:
@@ -654,11 +666,24 @@ def play_waiting_tick() -> None:
     tone it would have to interrupt. `play` holds `_playback_lock` for a
     whole utterance, so a sustained waiting sound would make the answer —
     and any obstacle warning — queue behind it. One blip holds the lock
-    for 45 ms and leaves it free the rest of the time.""" 
+    for 120 ms out of every 1.2 s and leaves it free the rest of the
+    time.""" 
     play_cue(_WAITING_TICK, amplitude=_WAITING_AMPLITUDE)
 
 
-def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
+# The two chimes are deliberately different lengths.
+#
+# The rising one is a "go" — it has to get out of the way so the user can
+# start talking, and every millisecond of it is a millisecond they are
+# waiting to speak. The falling one is a "got it", played after the
+# recording has already ended, so nothing is waiting on it; at 120 ms it
+# was heard as a clipped blip rather than a resolution, and a sound that
+# reads as truncated reads as a fault on a device the user cannot see.
+_RISING_CHIME_S = 0.12
+_FALLING_CHIME_S = 0.24
+
+
+def play_chime(rising: bool = True, duration_s: float | None = None) -> None:
     """Play a short synthesized chime as an audio button-press acknowledgment.
 
     Generated on-the-fly with numpy — no WAV files needed. A rising tone
@@ -671,12 +696,17 @@ def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
     is deliberately kept at 30% peak so the chime is noticeable but not
     startling.
 
-    Blocking, ~120 ms by default. Cheap to generate (<10 ms of CPU). Takes
-    the same playback lock as `play`: the chime runs on gpiozero's button
-    callback thread, and it overlapping the announcer is precisely what
-    crashed the wearable before the stream became ours.
+    Blocking. `duration_s` defaults per direction — 120 ms rising, 240 ms
+    falling; see the constants above for why they differ. Cheap to
+    generate (<10 ms of CPU). Takes the same playback lock as `play`: the
+    chime runs on gpiozero's button callback thread, and it overlapping
+    the announcer is precisely what crashed the wearable before the stream
+    became ours.
     """
     import numpy as np
+
+    if duration_s is None:
+        duration_s = _RISING_CHIME_S if rising else _FALLING_CHIME_S
 
     samplerate = 22050
     n_samples = int(samplerate * duration_s)
