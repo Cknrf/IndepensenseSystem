@@ -245,6 +245,104 @@ def cue_schedule(duration_s, positions, lead_s):
     return events
 
 
+# A sample this far above the median is not the field — it is something
+# magnetic that came close. Earth's field is constant in magnitude, so on
+# a clean sweep every raw sample has the same |B| whatever the hard-iron
+# offset is; a steady offset moves the centre of the swing, never its
+# size.
+_WILD_MULTIPLE = 1.5
+
+
+def diagnose_interference(timed_samples, segment_s, positions=_SWEEP_POSITIONS):
+    """Say what KIND of bad a failed sweep was. Returns a list of lines.
+
+    "Move away from desks" is the right advice for a distorted field and
+    useless for the two other ways this fails, which need different
+    actions entirely:
+
+      * the baseline itself is wrong — something magnetic is fixed close
+        to the sensor, and no amount of moving the vest will help
+      * spikes spread across most faces — something magnetic is moving
+        WITH the vest, so it travels to the next room too
+      * spikes in one or two faces — the vest passed something, once
+
+    Told apart by where the wild samples sit in time. Pure, so the three
+    conclusions can be tested against synthetic sweeps.
+    """
+    magnitudes = [math.sqrt(x * x + y * y + z * z) for _t, (x, y, z) in timed_samples]
+    if not magnitudes:
+        return []
+
+    ordered = sorted(magnitudes)
+    median = ordered[len(ordered) // 2]
+    peak = max(magnitudes)
+    lines = [f"  raw field: median {median:.0f} μT, peak {peak:.0f} μT"]
+
+    if not _EARTH_FIELD_MIN_UT <= median <= _EARTH_FIELD_MAX_UT:
+        lines.append(
+            f"  The BASELINE is wrong, not just the extremes — a typical "
+            f"sample reads {median:.0f} μT"
+        )
+        lines.append(
+            "  where Earth gives 25-65. Something magnetic sits permanently "
+            "close to the"
+        )
+        lines.append(
+            "  sensor. Moving the vest will not help; the sensor has to move "
+            "away from it."
+        )
+        return lines
+
+    wild = [t for t, m in zip((t for t, _f in timed_samples), magnitudes)
+            if m > median * _WILD_MULTIPLE]
+    if not wild:
+        lines.append(
+            "  No single sample ran wild, so the field was distorted rather "
+            "than spiked —"
+        )
+        lines.append("  steel in the walls or floor. Try outdoors.")
+        return lines
+
+    faces_hit = {min(positions - 1, int(t / segment_s)) for t in wild}
+    share = 100.0 * len(wild) / len(magnitudes)
+    lines.append(
+        f"  {share:.0f}% of samples ran wild (over {_WILD_MULTIPLE:g}x the median), "
+        f"across {len(faces_hit)} of the {positions} faces."
+    )
+
+    if len(faces_hit) >= positions / 2:
+        lines.append("")
+        lines.append(
+            "  Spread across most of the sweep, which means it is moving WITH "
+            "the vest."
+        )
+        lines.append(
+            "  Look for something magnetic that swings when the vest is "
+            "turned over but"
+        )
+        lines.append(
+            "  not when it is worn: a dangling headset, an unsecured motor, "
+            "buzzer or"
+        )
+        lines.append(
+            "  battery lead. Secure it and re-run — a different room will not "
+            "fix this."
+        )
+    else:
+        faces = ", ".join(_FACE_NAMES[f] for f in sorted(faces_hit))
+        lines.append("")
+        lines.append(
+            f"  Confined to {faces} — the vest passed something, rather than "
+            f"carrying it."
+        )
+        lines.append(
+            "  Re-run with more clear space around you, and keep it away from "
+            "the desk"
+        )
+        lines.append("  you started the command from.")
+    return lines
+
+
 def grade_sweep(samples, offsets, scales):
     """How close the corrected sweep comes to a sphere.
 
@@ -363,6 +461,10 @@ def main():
     # apply the derived calibration to all of them, and 30 s at the
     # driver's poll rate is a few hundred triples.
     samples: list[tuple[float, float, float]] = []
+    # The same samples with their elapsed time, so a failed sweep can say
+    # WHEN it went wrong — which is what separates "you passed something"
+    # from "something is riding on the vest".
+    timed: list[tuple[float, tuple[float, float, float]]] = []
 
     t_start = time.time()
     sample_count = 0
@@ -387,9 +489,11 @@ def main():
             reading = mag.read()
             if reading is not None:
                 sample_count += 1
-                samples.append(
-                    (reading.magnetic_x, reading.magnetic_y, reading.magnetic_z)
+                field = (
+                    reading.magnetic_x, reading.magnetic_y, reading.magnetic_z
                 )
+                samples.append(field)
+                timed.append((time.time() - t_start, field))
                 x_min = reading.magnetic_x if x_min is None else min(x_min, reading.magnetic_x)
                 x_max = reading.magnetic_x if x_max is None else max(x_max, reading.magnetic_x)
                 y_min = reading.magnetic_y if y_min is None else min(y_min, reading.magnetic_y)
@@ -490,7 +594,10 @@ def main():
     _beep(_TONE_BAD if verdict.startswith("BAD") else _TONE_GOOD)
 
     if verdict.startswith("BAD"):
-        print("  Values withheld. Re-run somewhere cleaner.")
+        for line in diagnose_interference(timed, segment):
+            print(line)
+        print()
+        print("  Values withheld.")
         return
 
     print("Paste these values into `src/indepensense/config.py`:")

@@ -366,3 +366,108 @@ def test_the_shipped_countdown_matches_the_beeps():
     first_changeover = [at for at, cue in schedule if cue == "turn" and at < segment]
 
     assert len(first_changeover) == int(_TURN_LEAD_S)
+
+
+# --- what KIND of bad --------------------------------------------------------
+#
+# "Move away from desks" is right for a distorted field and useless for
+# the other two ways this fails. A sweep on this project's own vest came
+# back at 136% spread with half-spans 3-6x Earth's field while the live
+# magnitude read a healthy 49 uT — spikes on a clean baseline, which no
+# amount of moving rooms would have explained.
+
+from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+    diagnose_interference,
+)
+
+DIAG_SEGMENT = 15.0
+
+
+def _timed(count=600, magnitude=47.0, seed=1):
+    """A clean tumble: constant magnitude, random orientations."""
+    rng = random.Random(seed)
+    out = []
+    for i in range(count):
+        t = DIAG_SEGMENT * 6 * i / count
+        a, b = rng.uniform(0, 6.28), rng.uniform(0, 6.28)
+        out.append((t, (
+            magnitude * math.cos(a) * math.cos(b),
+            magnitude * math.sin(a),
+            magnitude * math.cos(a) * math.sin(b),
+        )))
+    return out
+
+
+def _report(data):
+    return "\n".join(diagnose_interference(data, DIAG_SEGMENT)).lower()
+
+
+def test_spikes_across_every_face_point_at_the_vest_itself():
+    """Something magnetic riding on the vest travels to the next room
+    too, so advising a change of room would waste the user's evening."""
+    rng = random.Random(4)
+    data = [
+        (t, f if rng.random() > 0.25 else tuple(v * 6 for v in f))
+        for t, f in _timed()
+    ]
+
+    report = _report(data)
+
+    assert "with the vest" in report
+    assert "headset" in report or "unsecured" in report
+
+
+def test_spikes_in_one_face_point_at_the_surroundings():
+    data = [
+        (t, tuple(v * 6 for v in f) if 30.0 < t < 42.0 else f)
+        for t, f in _timed()
+    ]
+
+    report = _report(data)
+
+    assert "passed something" in report
+    assert "with the vest" not in report
+
+
+def test_the_offending_face_is_named():
+    """Knowing *when* it happened is what turns a re-run into a fix."""
+    data = [
+        (t, tuple(v * 6 for v in f) if 30.0 < t < 42.0 else f)
+        for t, f in _timed()
+    ]
+
+    assert "left side" in _report(data)
+
+
+def test_a_wrong_baseline_is_reported_as_such():
+    """A magnet fixed near the sensor shifts every sample. Moving the vest
+    cannot help, so the advice must not suggest it."""
+    data = [(t, (f[0] + 200.0, f[1], f[2])) for t, f in _timed()]
+
+    report = _report(data)
+
+    assert "baseline" in report
+    assert "moving the vest will not help" in report
+
+
+def test_a_distorted_field_with_no_spikes_says_to_go_outside():
+    """Steel in the walls bends the field without spiking it — the one
+    case the original generic advice was actually right for."""
+    rng = random.Random(9)
+    data = [
+        (t, tuple(v * rng.uniform(0.75, 1.25) for v in f))
+        for t, f in _timed()
+    ]
+
+    report = _report(data)
+
+    assert "outdoors" in report
+    assert "with the vest" not in report
+
+
+def test_the_median_is_reported_so_the_baseline_is_visible():
+    assert "47" in _report(_timed(magnitude=47.0))
+
+
+def test_no_samples_produces_no_report():
+    assert diagnose_interference([], DIAG_SEGMENT) == []
