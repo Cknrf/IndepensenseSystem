@@ -273,7 +273,8 @@ After wiring a component (or after any hardware change), run its test to confirm
 | STT — microphone → text | `python -m indepensense.voice.tests.manual.stt_test` |
 | TTS — text → speaker | `python -m indepensense.voice.tests.manual.tts_test` — uses the engine for `DEFAULT_LANGUAGE`: Piper for `en`, MMS for `tl` |
 | Full echo — mic → text → speech | `python -m indepensense.voice.tests.manual.echo_test` |
-| Button cues — are the five non-speech sounds distinguishable by ear? | `python -m indepensense.voice.tests.manual.cue_test` — plays the rising/falling chimes, the stop cue, the busy cue and the waiting blip, then the two easiest to confuse back to back and five seconds of blipping. Run through the real headset at normal volume; a cue that is clear on a laptop speaker can vanish under traffic noise. **Needs `deploy/pipewire/51-no-suspend.conf` installed**, or every cue after a pause is silent |
+| Button cues — are the five non-speech sounds distinguishable by ear? | `python -m indepensense.voice.tests.manual.cue_test` — plays the rising/falling chimes, the stop cue, the busy cue and the waiting blip, then the two easiest to confuse back to back and five seconds of blipping. Run through the real headset at normal volume; a cue that is clear on a laptop speaker can vanish under traffic noise. If every cue after a pause is silent, the PortAudio re-init in `voice/audio.py` is not running — see the comment block there |
+| Busy cue — pick one that cannot be mistaken for the stop cue | `python -m indepensense.voice.tests.manual.busy_cue_audition` — plays five candidate busy cues, each immediately after the stop cue, since that pairing is the real confusion. **Runs on the Mac**, no hardware needed; `--cue 300:0.07,300:0.07` auditions anything you type. Confirm the winner on the Pi before it ships — laptop speakers roll off below ~300 Hz and will misjudge the low candidates |
 
 ### Power
 
