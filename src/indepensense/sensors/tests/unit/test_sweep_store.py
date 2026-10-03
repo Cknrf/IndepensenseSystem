@@ -129,49 +129,83 @@ def test_a_corrupt_store_does_not_strand_the_operator(tmp_path):
     assert SweepStore(path).recorded() == []
 
 
-# --- the cross-face check ----------------------------------------------------
+# --- comparing faces -------------------------------------------------------
+#
+# The first version of this compared faces by their RAW mean field
+# strength, reasoning that the ambient field is the same whichever way the
+# vest points. That is true of the corrected field and false of the raw
+# one: raw = Earth + hard-iron offset, and the offset is fixed in the
+# sensor frame while Earth's field turns through it, so raw magnitude
+# swings by twice the offset depending purely on how the operator
+# rotated. On the first real sweep it ranged 22-50 uT, flagged a
+# different innocent face every run, and cost three re-recordings of good
+# data.
+#
+# The comparison is sound only on CORRECTED magnitudes, which do not
+# exist until the calibration does.
 
-def test_a_face_with_a_different_field_is_flagged(store):
-    """The ambient field is the same whichever way the vest points, so a
-    face reading far from the others saw something they did not —
-    interference, or a setup that changed between runs."""
-    for face in ("front", "back", "left", "right", "top"):
-        store.record(face, [(45.0, 0.0, 0.0)] * 10)
-    store.record("bottom", [(90.0, 0.0, 0.0)] * 10)
+def test_raw_magnitude_alone_does_not_condemn_a_face():
+    """The regression. Two faces sweeping different parts of the same
+    sphere have very different raw means and are both perfectly good."""
+    offset = (14.0, 0.0, 0.0)
+    near = [(offset[0] + 40.0, 0.0, 0.0)] * 20      # raw |B| 54
+    far = [(offset[0] - 40.0, 0.0, 0.0)] * 20       # raw |B| 26
 
-    odd = store.odd_faces()
+    near_mean = sum(math.dist(s, (0, 0, 0)) for s in near) / len(near)
+    far_mean = sum(math.dist(s, (0, 0, 0)) for s in far) / len(far)
 
-    assert [face for face, _m, _med in odd] == ["bottom"]
+    # Over twice as large, from one honest offset and no interference.
+    assert near_mean / far_mean > 2.0
 
 
-def test_a_consistent_sweep_flags_nothing(store):
+def test_a_face_held_still_is_flagged(store):
+    """The one per-face fault catchable without the calibration: samples
+    that are all the same orientation pad the count and add nothing."""
     for face in FACES:
-        store.record(face, [(45.0, 0.0, 0.0)] * 10)
+        store.record(face, _sphere(count=30))
+    store.record("top", [(40.0, 1.0, 2.0)] * 30)
 
-    assert store.odd_faces() == []
-
-
-def test_too_few_faces_to_judge_flags_nothing(store):
-    """Two faces have no median worth comparing against, and a false
-    alarm here would send somebody outside to redo a good face."""
-    store.record("front", [(45.0, 0.0, 0.0)] * 10)
-    store.record("back", [(90.0, 0.0, 0.0)] * 10)
-
-    assert store.odd_faces() == []
+    assert [face for face, _swing in store.still_faces()] == ["top"]
 
 
-def test_a_session_left_open_for_hours_is_called_out(store):
-    store.record("front", [(45.0, 0.0, 0.0)], now=0.0)
-    store.record("back", [(45.0, 0.0, 0.0)], now=5 * 60 * 60)
+def test_a_properly_rotated_face_is_not(store):
+    for face in FACES:
+        store.record(face, _sphere(count=30))
 
-    assert store.is_stale()
+    assert store.still_faces() == []
 
 
-def test_a_session_done_in_one_go_is_not(store):
-    store.record("front", [(45.0, 0.0, 0.0)], now=0.0)
-    store.record("back", [(45.0, 0.0, 0.0)], now=120.0)
+def test_a_contaminated_face_is_caught_once_corrected(store):
+    """What the raw check was reaching for, done where it holds. A face
+    recorded in a much stronger field still reads differently after the
+    offset is removed, because the offset cannot explain it."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        face_diagnosis,
+    )
 
-    assert not store.is_stale()
+    for face in FACES:
+        store.record(face, _sphere(count=40, radius=45.0, centre=(10.0, 0.0, 0.0)))
+    store.record("left", _sphere(count=40, radius=90.0, centre=(10.0, 0.0, 0.0)))
+
+    diagnosis = face_diagnosis(store)
+
+    assert len(diagnosis) == 1
+    assert "left" in diagnosis[0]
+
+
+def test_a_clean_sweep_flags_no_face(store):
+    """A false alarm here sends somebody outside to redo good data, which
+    is exactly what the previous check did three times."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        face_diagnosis,
+    )
+
+    for index, face in enumerate(FACES):
+        # Each face sweeps a different part of the same offset sphere —
+        # very different raw means, identical corrected ones.
+        store.record(face, _sphere(count=40, centre=(13.0, -6.0, 4.0))[index::6])
+
+    assert face_diagnosis(store) == []
 
 
 # --- the two modes must agree ------------------------------------------------

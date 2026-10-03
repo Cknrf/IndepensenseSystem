@@ -23,9 +23,25 @@ Nothing can detect a re-seated battery. Two things narrow it:
 
   * the session is stamped, so a face recorded hours after the others is
     visible rather than silent, and
-  * each face reports its own mean field strength. The ambient field does
-    not change between faces, so one face reading far from the others is
-    either interference or a changed setup. `odd_faces` finds them.
+  * each face reports whether it actually *moved* — a face recorded
+    without rotating contributes nothing and is the easy mistake to make
+    when the faces are separate commands.
+
+**What this module deliberately does NOT do** is compare faces by their
+raw mean field strength. The first version did, on the reasoning that the
+ambient field is the same whichever way the vest points. That is true of
+the *corrected* field and false of the raw one: a raw reading is Earth's
+field plus the hard-iron offset, and the offset is fixed in the sensor's
+frame while Earth's field rotates through it. Raw magnitude therefore
+swings with orientation by twice the offset — on the first real sweep,
+22 to 50 uT — so a face's mean says only how its operator happened to
+rotate. It flagged a different innocent face on every run and sent
+somebody outside to re-record good data three times.
+
+Comparing faces is still worth doing; it just cannot be done until the
+calibration exists. `magnetometer_calibrate.residual_by_face` does it on
+*corrected* magnitudes, where constant-in-every-orientation is actually
+the property being relied on.
 
 A sweep is read back as one flat list of samples, exactly as the
 all-in-one run produces, so the calibration maths does not know or care
@@ -38,11 +54,14 @@ from pathlib import Path
 
 FACES = ("front", "back", "left", "right", "top", "bottom")
 
-# How far a face's mean field may sit from the median of the other faces
-# before it is called out. The ambient field is the same for all six, so
-# a deviation this large is something riding on the vest for that face
-# alone — or a setup that changed between runs.
-_ODD_FACE_TOLERANCE = 0.15
+# Smallest axis swing that counts as "this face was actually rotated".
+#
+# Rotating through any orientation moves at least one axis across a large
+# part of the field; a face held still moves none of them. Well below the
+# ~40 uT of a real rotation and well above sensor noise, so it separates
+# "barely moved" from "moved a bit less than the others" without
+# pretending to judge the latter.
+_MIN_FACE_SWING_UT = 12.0
 
 # Beyond this, "the same session" stops being a safe assumption. Not an
 # error — a careful operator may take their time — but worth saying.
@@ -117,36 +136,47 @@ class SweepStore:
             flat.extend(tuple(s) for s in self.data["faces"][face]["samples"])
         return flat
 
-    def face_means(self) -> dict[str, float]:
-        """Mean field strength per recorded face, in μT."""
-        means = {}
-        for face in self.recorded():
-            samples = self.data["faces"][face]["samples"]
-            if samples:
-                means[face] = statistics.fmean(_magnitude(s) for s in samples)
-        return means
+    def face_samples(self, face: str) -> list[tuple[float, float, float]]:
+        return [tuple(s) for s in self.data["faces"].get(face, {}).get("samples", [])]
 
-    def odd_faces(self, tolerance: float = _ODD_FACE_TOLERANCE) -> list[tuple[str, float, float]]:
-        """Faces whose mean field is out of line with the rest.
+    def face_stats(self) -> dict[str, dict]:
+        """Per face: how many samples, the raw field range, the axis swing.
 
-        Returns `(face, its mean, the median)` for each. The ambient field
-        is the same whichever way the vest points, so a face that reads
-        far from the others saw something the others did not — which is
-        the one failure this split mode makes easier to cause and harder
-        to notice.
-
-        Needs at least three faces to have a median worth comparing to.
+        The raw range is shown rather than a mean because a mean invites
+        exactly the comparison that turned out to be meaningless — see
+        the module docstring. The range at least says honestly that raw
+        magnitude varies a lot, which it does and should.
         """
-        means = self.face_means()
-        if len(means) < 3:
-            return []
-        median = statistics.median(means.values())
-        if median <= 0:
-            return []
+        stats = {}
+        for face in self.recorded():
+            samples = self.face_samples(face)
+            if not samples:
+                continue
+            magnitudes = [_magnitude(s) for s in samples]
+            swing = max(
+                max(s[axis] for s in samples) - min(s[axis] for s in samples)
+                for axis in (0, 1, 2)
+            )
+            stats[face] = {
+                "count": len(samples),
+                "low": min(magnitudes),
+                "high": max(magnitudes),
+                "swing": swing,
+            }
+        return stats
+
+    def still_faces(self, minimum: float = _MIN_FACE_SWING_UT) -> list[tuple[str, float]]:
+        """Faces that were not actually rotated, with their largest swing.
+
+        The one per-face mistake that can be caught without the
+        calibration: a face held still adds samples but no new
+        orientations, so it pads the count while contributing nothing to
+        the sphere the derivation is looking for.
+        """
         return [
-            (face, mean, median)
-            for face, mean in means.items()
-            if abs(mean - median) / median > tolerance
+            (face, stat["swing"])
+            for face, stat in self.face_stats().items()
+            if stat["swing"] < minimum
         ]
 
     def span_seconds(self) -> float:

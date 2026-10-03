@@ -76,6 +76,7 @@ absence of a speaker.
 """
 import argparse
 import math
+import statistics
 import time
 
 from indepensense.config import MAG_ADDRESS, MAG_I2C_BUS, MAG_SWEEP_DIR
@@ -148,6 +149,12 @@ _TONE_BAD = [(420.0, 0.30), (300.0, 0.45)]
 # box around the data. Measured on a good outdoor sweep this lands in
 # single figures; the bad phone-referenced dataset that prompted this
 # check sat at 20-24%.
+# How far one face's CORRECTED mean may sit from the others before it is
+# worth re-recording. Looser than it sounds: the corrected field is
+# constant by construction, so anything past this is a real difference in
+# what that face was measuring, not sampling luck.
+_FACE_RESIDUAL_TOLERANCE = 0.12
+
 _GOOD_SPREAD_PCT = 10.0
 _MARGINAL_SPREAD_PCT = 20.0
 
@@ -583,20 +590,33 @@ def collect_face(mag, face: str, seconds: float):
 
 
 def status_lines(store) -> list[str]:
-    """Human-readable progress, including the cross-face sanity check."""
-    lines = []
-    means = store.face_means()
-    odd = {face for face, _mean, _median in store.odd_faces()}
+    """Progress so far.
 
-    lines.append("  face      samples   mean |B|")
-    lines.append("  " + "-" * 40)
+    Shows the raw field RANGE per face, not a mean. Raw magnitude varies
+    with orientation by twice the hard-iron offset, so a wide range is
+    what a well-rotated face looks like and a mean is not comparable
+    between faces at all. An earlier version compared those means and
+    flagged a different innocent face on every run.
+
+    The only judgement made here is whether a face moved. Everything else
+    waits for the calibration — see `face_diagnosis`.
+    """
+    lines = []
+    stats = store.face_stats()
+    still = {face for face, _swing in store.still_faces()}
+
+    lines.append("  face      samples   raw |B| range      rotated")
+    lines.append("  " + "-" * 52)
     for face in FACES:
-        if face in means:
-            count = len(store.data["faces"][face]["samples"])
-            flag = "   <- out of line with the rest" if face in odd else ""
-            lines.append(f"  {face:9s} {count:7d}   {means[face]:6.1f} \u03bcT{flag}")
-        else:
-            lines.append(f"  {face:9s}       -          -")
+        stat = stats.get(face)
+        if stat is None:
+            lines.append(f"  {face:9s}       -           -              -")
+            continue
+        moved = "NO \u2014 re-record" if face in still else "yes"
+        lines.append(
+            f"  {face:9s} {stat['count']:7d}   "
+            f"{stat['low']:5.1f}-{stat['high']:5.1f} \u03bcT      {moved}"
+        )
     lines.append("")
 
     missing = store.missing()
@@ -604,15 +624,14 @@ def status_lines(store) -> list[str]:
         lines.append(f"  {len(store.recorded())}/6 recorded. "
                      f"Still needed: {', '.join(missing)}")
     else:
-        lines.append("  All six recorded — run --finish.")
+        lines.append("  All six recorded.")
 
-    if odd:
+    if still:
         lines.append("")
-        lines.append("  A face whose mean field is out of line with the others")
-        lines.append("  saw something they did not. The ambient field is the")
-        lines.append("  same whichever way the vest points, so this is either")
-        lines.append("  interference during that face or a setup that changed")
-        lines.append("  between runs. Re-record it rather than finishing.")
+        lines.append("  A face marked NO barely moved: its samples are all")
+        lines.append("  nearly the same orientation, so they pad the count")
+        lines.append("  without adding anything the derivation can use.")
+        lines.append("  Re-record it, rotating through the full 10 seconds.")
 
     if store.is_stale():
         hours = store.span_seconds() / 3600.0
@@ -622,6 +641,62 @@ def status_lines(store) -> list[str]:
         lines.append("  valid if nothing about the assembly changed in that")
         lines.append("  time. If anything was unplugged, --reset and start over.")
 
+    return lines
+
+
+def residual_by_face(store, offsets, scales) -> dict[str, float]:
+    """Mean CORRECTED field strength per face, in uT.
+
+    This is the comparison the raw-magnitude check was reaching for and
+    getting wrong. A raw reading is Earth's field plus the hard-iron
+    offset, and the offset is fixed in the sensor frame while Earth's
+    field rotates through it — so raw magnitude swings with orientation
+    and says nothing about interference. Subtract the offset and apply
+    the scales and the magnitude *is* constant in every orientation, by
+    construction. A face that still reads differently from the rest saw a
+    field the others did not.
+
+    Only available once the calibration exists, which is why this is a
+    finishing diagnosis and not a during-recording one.
+    """
+    means = {}
+    for face in store.recorded():
+        samples = store.face_samples(face)
+        if not samples:
+            continue
+        means[face] = statistics.fmean(
+            math.sqrt(
+                apply_calibration(x, offsets[0], scales[0]) ** 2
+                + apply_calibration(y, offsets[1], scales[1]) ** 2
+                + apply_calibration(z, offsets[2], scales[2]) ** 2
+            )
+            for x, y, z in samples
+        )
+    return means
+
+
+def face_diagnosis(store) -> list[str]:
+    """Which face to re-record, decided after the calibration is derived."""
+    try:
+        offsets, scales, _spans = calibration_from_samples(store.samples())
+    except ValueError:
+        return []
+
+    means = residual_by_face(store, offsets, scales)
+    if len(means) < 3:
+        return []
+    median = statistics.median(means.values())
+    if median <= 0:
+        return []
+
+    lines = []
+    for face in sorted(means, key=lambda f: -abs(means[f] - median)):
+        drift = abs(means[face] - median) / median
+        if drift > _FACE_RESIDUAL_TOLERANCE:
+            lines.append(
+                f"  {face}: corrected field {means[face]:.1f} \u03bcT against "
+                f"{median:.1f} \u03bcT elsewhere \u2014 re-record this face."
+            )
     return lines
 
 
@@ -653,12 +728,7 @@ def run_face_mode(args) -> int:
             return 1
         print("\n".join(status_lines(store)))
         print()
-        diagnosis = [
-            f"  {face} reads {mean:.1f} \u03bcT against a median of {median:.1f} "
-            "— re-record that face."
-            for face, mean, median in store.odd_faces()
-        ]
-        print_result(store.samples(), diagnosis)
+        print_result(store.samples(), face_diagnosis(store))
         return 0
 
     face = args.face.lower()
@@ -684,6 +754,15 @@ def run_face_mode(args) -> int:
     store.save()
     print()
     print("\n".join(status_lines(store)))
+
+    # The sixth face computes on the spot. `--finish` still exists and is
+    # still the only way to recompute, which is what you want after
+    # re-recording a face the cross-check flagged — but in the ordinary
+    # run-through there is nothing to decide, so there is no reason to
+    # make somebody type a seventh command to see the answer.
+    if not store.missing():
+        print()
+        print_result(store.samples(), face_diagnosis(store))
     return 0
 
 
