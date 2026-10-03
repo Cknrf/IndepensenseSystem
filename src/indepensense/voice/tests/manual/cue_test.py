@@ -17,9 +17,10 @@ What to check, in this order:
      final — something being set down — and must NOT be mistakable for the
      falling chime, which already means "recording ended". The two can
      occur within seconds of each other in one exchange.
-  3. **Busy cue** answers a press that was refused. It should sound like
-     a refusal, flat rather than falling, in the way a telephone busy
-     signal does.
+  3. **Busy cue** answers a press that was refused — one long low buzz.
+     It must not be mistakable for the **waiting blip**, which is the
+     only other single-tone cue. That pairing is new: the busy cue used
+     to be two beeps and shared its shape with the stop cue instead.
   4. **Waiting blip** must be *audible but not demanding*. It repeats
      every ~1.2 s while the device thinks, so it should sit under the
      other cues without disappearing. It originally did disappear — 45 ms
@@ -72,14 +73,24 @@ def main() -> None:
         cue()
         time.sleep(_GAP_S)
 
-    print("\nNow the pair that is easiest to confuse, back to back:\n")
-    for _ in range(2):
-        print("  falling chime", flush=True)
-        play_chime(rising=False)
-        time.sleep(0.6)
-        print("  stop cue", flush=True)
-        play_stop_cue()
-        time.sleep(_GAP_S)
+    # Two pairs, not one. The stop/falling-chime pair share a falling
+    # contour; the busy/waiting pair share being a single tone, which they
+    # did not until the busy cue stopped being two beeps.
+    for first_label, first, second_label, second in (
+        ("falling chime", lambda: play_chime(rising=False),
+         "stop cue", play_stop_cue),
+        ("busy cue", play_busy_cue,
+         "waiting blip", play_waiting_tick),
+    ):
+        print(f"\nThe {first_label} and the {second_label}, back to back —")
+        print("they share a shape, so this is where confusion would show:\n")
+        for _ in range(2):
+            print(f"  {first_label}", flush=True)
+            first()
+            time.sleep(0.6)
+            print(f"  {second_label}", flush=True)
+            second()
+            time.sleep(_GAP_S)
 
     print("\nAnd the waiting blip as it is actually heard — five seconds")
     print("of it, which is a realistic wait for a cloud question:\n")

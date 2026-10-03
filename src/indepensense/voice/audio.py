@@ -621,11 +621,26 @@ def play_cue(
 # screen to disambiguate them.
 _STOP_CUE = [(660.0, 0.07), (440.0, 0.10)]
 
-# Two flat low beeps, the convention for "not now" since the telephone
-# busy signal. Says the press was heard and refused, which is the thing a
-# silently-ignored button cannot say — and a button that appears to do
-# nothing reads as broken hardware.
-_BUSY_CUE = [(350.0, 0.06), (350.0, 0.06)]
+# One long low buzz. Says the press was heard and refused, which is the
+# thing a silently-ignored button cannot say — and a button that appears
+# to do nothing reads as broken hardware.
+#
+# This was two flat 60 ms beeps at 350 Hz, chosen for the telephone
+# busy-signal convention, and it was reported as indistinguishable from
+# the stop cue. The reason was not pitch: flat-350 against falling-660-to-
+# 440 is a large difference written down, but both were two short beeps
+# 30 ms apart, and at 60 ms a tone barely has a pitch to hear at all.
+# Rhythm and count are what the ear uses at this duration, and on those
+# the two cues were identical. Chosen by ear from five candidates in
+# `busy_cue_audition`, all of which varied rhythm rather than frequency.
+#
+# Being a single tone, it shares a shape with the waiting blip rather
+# than with the other cues, so those two are what must now be kept apart.
+# They are, on three axes at once: 200 Hz against 520 is nearly an octave
+# and a half, 280 ms against 120 is over twice as long, and the blip
+# recurs every 1.2 s while this is heard once. `test_cue_design` pins the
+# first two; the third is a property of the caller, not the sound.
+_BUSY_CUE = [(200.0, 0.28)]
 
 
 def play_stop_cue() -> None:

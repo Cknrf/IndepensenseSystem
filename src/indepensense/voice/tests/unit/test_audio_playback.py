@@ -626,3 +626,59 @@ def test_an_explicit_chime_duration_still_wins(fake_sd, fake_sf):
     audio.play_chime(rising=False, duration_s=0.05)
 
     assert sum(fake_sd.streams[-1].blocks) == int(22050 * 0.05)
+
+
+def test_the_two_single_tone_cues_are_kept_apart():
+    """The busy cue and the waiting blip are the only one-tone cues, so
+    they have nothing but pitch and length to separate them.
+
+    This pairing is new. The busy cue was two 60 ms beeps and collided
+    with the stop cue instead — identical rhythm, and at 60 ms the pitch
+    contour that was supposed to distinguish them was not audible. Moving
+    it to a single buzz fixed that collision and created this one.
+    """
+    import math
+
+    if len(audio._BUSY_CUE) != 1 or len(audio._WAITING_TICK) != 1:
+        pytest.skip("not both single tones — told apart by count instead")
+
+    (busy_hz, busy_s), = audio._BUSY_CUE
+    (blip_hz, blip_s), = audio._WAITING_TICK
+
+    octaves = abs(math.log2(busy_hz / blip_hz))
+    assert octaves >= 1.0, (
+        f"{busy_hz:.0f} Hz and {blip_hz:.0f} Hz are {octaves:.2f} octaves "
+        "apart — too close for two cues with the same shape"
+    )
+
+    longer, shorter = max(busy_s, blip_s), min(busy_s, blip_s)
+    assert longer / shorter >= 1.8, (
+        f"{busy_s * 1000:.0f} ms and {blip_s * 1000:.0f} ms are too alike in "
+        "length to help tell them apart"
+    )
+
+
+def test_no_two_cues_share_a_tone_count_and_a_pitch():
+    """Rhythm is what the ear reads first on sounds this short, so two
+    cues with the same number of tones must differ clearly in pitch —
+    that is exactly what the old busy cue got wrong against the stop cue.
+    """
+    import math
+
+    cues = {
+        "stop": audio._STOP_CUE,
+        "busy": audio._BUSY_CUE,
+        "waiting": audio._WAITING_TICK,
+    }
+    names = sorted(cues)
+    for i, first in enumerate(names):
+        for second in names[i + 1:]:
+            a, b = cues[first], cues[second]
+            if len(a) != len(b):
+                continue                 # told apart by count alone
+            gap = min(abs(math.log2(fa / fb))
+                      for (fa, _), (fb, _) in zip(a, b))
+            assert gap >= 1.0, (
+                f"{first} and {second} have {len(a)} tone(s) each and are "
+                f"only {gap:.2f} octaves apart"
+            )
