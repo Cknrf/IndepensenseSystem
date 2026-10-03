@@ -117,6 +117,8 @@ class _FakeSoundDevice(types.ModuleType):
         self.global_calls: list[str] = []
         self.reinits = 0
         self.unsafe_reinits: list[int] = []
+        self._initialized = 1        # as `import sounddevice` leaves it
+        self.fail_initialize = False
 
     # Present because `audio.py` calls them before every stream, and a
     # fake without them sends the real `_reinitialise_portaudio` down its
@@ -127,15 +129,31 @@ class _FakeSoundDevice(types.ModuleType):
     # rather than raised because `_reinitialise_portaudio` swallows every
     # exception by design, so an assertion thrown here would be caught
     # and the test would pass anyway.
+    #
+    # `_initialized` mirrors PortAudio's reference count and raising
+    # `paNotInitialized` below mirrors what the real library does when it
+    # is already down. Both are the reason `_reinitialise_portaudio` is
+    # shaped the way it is; a fake without them leaves its recovery path
+    # completely untested, which is how it shipped broken once already.
     def _terminate(self) -> None:
+        if self._initialized <= 0:
+            raise RuntimeError(
+                "Error terminating PortAudio: PortAudio not initialized "
+                "[PaErrorCode -10000]"
+            )
         if self.live:
             self.unsafe_reinits.append(self.live)
+        self._initialized -= 1
         self.reinits += 1
 
     def _initialize(self) -> None:
-        pass
+        if self.fail_initialize:
+            raise RuntimeError("Error initializing PortAudio [PaErrorCode -9986]")
+        self._initialized += 1
 
     def OutputStream(self, **kwargs) -> _FakeStream:     # noqa: N802 — mirrors sounddevice
+        if self._initialized <= 0:
+            raise RuntimeError("Error querying device -1")
         stream = _FakeStream(self, kwargs)
         with self.lock:
             self.streams.append(stream)

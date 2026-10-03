@@ -101,6 +101,12 @@ _portaudio_lock = threading.Lock()
 _portaudio_streams = 0
 
 
+# Bound on the unwind loop below. PortAudio's init count should never be
+# above 1 here, so anything past a couple of passes means the counter is
+# not behaving as documented and looping harder will not help.
+_MAX_TERMINATE_PASSES = 4
+
+
 def _reinitialise_portaudio() -> None:
     """Restore the first-stream-of-a-process condition. Never raises.
 
@@ -108,17 +114,52 @@ def _reinitialise_portaudio() -> None:
     stream is open. Uses `sounddevice`'s private `_terminate`/`_initialize`
     because PortAudio exposes no public way to do this and nothing else
     makes a second short sound audible.
+
+    `Pa_Initialize`/`Pa_Terminate` are *reference counted* — PortAudio
+    only really shuts down when the count reaches zero — and sounddevice
+    mirrors the count in `sd._initialized`. Two consequences shape this
+    function, and both were found by experiment rather than reading:
+
+      * The count must be driven to zero or nothing is torn down and the
+        re-init silently does nothing. Importing sounddevice leaves it at
+        1, so normally that is a single `_terminate()`; the loop is there
+        because an unbalanced count would otherwise disable the fix for
+        the rest of the run with no symptom but the cues going quiet.
+
+      * `_initialize()` must be attempted *unconditionally*. Calling
+        `_terminate()` on an already-terminated PortAudio raises
+        `paNotInitialized`, so the obvious `try: terminate(); initialize()`
+        skips the initialise and leaves the library terminated for good —
+        every later stream then dies with `Error querying device -1` and
+        the wearable is silent until it is restarted. A transient
+        `Pa_Initialize` failure, which a USB re-enumeration can cause, was
+        enough to reach that state permanently.
     """
     import sounddevice as sd
 
+    # `_initialized` is private too. Absent it, fall back to one pass:
+    # the count is 1 in every case we can actually observe.
+    passes = getattr(sd, "_initialized", 1)
+    if not isinstance(passes, int) or passes < 0:
+        passes = 1
+
+    for _ in range(min(passes, _MAX_TERMINATE_PASSES)):
+        try:
+            sd._terminate()
+        except Exception as exc:
+            # Already down, which is fine — the initialise below is what
+            # actually matters.
+            print(f"[audio] PortAudio teardown skipped: {exc}",
+                  file=sys.stderr, flush=True)
+            break
+
     try:
-        sd._terminate()
         sd._initialize()
     except Exception as exc:
-        # The library is in whatever state it was; every sound still
-        # opens its own stream and the worst case is the clipping this
-        # exists to remove.
-        print(f"[audio] could not re-initialise PortAudio: {exc}",
+        # Now the library IS terminated and every stream will fail. Say so
+        # plainly: this is the one path where the device goes silent, and
+        # the next sound retries from the top.
+        print(f"[audio] PortAudio is down and could not be restarted: {exc}",
               file=sys.stderr, flush=True)
 
 

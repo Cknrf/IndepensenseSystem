@@ -35,4 +35,127 @@ Let's do this one at a time, so we can push changes as well to its corresponding
 
 Regarding the battery status/percentage, I realized/noticed based on my observation that the real 0 percentage of the battery is on 59% of the reading. Meaning that if the readings is 60% meaning the real remaining percentage is 1%. From this, we could just derive the real right percentage, instead of directly basing from the readings. 
 
+Let's have as well a feature/intent of knowing the signal status, so the user would know it. 
+
+
+-----------------
+
+(.venv) cknrf@cknrf:~/Desktop/thesis/IndepensenseSystem $ mmcli -m any --messaging-create-sms="text='test',number='+639051675263'"
+  ------------------------
+  Messaging | created sms: /org/freedesktop/ModemManager1/SMS/1
+
+
+Phase 1 — At the desk, ~15 min
+  
+  1. Emergency SMS actually sends ⚠️ was confirmed broken
+
+  mmcli -m any --messaging-create-sms="text='test',number='+639051675263'"
+  Expect: a path like /org/freedesktop/ModemManager1/SMS/1.
+  Previously: PolicyKit authorization failed on every single alert.
+
+  2. The five button cues are distinguishable
+
+  python -m indepensense.voice.tests.manual.cue_test
+  Expect: you can tell the stop cue from the falling chime. Judge the waiting blip for annoyance over five seconds.
+  Needs: headset on.
+
+  3. NLU probes
+
+  python -m indepensense.intents.tests.manual.llm_probe
+  python -m indepensense.intents.tests.manual.embedding_probe
+  Expect: adversarial group ≥ its old score (now 28 cases, not 25 — read the %, not the count). Embedding: 87.3% capture, 100% precision.
+  Tests: the arithmetic prompt fix, the bank expansion.
+
+  ---
+  Phase 2 — One voice session, ~20 min
+
+  Start the app, then run these as PTT commands in order. Nine changes get covered here.
+
+  4. Nothing captured ⚠️ was confirmed silent
+
+  Press PTT twice fast. Then record 2 s of silence.
+  Expect: "I didn't hear anything. Please say that again." — previously, nothing at all.
+
+  5. The waiting blip
+
+  Ask anything slow — "what is the tallest mountain in the Philippines".
+  Expect: soft blips from ~1.5 s in, pausing while "let me think about that" plays, resuming until the answer. Quick commands like "what time is it" should blip
+  not at all.
+
+  6. Cancel a command in flight
+
+  Ask something, then press repeat while it's thinking.
+  Expect: stop cue, and the answer never arrives. Previously it arrived anyway.
+
+  7. Busy cue
+
+  Press PTT while a command is processing.
+  Expect: two low beeps. Previously: silence.
+
+  8. Saved places ⚠️ was confirmed broken 3×
+
+  "Save this place as my home" → "Can you help me go home?"
+  Expect: routes immediately, no confirmation prompt. Then "What places have I saved" → reads it back. Then "take me to my clinic" → "…and you don't have a place 
+  saved by that name."
+
+  9. Vision + ultrasonic fusion
+
+  Stand ~40 cm from a blank wall. "What's in front of me?"
+  Expect: "I can't identify what's in front of you, but something is about 40 centimeters away."
+
+  10. Cellular signal
+
+  "Do I have signal?"
+  Expect: strength plus the generation — "strong, at 72 percent, on 4G".
+
+  11. Tagalog numbers ⚠️ was confirmed dropping every digit
+
+  Switch to Tagalog. Ask battery, time, signal.
+  Expect: numbers spoken as words — "labinlimang porsyento", not a missing number.
+
+  12. Cloud follow-up
+
+  "What is the tallest mountain in the Philippines?" then "What about the second?"
+  Expect: the second is answerable. Previously: "I do not know what you are referring to."
+
+  ---
+  Phase 3 — Physical, ~10 min
+  
+  13. Emergency button ⚠️ was 3 alerts for 3 presses
+
+  Press it three times fast. Then hold and mash for ~25 s.
+  Expect: one [sms] attempt from the three presses; continuous buzzing throughout the mash with roughly 3 alerts over 25 s, not 30. Every press buzzes.
+
+  14. Obstacle hysteresis ⚠️ was 136 pulses in 4.5 min
+
+  Stand still ~45 cm from a wall for a minute.
+  Expect: one pulse on entry, then a reminder roughly every 15 s — not every 2 s. Wobble your hand ±10 cm: should stay quiet.
+
+  ---
+  Phase 4 — Long, passive
+  
+  15. Battery ⚠️ warning had never fired, ever
+
+  python -m indepensense.power.tests.manual.single_ups_test --csv
+  Run it down.
+  Expect: the percentage reads lower than the raw gauge, and the 15% warning actually fires (at raw ~66%) with a guardian alert. Neither has ever happened on this
+  pack.
+
+  ---
+  Deferred
+  
+  ┌─────────────────────────────┬────────────────────────────────────┐
+  │                             │                                    │
+  ├─────────────────────────────┼────────────────────────────────────┤
+  │ Compass calibration         │ outdoors, and the shake test first │
+  ├─────────────────────────────┼────────────────────────────────────┤
+  │ Tagalog TTS quality         │ needs a listening study            │
+  ├─────────────────────────────┼────────────────────────────────────┤
+  │ Object recognition accuracy │ needs the 30-scene test set        │
+  └─────────────────────────────┴────────────────────────────────────┘
+
+  ---
+  Suggested order: 1 → 2 → 4-12 in one session → 13-14 → 3 whenever → 15 overnight.
+  
+  Tell me which you want to start with and paste the output. If anything fails I'd rather see the log than a summary.
 

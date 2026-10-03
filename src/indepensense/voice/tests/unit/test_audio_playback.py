@@ -442,3 +442,62 @@ def test_a_guarded_sound_still_opens_its_stream(fake_sd, fake_sf, wav, call_orde
     audio.play(wav)
 
     assert call_order == ["stream"]
+
+
+# --- recovery: PortAudio must never be left down -----------------------------
+#
+# `Pa_Initialize`/`Pa_Terminate` are reference counted, and the first
+# version of this fix ignored that in two ways that both end in silence:
+#
+#   * `try: _terminate(); _initialize()` skips the initialise whenever the
+#     terminate raises. Terminating an already-down PortAudio raises
+#     exactly that, so one transient `Pa_Initialize` failure left the
+#     library terminated FOREVER — every later stream died with
+#     `Error querying device -1` and the wearable was mute until restart.
+#     Reproduced on the dev machine, not theorised.
+#
+#   * a count above 1 means a single `_terminate()` tears nothing down, so
+#     the re-init silently stops working and the cues go quiet again with
+#     no error anywhere.
+
+def test_recovers_when_portaudio_was_left_terminated(fake_sd, fake_sf, wav):
+    """The permanent-silence bug. One failed initialise must not be fatal."""
+    fake_sd._initialized = 0               # as a failed `Pa_Initialize` leaves it
+
+    audio.play(wav)
+
+    assert fake_sd._initialized == 1, "PortAudio was left down"
+    assert fake_sd.streams and fake_sd.streams[0].blocks, "the device stayed mute"
+
+
+def test_a_failed_initialise_is_retried_by_the_next_sound(fake_sd, fake_sf, wav):
+    """Failure is survivable only if the next sound tries again."""
+    fake_sd.fail_initialize = True
+    with pytest.raises(Exception):
+        audio.play(wav)                    # PortAudio is now down
+
+    fake_sd.fail_initialize = False
+    audio.play(wav)
+
+    assert fake_sd._initialized == 1
+    assert fake_sd.streams[-1].blocks, "the device did not recover"
+
+
+def test_the_reference_count_is_driven_to_zero(fake_sd, fake_sf, wav):
+    """A count above 1 means nothing is actually torn down, so the cues
+    would go quiet again with no error to show for it."""
+    fake_sd._initialized = 3
+
+    audio.play(wav)
+
+    assert fake_sd.reinits == 3, "did not unwind the count, so nothing reset"
+    assert fake_sd._initialized == 1
+
+
+def test_the_count_stays_balanced_across_many_sounds(fake_sd, fake_sf, wav):
+    """Drift either way is a silent failure: up and the re-init stops
+    working, down and the device dies."""
+    for _ in range(10):
+        audio.play(wav)
+
+    assert fake_sd._initialized == 1
