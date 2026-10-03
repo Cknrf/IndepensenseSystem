@@ -32,6 +32,8 @@ serialised by `_playback_lock`, and stopping is a flag the *playing* thread
 reads, not a call another thread makes into PortAudio. No thread can close a
 stream it did not open, by construction rather than by discipline.
 """
+import atexit
+import sys as _sys
 import threading
 from pathlib import Path
 
@@ -65,6 +67,112 @@ _stop_requested = threading.Event()
 # acknowledgement tone, and counting it as "speaking" would make a
 # stop-talking press land on nothing during the gap after a PTT press.
 _playing = threading.Event()
+
+
+# --- keeping the output device awake ----------------------------------------
+#
+# The wearable's USB headset contains its own DAC and headphone amplifier,
+# and that amplifier mutes when the wire goes quiet — either to save bus
+# power or to suppress the pop a restarting DAC would otherwise make. It
+# takes roughly 0.7-1.0 s to come back, which is longer than every cue
+# this module produces.
+#
+# Measured on the device, each played at a 3-second gap:
+#
+#     0.20 s stop cue     inaudible
+#     0.64 s cue+padding  inaudible
+#     1.00 s plain tone   audible
+#
+# and the same 0.20 s cue played 0.3 s after a long tone was audible. Only
+# the *sound's* duration mattered; stream lifetime did not. Holding the
+# stream open 2 s after the last write changed nothing, which rules out
+# anything in this module's own lifecycle.
+#
+# It is not PipeWire. `deploy/pipewire/51-no-suspend.conf` stops the node
+# suspending — confirmed applied, `suspend-timeout = 0` — and the node
+# still settles to `idle`, at which point PipeWire stops feeding the
+# device and the amp mutes anyway. `node.pause-on-idle = false` did not
+# change that. The behaviour is in the headset, below anything software
+# can configure.
+#
+# So the device is kept fed from here instead: one thread, one stream,
+# writing inaudible dither for the life of the process. `write` blocks
+# until the device consumes each block, so the loop paces itself at real
+# time and costs a 23 ms wakeup rather than a spin.
+#
+# Dither rather than zeros on purpose. Some codecs detect *digital
+# silence* and mute on that alone, which a buffer of zeros would not
+# defeat. At 1e-4 — about -80 dBFS — this sits below the noise floor of
+# any consumer DAC and is inaudible, while still being a signal.
+#
+# Started lazily on the first sound rather than wired into `App.start`,
+# because the manual tests, the probes and the calibration tools all play
+# audio without starting the app, and every one of them would otherwise
+# reproduce the fault. An explicit call at each site is exactly the kind
+# of thing that gets forgotten and then fails silently.
+_KEEPALIVE_AMPLITUDE = 1e-4
+_KEEPALIVE_RATE = 22050
+
+_keepalive_stop = threading.Event()
+_keepalive_thread: threading.Thread | None = None
+_keepalive_lock = threading.Lock()
+
+
+def _keepalive_loop() -> None:
+    """Write inaudible dither until asked to stop. Never raises."""
+    import numpy as np
+    import sounddevice as sd
+
+    rng = np.random.default_rng(0)
+    block = (
+        rng.uniform(-_KEEPALIVE_AMPLITUDE, _KEEPALIVE_AMPLITUDE,
+                    size=(_BLOCK_FRAMES, 1))
+    ).astype("float32")
+
+    try:
+        stream = sd.OutputStream(
+            samplerate=_KEEPALIVE_RATE,
+            channels=1,
+            dtype="float32",
+            blocksize=_BLOCK_FRAMES,
+        )
+        with stream:
+            while not _keepalive_stop.is_set():
+                stream.write(block)
+    except Exception as exc:
+        # A device that cannot be held open is not a reason to lose the
+        # audio that can still be played through it — every sound opens
+        # its own stream regardless of this one.
+        print(f"[audio] keepalive stopped: {exc}", file=_sys.stderr, flush=True)
+
+
+def start_keepalive() -> None:
+    """Hold the output device open so its amplifier stays awake.
+
+    Idempotent and safe from any thread. Called automatically before the
+    first sound; there is no need to call it directly.
+    """
+    global _keepalive_thread
+    with _keepalive_lock:
+        if _keepalive_thread is not None and _keepalive_thread.is_alive():
+            return
+        _keepalive_stop.clear()
+        _keepalive_thread = threading.Thread(
+            target=_keepalive_loop, name="audio-keepalive", daemon=True,
+        )
+        _keepalive_thread.start()
+
+
+def stop_keepalive(timeout_s: float = 1.0) -> None:
+    """Release the output device. Never raises."""
+    global _keepalive_thread
+    with _keepalive_lock:
+        thread = _keepalive_thread
+        _keepalive_thread = None
+    if thread is None:
+        return
+    _keepalive_stop.set()
+    thread.join(timeout=timeout_s)
 
 
 def is_playing() -> bool:
@@ -293,6 +401,11 @@ def _write_blocks(audio, samplerate: int) -> None:
     """
     import sounddevice as sd
 
+    # Lazy start: the first sound of the process brings the device up and
+    # it stays up. See the keepalive section above for why this is not an
+    # explicit call at each site.
+    start_keepalive()
+
     channels = audio.shape[1]
     stream = sd.OutputStream(
         samplerate=samplerate,
@@ -514,3 +627,10 @@ def play_chime(rising: bool = True, duration_s: float = 0.12) -> None:
         _stop_requested.clear()
         # Deliberately does not set `_playing` — see the comment on that flag.
         _write_blocks(audio, samplerate)
+
+
+# Release the device on a clean exit. Daemon threads are killed without
+# unwinding, so without this the stream is closed by process teardown
+# rather than by us — which works, but leaves the device held open for
+# the length of any shutdown that stalls.
+atexit.register(stop_keepalive)

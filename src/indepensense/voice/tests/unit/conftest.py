@@ -155,6 +155,33 @@ def fake_sf(monkeypatch) -> _FakeSoundFile:
     return sf
 
 
+# Captured at import, before any test can neutralise it, so the tests
+# that exercise the keepalive can put the real one back.
+_REAL_START_KEEPALIVE = audio.start_keepalive
+
+
+@pytest.fixture
+def real_keepalive(monkeypatch):
+    """Undo `no_keepalive` for the tests that are about the keepalive."""
+    monkeypatch.setattr(audio, "start_keepalive", _REAL_START_KEEPALIVE)
+    yield
+    audio.stop_keepalive()
+
+
+@pytest.fixture(autouse=True)
+def no_keepalive(monkeypatch):
+    """Keep the device-keepalive thread out of the suite.
+
+    `_write_blocks` starts it lazily on the first sound, which on a dev
+    machine means the test run opens a real audio device and holds it for
+    the rest of the session. Neutralised by default; the tests that
+    exercise the keepalive itself opt back in.
+    """
+    monkeypatch.setattr(audio, "start_keepalive", lambda: None)
+    yield
+    audio.stop_keepalive()
+
+
 @pytest.fixture
 def fake_sd(monkeypatch, fake_sf) -> _FakeSoundDevice:
     sd = _FakeSoundDevice()

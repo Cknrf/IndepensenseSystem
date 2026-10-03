@@ -273,3 +273,94 @@ def test_a_cue_with_no_steps_plays_nothing(fake_sd):
     audio.play_cue([])
 
     assert fake_sd.streams == []
+
+
+# --- keeping the output device awake -----------------------------------------
+#
+# The wearable's USB headset mutes its own amplifier when the wire goes
+# quiet and takes ~0.7-1.0 s to come back, which is longer than every cue
+# this module makes. Measured: a 1.00 s tone was audible at 3-second gaps,
+# a 0.64 s one was not, and holding the stream open 2 s after the last
+# write changed nothing. PipeWire config did not fix it either — the node
+# settles to `idle` and stops feeding the device whatever it is told.
+
+def test_the_first_sound_starts_the_keepalive(fake_sd, fake_sf, wav, monkeypatch):
+    """Lazy, not wired into `App.start`: the manual tests, probes and
+    calibration tools all play audio without starting the app, and every
+    one of them would otherwise reproduce the fault."""
+    started = []
+    monkeypatch.setattr(audio, "start_keepalive", lambda: started.append(1))
+
+    audio.play(wav)
+
+    assert started == [1]
+
+
+def test_a_cue_starts_it_too(fake_sd, monkeypatch):
+    pytest.importorskip("numpy")
+    started = []
+    monkeypatch.setattr(audio, "start_keepalive", lambda: started.append(1))
+
+    audio.play_stop_cue()
+
+    assert started == [1]
+
+
+def test_starting_twice_runs_one_thread(fake_sd, real_keepalive):
+    """Called before every single sound, so it has to be cheap and
+    idempotent rather than spawning a thread per utterance."""
+    audio.start_keepalive()
+    first = audio._keepalive_thread
+    audio.start_keepalive()
+
+    try:
+        assert audio._keepalive_thread is first
+    finally:
+        audio.stop_keepalive()
+
+
+def test_it_holds_a_stream_open(fake_sd, real_keepalive):
+    """The whole mechanism: a stream that stays open, so the amplifier
+    never sees the wire go quiet."""
+    audio.start_keepalive()
+    try:
+        assert _wait_until(lambda: len(fake_sd.streams) == 1)
+        assert _wait_until(lambda: len(fake_sd.streams[0].blocks) > 2)
+        assert fake_sd.streams[0].closed == 0, "released the device early"
+    finally:
+        audio.stop_keepalive()
+
+
+def test_stopping_closes_the_stream(fake_sd, real_keepalive):
+    audio.start_keepalive()
+    assert _wait_until(lambda: len(fake_sd.streams) == 1)
+
+    audio.stop_keepalive()
+
+    assert fake_sd.streams[0].closed == 1
+
+
+def test_stopping_when_not_running_is_a_no_op(fake_sd):
+    audio.stop_keepalive()          # must not raise
+
+
+def test_a_device_that_cannot_be_held_does_not_break_playback(fake_sd, fake_sf, wav, real_keepalive):
+    """Every sound opens its own stream regardless of this one, so a
+    keepalive that cannot start costs the workaround and nothing else."""
+    fake_sd.raise_on_write = True
+    audio.start_keepalive()
+    assert _wait_until(lambda: not audio._keepalive_thread.is_alive(), 2.0)
+
+    fake_sd.raise_on_write = False
+    audio.play(wav)                 # must still work
+
+    assert any(s.blocks for s in fake_sd.streams)
+
+
+def _wait_until(condition, timeout_s: float = 2.0) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if condition():
+            return True
+        time.sleep(0.01)
+    return False
