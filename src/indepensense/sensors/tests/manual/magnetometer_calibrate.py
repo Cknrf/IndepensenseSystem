@@ -78,8 +78,9 @@ import argparse
 import math
 import time
 
-from indepensense.config import MAG_ADDRESS, MAG_I2C_BUS
+from indepensense.config import MAG_ADDRESS, MAG_I2C_BUS, MAG_SWEEP_DIR
 from indepensense.sensors.qmc5883p import QMC5883P, apply_calibration
+from indepensense.sensors.tests.manual.sweep_store import FACES, SweepStore
 from indepensense.voice.audio import play_cue
 
 # Seconds of actual SPINNING per face. This is the knob, not the total.
@@ -401,6 +402,291 @@ def grade_sweep(samples, offsets, scales):
     return mean, spread_pct, verdict, advice
 
 
+def calibration_from_samples(samples):
+    """Derive `(offsets, scales, spans)` from raw `(x, y, z)` triples.
+
+    Hard-iron offset is the centre of each axis' range; soft-iron scale
+    normalises the three half-spans to their mean, so a sphere comes out
+    a sphere. Both are the standard min/max derivation.
+
+    Raises `ValueError` naming the problem when the sweep cannot support
+    a calibration at all — no samples, or an axis that never moved. That
+    is a different failure from a sweep that is merely poor, which is
+    what `grade_sweep` is for, and conflating the two would let "the
+    sensor is dead" print as "try rotating more".
+
+    Pure, and shared by the all-in-one sweep and the face-at-a-time one,
+    so the two cannot drift into computing different numbers from the
+    same samples.
+    """
+    if not samples:
+        raise ValueError("no samples")
+
+    xs = [s[0] for s in samples]
+    ys = [s[1] for s in samples]
+    zs = [s[2] for s in samples]
+
+    offsets = (
+        (max(xs) + min(xs)) / 2,
+        (max(ys) + min(ys)) / 2,
+        (max(zs) + min(zs)) / 2,
+    )
+    spans = (
+        (max(xs) - min(xs)) / 2,
+        (max(ys) - min(ys)) / 2,
+        (max(zs) - min(zs)) / 2,
+    )
+    if min(spans) <= 0.0:
+        raise ValueError(
+            "at least one axis never moved — the sweep did not cover enough "
+            "orientations, or an axis is dead"
+        )
+
+    span_avg = sum(spans) / 3
+    scales = tuple(span_avg / span for span in spans)
+    return offsets, scales, spans
+
+
+def print_result(samples, diagnosis=()) -> bool:
+    """Grade a sweep, print the verdict, and print the values if it passed.
+
+    Returns True if the values were printed. `diagnosis` is extra lines
+    shown only on a failure — where the all-in-one sweep says *when* it
+    went wrong, the face-at-a-time one says *which face*.
+    """
+    try:
+        offsets, scales, spans = calibration_from_samples(samples)
+    except ValueError as exc:
+        print(f"Cannot calibrate: {exc}.")
+        print(f"Check `sudo i2cdetect -y {MAG_I2C_BUS}` "
+              f"for address 0x{MAG_ADDRESS:02X}.")
+        return False
+
+    span_avg = sum(spans) / 3
+    print(f"{len(samples)} samples.")
+    print()
+    print(f"Axis half-spans: x={spans[0]:.1f}  y={spans[1]:.1f}  "
+          f"z={spans[2]:.1f} \u03bcT (mean {span_avg:.1f})")
+    print()
+
+    mean_ut, spread_pct, verdict, advice = grade_sweep(samples, offsets, scales)
+
+    # Printed before the values, not after. The whole point is to be read
+    # by somebody about to copy six numbers into config.py.
+    print("  " + "-" * 64)
+    print(f"  SWEEP QUALITY: {verdict}")
+    print(f"  corrected field {mean_ut:.1f} \u03bcT, "
+          f"varying {spread_pct:.1f}% across the sweep")
+    print("  " + "-" * 64)
+    print()
+    print(f"  {advice}")
+    print()
+
+    # Magnitude is a separate question from consistency: a sweep can be
+    # beautifully spherical and still be measuring the wrong thing.
+    if not _EARTH_FIELD_MIN_UT <= mean_ut <= _EARTH_FIELD_MAX_UT:
+        print(f"  Also: {mean_ut:.1f} \u03bcT is outside Earth's range "
+              f"({_EARTH_FIELD_MIN_UT:.0f}-{_EARTH_FIELD_MAX_UT:.0f} \u03bcT).")
+        if mean_ut < _EARTH_FIELD_MIN_UT:
+            print("  Too low usually means the sweep never reached the "
+                  "extremes \u2014 rotate further.")
+        else:
+            print("  Too high means something magnetic is close to the "
+                  "sensor. If it is part of")
+            print("  the wearable it belongs there and the offsets will "
+                  "absorb it; if it is the")
+            print("  bench, move.")
+        print()
+
+    _beep(_TONE_BAD if verdict.startswith("BAD") else _TONE_GOOD)
+
+    if verdict.startswith("BAD"):
+        for line in diagnosis:
+            print(line)
+        print()
+        print("  Values withheld.")
+        return False
+
+    print("Paste these values into `src/indepensense/config.py`:")
+    print()
+    print(f"    MAG_OFFSET_X = {offsets[0]:.3f}")
+    print(f"    MAG_OFFSET_Y = {offsets[1]:.3f}")
+    print(f"    MAG_OFFSET_Z = {offsets[2]:.3f}")
+    print(f"    MAG_SCALE_X = {scales[0]:.4f}")
+    print(f"    MAG_SCALE_Y = {scales[1]:.4f}")
+    print(f"    MAG_SCALE_Z = {scales[2]:.4f}")
+    print()
+    print("Then rerun `single_magnetometer_test.py` and verify that rotating")
+    print("the cane through 360\u00b0 gives smooth heading values and a roughly")
+    print("constant |B|.")
+    return True
+
+
+# --- face at a time ----------------------------------------------------------
+#
+# The all-in-one sweep above runs all six faces back to back on a timer.
+# It works, but one spoiled face costs the whole 90 seconds, and the
+# first real attempt came back BAD with no way to redo only the part that
+# went wrong.
+#
+# These record one face per command instead, accumulating into
+# `SweepStore`. The maths is identical — the store hands back one flat
+# list of samples, exactly what the timed sweep collects — so the two
+# modes cannot disagree about the same readings.
+#
+# What this mode makes easier to get wrong is covered in `sweep_store`:
+# every face has to come from one unchanged physical setup, and nothing
+# here can detect a re-seated battery.
+
+_SWEEP_PATH = MAG_SWEEP_DIR / "sweep.json"
+
+_FACE_INSTRUCTIONS = {
+    "front": "front of the vest pointing UP, as if it were lying on its back",
+    "back": "back of the vest pointing UP",
+    "left": "LEFT side pointing UP",
+    "right": "RIGHT side pointing UP",
+    "top": "TOP pointing UP, the way it sits when worn",
+    "bottom": "BOTTOM pointing UP, upside down",
+}
+
+
+def collect_face(mag, face: str, seconds: float):
+    """Spin on one face for `seconds`, returning the samples."""
+    print()
+    print(f"  FACE: {face.upper()}")
+    print(f"  Hold the vest with the {_FACE_INSTRUCTIONS[face]},")
+    print(f"  then rotate it steadily for {seconds:.0f} seconds.")
+    print()
+    for remaining in (3, 2, 1):
+        print(f"    {remaining}...", flush=True)
+        _beep(_TONE_COUNTDOWN)
+        time.sleep(0.7)
+    print("    GO", flush=True)
+    _beep(_TONE_START)
+
+    samples = []
+    started = time.time()
+    while time.time() - started < seconds:
+        reading = mag.read()
+        if reading is not None:
+            field = (reading.magnetic_x, reading.magnetic_y,
+                     reading.magnetic_z)
+            samples.append(field)
+            magnitude = math.sqrt(sum(c * c for c in field))
+            left = seconds - (time.time() - started)
+            print(f"\r    {left:4.1f}s  {len(samples):4d} samples  "
+                  f"|B| {magnitude:5.1f} \u03bcT", end="", flush=True)
+        time.sleep(0.05)
+    print()
+    _beep(_TONE_FINISH)
+    return samples
+
+
+def status_lines(store) -> list[str]:
+    """Human-readable progress, including the cross-face sanity check."""
+    lines = []
+    means = store.face_means()
+    odd = {face for face, _mean, _median in store.odd_faces()}
+
+    lines.append("  face      samples   mean |B|")
+    lines.append("  " + "-" * 40)
+    for face in FACES:
+        if face in means:
+            count = len(store.data["faces"][face]["samples"])
+            flag = "   <- out of line with the rest" if face in odd else ""
+            lines.append(f"  {face:9s} {count:7d}   {means[face]:6.1f} \u03bcT{flag}")
+        else:
+            lines.append(f"  {face:9s}       -          -")
+    lines.append("")
+
+    missing = store.missing()
+    if missing:
+        lines.append(f"  {len(store.recorded())}/6 recorded. "
+                     f"Still needed: {', '.join(missing)}")
+    else:
+        lines.append("  All six recorded — run --finish.")
+
+    if odd:
+        lines.append("")
+        lines.append("  A face whose mean field is out of line with the others")
+        lines.append("  saw something they did not. The ambient field is the")
+        lines.append("  same whichever way the vest points, so this is either")
+        lines.append("  interference during that face or a setup that changed")
+        lines.append("  between runs. Re-record it rather than finishing.")
+
+    if store.is_stale():
+        hours = store.span_seconds() / 3600.0
+        lines.append("")
+        lines.append(f"  These faces span {hours:.1f} hours. The offsets being")
+        lines.append("  computed are the device's OWN field, so they are only")
+        lines.append("  valid if nothing about the assembly changed in that")
+        lines.append("  time. If anything was unplugged, --reset and start over.")
+
+    return lines
+
+
+def run_face_mode(args) -> int:
+    store = SweepStore(_SWEEP_PATH)
+
+    if args.reset:
+        store.reset()
+        store.save()
+        print(f"Cleared {_SWEEP_PATH}. Start again with --face front.")
+        return 0
+
+    if args.status:
+        if not store.recorded():
+            print("Nothing recorded yet. Start with:")
+            print("    python -m indepensense.sensors.tests.manual."
+                  "magnetometer_calibrate --face front")
+            return 0
+        print("\n".join(status_lines(store)))
+        return 0
+
+    if args.finish:
+        missing = store.missing()
+        if missing:
+            print(f"Only {len(store.recorded())}/6 faces recorded. "
+                  f"Missing: {', '.join(missing)}.")
+            print("Record them first — a calibration from a partial sweep is")
+            print("worse than none, because it looks like a real answer.")
+            return 1
+        print("\n".join(status_lines(store)))
+        print()
+        diagnosis = [
+            f"  {face} reads {mean:.1f} \u03bcT against a median of {median:.1f} "
+            "— re-record that face."
+            for face, mean, median in store.odd_faces()
+        ]
+        print_result(store.samples(), diagnosis)
+        return 0
+
+    face = args.face.lower()
+    if face not in FACES:
+        print(f"Unknown face {args.face!r}. Expected one of: "
+              f"{', '.join(FACES)}")
+        return 2
+
+    mag = QMC5883P(bus_number=MAG_I2C_BUS, address=MAG_ADDRESS)
+    try:
+        samples = collect_face(mag, face, max(1.0, args.spin))
+    finally:
+        mag.close()
+
+    if not samples:
+        print("No samples — the magnetometer is not returning data.")
+        print(f"Check `sudo i2cdetect -y {MAG_I2C_BUS}` "
+              f"for address 0x{MAG_ADDRESS:02X}.")
+        _beep(_TONE_BAD)
+        return 1
+
+    store.record(face, samples)
+    store.save()
+    print()
+    print("\n".join(status_lines(store)))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Magnetometer calibration sweep.")
     knob = parser.add_mutually_exclusive_group()
@@ -415,7 +701,28 @@ def main():
         help="total sweep length instead, if you would rather cap the whole "
              "thing. The changeover comes out of this, not on top of it.",
     )
+    parser.add_argument(
+        "--face", metavar="NAME",
+        help="record ONE face and stop, accumulating across runs: "
+             f"{', '.join(FACES)}. Lets a spoiled face be redone on its "
+             "own instead of costing the whole sweep.",
+    )
+    parser.add_argument(
+        "--status", action="store_true",
+        help="show which faces are recorded, and flag any that look wrong",
+    )
+    parser.add_argument(
+        "--finish", action="store_true",
+        help="compute the calibration from the faces recorded so far",
+    )
+    parser.add_argument(
+        "--reset", action="store_true",
+        help="discard the accumulated faces and start a new sweep",
+    )
     args = parser.parse_args()
+
+    if args.face or args.status or args.finish or args.reset:
+        return run_face_mode(args)
 
     if args.seconds is not None:
         duration_s = max(6.0, args.seconds)
@@ -453,10 +760,6 @@ def main():
     print("GO!", flush=True)
     _beep(_TONE_START)
 
-    x_min = x_max = None
-    y_min = y_max = None
-    z_min = z_max = None
-
     # Every sample, not just the extremes. The grade at the end needs to
     # apply the derived calibration to all of them, and 30 s at the
     # driver's poll rate is a few hundred triples.
@@ -467,7 +770,6 @@ def main():
     timed: list[tuple[float, tuple[float, float, float]]] = []
 
     t_start = time.time()
-    sample_count = 0
     try:
         schedule = cue_schedule(duration_s, _SWEEP_POSITIONS, _TURN_LEAD_S)
         next_cue = 0
@@ -488,19 +790,11 @@ def main():
 
             reading = mag.read()
             if reading is not None:
-                sample_count += 1
                 field = (
                     reading.magnetic_x, reading.magnetic_y, reading.magnetic_z
                 )
                 samples.append(field)
                 timed.append((time.time() - t_start, field))
-                x_min = reading.magnetic_x if x_min is None else min(x_min, reading.magnetic_x)
-                x_max = reading.magnetic_x if x_max is None else max(x_max, reading.magnetic_x)
-                y_min = reading.magnetic_y if y_min is None else min(y_min, reading.magnetic_y)
-                y_max = reading.magnetic_y if y_max is None else max(y_max, reading.magnetic_y)
-                z_min = reading.magnetic_z if z_min is None else min(z_min, reading.magnetic_z)
-                z_max = reading.magnetic_z if z_max is None else max(z_max, reading.magnetic_z)
-
                 magnitude = math.sqrt(
                     reading.magnetic_x ** 2
                     + reading.magnetic_y ** 2
@@ -526,93 +820,8 @@ def main():
 
     print()
     print()
-    if sample_count == 0 or x_min is None:
-        print("No samples captured — the magnetometer isn't returning data.")
-        print(
-            f"Check `sudo i2cdetect -y {MAG_I2C_BUS}` "
-            f"for address 0x{MAG_ADDRESS:02X}."
-        )
-        return
-
-    offset_x = (x_max + x_min) / 2
-    offset_y = (y_max + y_min) / 2
-    offset_z = (z_max + z_min) / 2
-
-    span_x = (x_max - x_min) / 2
-    span_y = (y_max - y_min) / 2
-    span_z = (z_max - z_min) / 2
-
-    if min(span_x, span_y, span_z) <= 0.0:
-        print("At least one axis never moved — the sweep didn't cover enough")
-        print("orientations, or an axis is dead. Re-run and rotate more fully.")
-        return
-
-    span_avg = (span_x + span_y + span_z) / 3
-    scale_x = span_avg / span_x
-    scale_y = span_avg / span_y
-    scale_z = span_avg / span_z
-
-    print(f"Calibration complete. {sample_count} samples captured.")
-    print()
-    print(f"Axis half-spans: x={span_x:.1f}  y={span_y:.1f}  z={span_z:.1f} μT "
-          f"(mean {span_avg:.1f})")
-    print()
-
-    mean_ut, spread_pct, verdict, advice = grade_sweep(
-        samples,
-        (offset_x, offset_y, offset_z),
-        (scale_x, scale_y, scale_z),
-    )
-
-    # Printed before the values, not after. The whole point is to be read
-    # by somebody about to copy six numbers into config.py.
-    print("  " + "-" * 64)
-    print(f"  SWEEP QUALITY: {verdict}")
-    print(f"  corrected field {mean_ut:.1f} μT, "
-          f"varying {spread_pct:.1f}% across the sweep")
-    print("  " + "-" * 64)
-    print()
-    print(f"  {advice}")
-    print()
-
-    # Magnitude is a separate question from consistency: a sweep can be
-    # beautifully spherical and still be measuring the wrong thing.
-    if not _EARTH_FIELD_MIN_UT <= mean_ut <= _EARTH_FIELD_MAX_UT:
-        print(f"  Also: {mean_ut:.1f} μT is outside Earth's range "
-              f"({_EARTH_FIELD_MIN_UT:.0f}-{_EARTH_FIELD_MAX_UT:.0f} μT).")
-        if mean_ut < _EARTH_FIELD_MIN_UT:
-            print("  Too low usually means the sweep never reached the "
-                  "extremes — rotate further.")
-        else:
-            print("  Too high means something magnetic is close to the "
-                  "sensor. If it is part of")
-            print("  the wearable it belongs there and the offsets will "
-                  "absorb it; if it is the")
-            print("  bench, move.")
-        print()
-
-    _beep(_TONE_BAD if verdict.startswith("BAD") else _TONE_GOOD)
-
-    if verdict.startswith("BAD"):
-        for line in diagnose_interference(timed, segment):
-            print(line)
-        print()
-        print("  Values withheld.")
-        return
-
-    print("Paste these values into `src/indepensense/config.py`:")
-    print()
-    print(f"    MAG_OFFSET_X = {offset_x:.3f}")
-    print(f"    MAG_OFFSET_Y = {offset_y:.3f}")
-    print(f"    MAG_OFFSET_Z = {offset_z:.3f}")
-    print(f"    MAG_SCALE_X = {scale_x:.4f}")
-    print(f"    MAG_SCALE_Y = {scale_y:.4f}")
-    print(f"    MAG_SCALE_Z = {scale_z:.4f}")
-    print()
-    print("Then rerun `single_magnetometer_test.py` and verify that rotating")
-    print("the cane through 360° gives smooth heading values and a roughly")
-    print("constant |B|.")
+    print_result(samples, diagnose_interference(timed, segment))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

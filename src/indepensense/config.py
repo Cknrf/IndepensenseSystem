@@ -458,6 +458,14 @@ PERF_LOG_DIR = PROJECT_ROOT / "data" / "performance"
 # happened to launch the test from.
 BATTERY_LOG_DIR = PROJECT_ROOT / "data" / "battery"
 
+# Where a face-at-a-time calibration sweep accumulates its samples.
+#
+# The six faces can be recorded as six separate commands, minutes apart,
+# so the samples have to outlive the process that captured them. Same
+# reasoning as the two above: it must not matter which directory the test
+# was launched from, and this is working data rather than source.
+MAG_SWEEP_DIR = PROJECT_ROOT / "data" / "calibration"
+
 # YOLOv8 object detection.
 #
 # The `-oiv7` suffix picks the variant trained on Open Images V7 (600
