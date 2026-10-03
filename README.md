@@ -473,5 +473,6 @@ last response — or, while the wearable is talking, stops it.
 | [`docs/graphhopper.md`](docs/graphhopper.md) | GraphHopper install, map data, systemd service |
 | [`docs/photon.md`](docs/photon.md) | Photon install, index data, systemd service |
 | [`docs/sim7600.md`](docs/sim7600.md) | SIM7600 module setup — cellular data and GPS |
+| [`docs/audio-portaudio.md`](docs/audio-portaudio.md) | **Open problem** — short audio cues are silently discarded; the workaround, the evidence, and the contradiction still unexplained |
 | [`docs/deferred.md`](docs/deferred.md) | Work consciously parked, and why — the source for Future Work |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreement and architecture decisions in force |

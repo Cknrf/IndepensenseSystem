@@ -2072,16 +2072,33 @@ class App:
         the motor pulse and chime in sequence — motor first (brief and
         felt), then chime (heard) — total ~270 ms. This precedes
         recording so the chime isn't captured into the audio file.
+
+        **The chime is outside `_warning_lock` and must stay outside it.**
+        That lock serialises motor and buzzer patterns; every other block
+        holding it touches nothing else. This was the one exception, and
+        it coupled the haptics to the audio layer: `play_chime` waits on
+        the audio lock, which the announcer holds for a whole utterance —
+        thirty seconds on an OCR read. A press during one left this
+        method holding `_warning_lock` the entire time, and with it:
+
+          * gpiozero's callback thread, so PTT stopped responding
+          * `_play_emergency_feedback`, so the emergency buzzer could not
+            fire — the one output that has to work when nothing else does
+          * every obstacle warning pattern
+
+        Sequential either way, so the ordering the docstring promises is
+        unchanged; only the lock's scope shrinks to what it is for.
         """
         with self._warning_lock:
             try:
                 self._pulse_all_motors(duration_s=0.15)
             except Exception as exc:
                 print(f"[feedback] motor-ack error: {exc}", file=sys.stderr, flush=True)
-            try:
-                play_chime(rising=rising_chime)
-            except Exception as exc:
-                print(f"[feedback] chime error: {exc}", file=sys.stderr, flush=True)
+
+        try:
+            play_chime(rising=rising_chime)
+        except Exception as exc:
+            print(f"[feedback] chime error: {exc}", file=sys.stderr, flush=True)
 
     def _play_emergency_feedback(self) -> None:
         """Emergency-press feedback: 3 fast buzzer beeps + all-motor pulse.
