@@ -652,11 +652,18 @@ def play_busy_cue() -> None:
 # amplitude: ~14 dB, which is not "quieter" but gone. Worse, `_tone`
 # fades 8 ms at each end, so 16 of those 45 ms were ramp.
 #
-# 120 ms at 0.18 lands ~6 dB under the stop cue: clearly softer, which is
-# the design intent, and clearly there. Keep both numbers in mind when
-# tuning — halving the duration costs as much as halving the amplitude.
+# 120 ms at 0.26 lands ~3.5 dB under the stop cue: still audibly the
+# quieter of the two, which is the design intent, but comfortably present
+# on the headset. 0.18 was tried first and was clearly audible in the cue
+# test yet still too faint in use, so this is a second step up rather than
+# a guess. Keep both numbers in mind when tuning — halving the duration
+# costs as much as halving the amplitude.
+#
+# Going much past this makes it rival the cues that answer a press, and a
+# background sound that is as loud as an answer stops reading as
+# background: the wearer starts attending to it every 1.2 s.
 _WAITING_TICK = [(520.0, 0.12)]
-_WAITING_AMPLITUDE = 0.18
+_WAITING_AMPLITUDE = 0.26
 
 
 def play_waiting_tick() -> None:
