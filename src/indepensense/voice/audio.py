@@ -68,26 +68,43 @@ _stop_requested = threading.Event()
 _playing = threading.Event()
 
 
-# --- PortAudio has to be re-initialised between streams ----------------------
+# --- PortAudio has to be re-initialised immediately before every stream ------
 #
-# Only the FIRST stream of a process plays a short sound. Every stream
-# after it silently discards roughly its first 0.8 s, so a 0.2 s cue
-# vanishes entirely while a 1 s tone is merely clipped — which is why
-# speech always worked and the acknowledgement cues never did.
+# A short sound only plays if `Pa_Initialize` ran *just* before the stream
+# that carries it. Let a few seconds pass between the two and the stream
+# silently discards roughly its first 0.8 s — which erases a 0.2 s cue
+# completely while merely clipping a 1 s tone, and that is why speech
+# always worked and the acknowledgement cues never did.
 #
-# Measured on the device, all within one process:
+# The evidence, all measured on the device rather than reasoned about:
 #
-#     short #1   audible        long tone   audible
-#     short #2   SILENT         short #3    SILENT
+#     one process, 3 s apart     short #1 audible, #2 SILENT, #3 SILENT
+#     five separate processes    audible 5/5
+#     `aplay`, 3 s apart         audible every time
+#     0.3 s after a long tone    audible
+#     re-init, then open at once audible every time
+#     re-init, then open 3 s on  SILENT
 #
-# and the same cue played by a fresh `python -c` each time — five
-# processes — was audible five times out of five. `aplay` likewise. The
-# device was never at fault, and neither was PipeWire: `blocksize`,
-# `latency`, an explicit `stop()` before close, and `sd.play()` itself
-# all failed identically.
+# The first four were originally read as "only the first stream of a
+# process works", and a fix built on that — re-initialising when a stream
+# *closed*, so the cost fell between sounds instead of in front of them —
+# tested green in units and failed immediately on the device. That last
+# pair is what the ordinal theory cannot explain and the elapsed-time one
+# can: in every working case `Pa_Initialize` and the stream are adjacent.
+# Import-then-play is adjacent, which is why a fresh process looks like a
+# "first stream" effect.
 #
-# `Pa_Terminate()` + `Pa_Initialize()` restores whatever state the first
-# stream of a process enjoys, and short sounds play every time.
+# What decays in between is still unidentified — PortAudio's cached ALSA
+# configuration, the PipeWire node, or the headset's own amplifier. So
+# this is an empirically determined remedy, not a root-cause fix, and a
+# PipeWire or kernel update could make it redundant or insufficient.
+# `deploy/pipewire/51-no-suspend.conf` was an earlier attempt at the same
+# symptom from the suspension angle and did not resolve it.
+#
+# The cost is real and unavoidable: **96 ms on the Pi** (2 ms on a Mac),
+# because a re-init re-enumerates every ALSA device. It cannot be moved
+# off the critical path, because being on the critical path is precisely
+# what makes it work.
 #
 # Guarded by a stream count, and that guard is the important part.
 # Terminating PortAudio while any stream is live — including the
@@ -100,13 +117,6 @@ _playing = threading.Event()
 _portaudio_lock = threading.Lock()
 _portaudio_streams = 0
 
-# True when PortAudio has been initialised and nothing has opened a stream
-# on it since — i.e. the next stream will be a "first" stream.
-#
-# Importing sounddevice initialises it, so the first sound of the process
-# already enjoys that and needs no work done for it.
-_portaudio_fresh = True
-
 
 # Bound on the unwind loop below. PortAudio's init count should never be
 # above 1 here, so anything past a couple of passes means the counter is
@@ -117,10 +127,8 @@ _MAX_TERMINATE_PASSES = 4
 def _reinitialise_portaudio() -> bool:
     """Restore the first-stream-of-a-process condition. Never raises.
 
-    Returns True only if PortAudio is up and freshly initialised. The
-    caller must not record the context as fresh on a False — a failed
-    re-init leaves the library *down*, and treating that as fresh would
-    skip the refresh on the next sound and build a stream on a corpse.
+    Reports whether PortAudio is up afterwards, so a caller can tell a
+    refreshed context from a dead one.
 
     Caller must hold `_portaudio_lock` and must have verified that no
     stream is open. Uses `sounddevice`'s private `_terminate`/`_initialize`
@@ -194,42 +202,37 @@ def _reinitialise_portaudio() -> bool:
 
 
 def _claim_portaudio() -> None:
-    """Register a stream about to open, refreshing PortAudio if it is stale.
+    """Re-initialise PortAudio and register a stream about to open.
 
-    Normally a no-op, because `_release_portaudio` has already done the
-    work. It stays here as the correctness backstop: if a release was
-    skipped or its re-init failed, the stream must not be built on a
-    stale context.
+    Called immediately before the stream is constructed, never after:
+    `Pa_Terminate` invalidates every existing stream pointer, so a stream
+    built first and claimed second dies on `start()` with
+    `Invalid stream pointer`.
+
+    Unconditional when nothing else is open, including for the very first
+    sound of the process. Importing sounddevice does initialise PortAudio,
+    but startup then spends 30-60 s loading Whisper, Piper and the NLU
+    model before anything speaks — by which point that initialisation is
+    exactly as stale as any other.
     """
-    global _portaudio_streams, _portaudio_fresh
+    global _portaudio_streams
     with _portaudio_lock:
-        if _portaudio_streams == 0 and not _portaudio_fresh:
+        if _portaudio_streams == 0:
             _reinitialise_portaudio()
-        # Consumed: this stream is the "first" one, so the next is not.
-        _portaudio_fresh = False
         _portaudio_streams += 1
 
 
 def _release_portaudio() -> None:
-    """Register a stream that has closed, and refresh PortAudio for the next.
+    """Register a stream that has closed.
 
-    The re-init runs *here*, after the sound, rather than before the next
-    one — measured at **96 ms on the Pi** (2 ms on a Mac; it re-enumerates
-    every ALSA device). Paid at claim time that lands on the start of a
-    200 ms cue and, worse, between the PTT chime and the microphone going
-    live, where it eats the first tenth of a second of whatever the user
-    says. Paid here it falls in the gap between sounds, where nobody is
-    waiting for it.
-
-    It costs nothing in correctness: `_claim_portaudio` still refreshes a
-    stale context, so a skipped or failed release degrades to the old
-    timing rather than to a clipped cue.
+    Deliberately does no work. Re-initialising here instead — so the 96 ms
+    falls between sounds rather than in front of them — was tried, passed
+    every unit test, and silenced the cues on the device: by the time the
+    next sound arrives the context has gone stale again.
     """
-    global _portaudio_streams, _portaudio_fresh
+    global _portaudio_streams
     with _portaudio_lock:
         _portaudio_streams = max(0, _portaudio_streams - 1)
-        if _portaudio_streams == 0:
-            _portaudio_fresh = _reinitialise_portaudio()
 
 
 

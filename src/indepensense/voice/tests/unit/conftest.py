@@ -215,12 +215,10 @@ def fake_sd(monkeypatch, fake_sf) -> _FakeSoundDevice:
     audio._playing.clear()
     audio._stop_requested.clear()
     audio._portaudio_streams = 0
-    audio._portaudio_fresh = True
     yield sd
     audio._playing.clear()
     audio._stop_requested.clear()
     audio._portaudio_streams = 0
-    audio._portaudio_fresh = True
     assert not sd.unsafe_reinits, (
         f"PortAudio was re-initialised with {sd.unsafe_reinits} stream(s) "
         "live — that is the double free, not a clipped cue"

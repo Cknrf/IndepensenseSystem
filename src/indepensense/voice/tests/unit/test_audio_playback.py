@@ -444,58 +444,49 @@ def test_speech_and_cues_interleaved_stay_valid(fake_sd, fake_sf, wav, tmp_path)
         assert stream.started == 1
 
 
-# --- the re-init is paid after the sound, not before it ---------------------
+# --- the re-init must be adjacent to the stream -----------------------------
 #
-# Measured on the Pi: 96 ms, because it re-enumerates every ALSA device
-# (2 ms on a Mac via CoreAudio). Paid before the stream, that lands on the
-# front of a 200 ms cue, and — worse — between the PTT chime and the
-# microphone going live, where it swallows the first tenth of a second of
-# whatever the user says. Paid after, it falls in the gap between sounds.
+# 96 ms on the Pi, and it cannot be moved. Running it when a stream
+# *closed* — so the cost fell between sounds instead of in front of them —
+# passed every test here and silenced the cues on the device within a
+# minute of being installed. Adjacency is the property that makes it work,
+# so adjacency is what gets asserted.
 
-def test_a_sound_does_not_reinitialise_before_playing(fake_sd, fake_sf, wav):
-    """The latency property. If this fails, every sound costs 96 ms more."""
-    calls = []
+def test_each_sound_reinitialises_immediately_before_its_stream(fake_sd, fake_sf,
+                                                                wav):
+    events = []
     original = audio._reinitialise_portaudio
 
-    def _counting():
-        calls.append(len(fake_sd.streams))
+    def _recording():
+        events.append("reinit")
         return original()
 
-    audio._reinitialise_portaudio = _counting
+    audio._reinitialise_portaudio = _recording
     try:
+        monitored = fake_sd.OutputStream
+
+        def _stream(**kwargs):
+            events.append("stream")
+            return monitored(**kwargs)
+
+        fake_sd.OutputStream = _stream
+        fake_sd.InputStream = _stream
         audio.play(wav)
         audio.play(wav)
     finally:
         audio._reinitialise_portaudio = original
 
-    # Each re-init happened once the stream it follows already existed —
-    # i.e. after the sound, never in front of one.
-    assert calls == [1, 2], f"re-initialised before a sound: {calls}"
+    assert events == ["reinit", "stream", "reinit", "stream"], (
+        f"re-init and stream are not adjacent: {events}"
+    )
 
 
-def test_the_first_sound_of_the_process_pays_nothing(fake_sd, fake_sf, wav,
-                                                     reinit_calls):
-    """Importing sounddevice already initialised PortAudio, so the first
-    stream is a first stream and needs no help to be one."""
-    audio._portaudio_fresh = True
-
+def test_the_first_sound_reinitialises_too(fake_sd, fake_sf, wav, reinit_calls):
+    """Import-time initialisation is stale by the time anything speaks —
+    startup spends 30-60 s loading models first."""
     audio.play(wav)
 
-    assert reinit_calls == [1], "the first sound should re-init once, on the way out"
-    assert fake_sd.streams[0].blocks
-
-
-def test_a_stale_context_is_still_refreshed_before_the_stream(fake_sd, fake_sf,
-                                                              wav, reinit_calls):
-    """The backstop. If a release was skipped or its re-init failed, the
-    next claim must do the work rather than open a stale stream."""
-    audio._portaudio_fresh = False
-
-    audio.play(wav)
-
-    # Twice: once on the way in because the context was stale, once on the
-    # way out to leave it fresh for the next sound.
-    assert len(reinit_calls) == 2
+    assert reinit_calls == [1]
 
 
 # --- recovery: PortAudio must never be left down -----------------------------
@@ -517,11 +508,8 @@ def test_a_stale_context_is_still_refreshed_before_the_stream(fake_sd, fake_sf,
 def test_recovers_when_portaudio_was_left_terminated(fake_sd, fake_sf, wav):
     """The permanent-silence bug. One failed initialise must not be fatal.
 
-    A library that is down implies the last re-init failed, which is
-    exactly the state `_portaudio_fresh = False` records — so the next
-    claim refreshes before building anything."""
+    Every sound re-initialises on the way in, so the next one recovers."""
     fake_sd._initialized = 0               # as a failed `Pa_Initialize` leaves it
-    audio._portaudio_fresh = False
 
     audio.play(wav)
 
@@ -530,18 +518,8 @@ def test_recovers_when_portaudio_was_left_terminated(fake_sd, fake_sf, wav):
 
 
 def test_a_failed_initialise_is_retried_by_the_next_sound(fake_sd, fake_sf, wav):
-    """Failure is survivable only if the next sound tries again.
-
-    Three sounds, because the failure now surfaces one sound later than
-    it used to: the re-init runs on the way *out*, so the sound that
-    triggers the failure has already been played by the time it happens.
-    """
+    """Failure is survivable only if the next sound tries again."""
     fake_sd.fail_initialize = True
-    audio.play(wav)                        # plays fine; leaves PortAudio down
-    assert fake_sd.streams[0].blocks
-    assert fake_sd._initialized == 0
-    assert audio._portaudio_fresh is False, "a failed re-init must not read as fresh"
-
     with pytest.raises(Exception):         # nothing can open while it is down
         audio.play(wav)
 
