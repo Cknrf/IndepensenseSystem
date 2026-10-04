@@ -2327,9 +2327,16 @@ class App:
         finally:
             if stages:
                 spent = " | ".join(f"{name} {secs:.1f}s" for name, secs in stages)
-                total = sum(secs for _, secs in stages)
+                # `wait` excludes playback deliberately. Playback is the
+                # user being served, not kept waiting, and folding it in
+                # made a short answer to a slow question look identical
+                # to a fast answer that happens to be long — two
+                # different problems with two different fixes. `wait` is
+                # the silence the blip covers; `play` is how much the
+                # device talks, which is a message-length question.
+                wait = sum(secs for name, secs in stages if name != "play")
                 print(
-                    f"[PTT] timing: {spent} | total {total:.1f}s",
+                    f"[PTT] timing: {spent} | wait {wait:.1f}s",
                     flush=True,
                 )
             # Backstop: every path that reached the recorder has already

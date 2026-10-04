@@ -159,3 +159,25 @@ Phase 1 — At the desk, ~15 min
   
   Tell me which you want to start with and paste the output. If anything fails I'd rather see the log than a summary.
 
+
+
+When sending emergency alert, there should be a message regarding the result status, if it both sent succesffuly since there's no response being said: 
+
+[EMERGENCY BUTTON] Pressed. Firing alert...
+[EMERGENCY BUTTON] response: Sending your emergency alert.
+[sms] mmcli failed (1): error: couldn't find modem
+[sms] modem 8 is gone — re-discovering.
+[sms] re-bound to modem 10.
+[sms] sent to +639051675263
+[alert] delivered on both channels.
+[obstacle:top] clear at 155 cm
+[obstacle:top] danger at 18 cm (entered)
+[obstacle:top] clear at 215 cm
+[obstacle:top] danger at 17 cm (entered)
+[obstacle:top] clear at 6553 cm
+[obstacle:top] danger at 16 cm (entered)
+[obstacle:top] danger at 15 cm (still)
+[obstacle:top] clear at 6553 cm
+[obstacle:top] danger at 14 cm (entered)
+
+
