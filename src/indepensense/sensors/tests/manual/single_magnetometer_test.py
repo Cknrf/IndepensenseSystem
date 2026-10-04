@@ -24,6 +24,7 @@ from indepensense.config import (
     MAG_ADDRESS,
     MAG_FORWARD_AXIS,
     MAG_I2C_BUS,
+    MAG_HEADING_OFFSET_DEG,
     MAG_LEFT_AXIS,
     MAG_OFFSET_X,
     MAG_OFFSET_Y,
@@ -61,6 +62,12 @@ def main():
         scale_z=MAG_SCALE_Z,
         forward_axis=MAG_FORWARD_AXIS,
         left_axis=MAG_LEFT_AXIS,
+        # Must match `App._try_open_magnetometer` exactly. This is the
+        # tool the calibration is *verified* with, so a difference here
+        # means checking one thing and shipping another — and it was
+        # missing this argument for a while, quietly showing headings
+        # without the mount correction the running system applies.
+        heading_offset_deg=MAG_HEADING_OFFSET_DEG,
     )
     if (MAG_OFFSET_X, MAG_OFFSET_Y, MAG_OFFSET_Z) == (0.0, 0.0, 0.0):
         print("NOTE: calibration offsets are all zero — headings will be biased.")
