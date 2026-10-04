@@ -143,7 +143,17 @@ def compose_alert_sms(event: AlertEvent, now: datetime | None = None) -> str:
     link is the single most actionable thing a guardian can receive, so it
     goes in ahead of anything else optional.
     """
-    stamp = (now or event.occurred_at).strftime("%d %b %H:%M")
+    # `.astimezone()` with no argument converts to the system's local
+    # zone. `occurred_at` is tz-aware UTC (see the executor), and
+    # formatting it directly printed UTC wall-clock — so an alert raised
+    # at 13:05 in Manila reached the guardian stamped 05:05, eight hours
+    # out. A guardian deciding whether an alert is happening now or is
+    # hours stale is the one judgement this timestamp exists to support.
+    #
+    # A naive datetime passed as `now` is left alone: `astimezone` would
+    # assume it is local and return it unchanged anyway, which is the
+    # right reading for one constructed by a caller or a test.
+    stamp = (now or event.occurred_at).astimezone().strftime("%d %b %H:%M")
     if abs(event.latitude) < _NO_FIX_EPSILON and abs(event.longitude) < _NO_FIX_EPSILON:
         location = "Location unavailable (no GPS fix)"
     else:
