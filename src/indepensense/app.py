@@ -748,6 +748,7 @@ class App:
 
     def start(self) -> None:
         print("Initialising IndepenSense runtime...", flush=True)
+        self._report_audio_devices()
 
         # Before anything slow: tell the user the device is awake. Startup
         # is 2-3 minutes and every second of it is silent otherwise, which
@@ -2067,6 +2068,52 @@ class App:
         except Exception as exc:
             print(f"[PTT] could not reclaim the button: {exc}",
                   file=sys.stderr, flush=True)
+
+    def _report_audio_devices(self) -> None:
+        """Log what PortAudio can see, at startup. Never raises.
+
+        Speech is the wearable's only channel to its user, and when it
+        fails it fails invisibly: the first evidence is a PortAudio error
+        from inside whatever happened to speak first, minutes into the
+        run, phrased in C ("Invalid sample rate", "Error querying device
+        -1") with no indication of what it was looking at.
+
+        Diagnosing that from outside the process turned out to be close
+        to impossible. Every reconstruction of the service's environment
+        — same user, same groups, same XDG_RUNTIME_DIR — opened a 16 kHz
+        stream happily while the service itself could not, which means
+        the thing that differs is something the reconstruction did not
+        reproduce. The only vantage point that cannot be wrong about what
+        the process sees is the process.
+
+        Deliberately before the first sound is attempted, so the log
+        reads in causal order: what was available, then what happened
+        when we used it.
+        """
+        try:
+            import sounddevice as sd  # lazy: only resolvable on the Pi
+
+            devices = sd.query_devices()
+            default_in, default_out = sd.default.device
+        except Exception as exc:
+            print(f"  Audio: PortAudio unavailable ({exc}).", flush=True)
+            return
+
+        def _describe(index) -> str:
+            # `sd.default.device` is -1 when PortAudio found no default,
+            # which is the state behind "Error querying device -1".
+            if index is None or index < 0:
+                return "NONE"
+            try:
+                return f"{index} {devices[index]['name']!r}"
+            except Exception:
+                return f"{index} (unreadable)"
+
+        print(
+            f"  Audio: {len(devices)} device(s); "
+            f"in={_describe(default_in)}, out={_describe(default_out)}.",
+            flush=True,
+        )
 
     def _reclaim_repeat_button(self) -> None:
         """Point the repeat button back at `_on_repeat_press`. Never raises.
