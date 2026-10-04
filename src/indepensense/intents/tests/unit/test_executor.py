@@ -1084,7 +1084,15 @@ def test_the_user_is_asked_before_anything_happens():
 
     _shutdown_executor(confirmer=_confirm, shutdown=lambda: None).execute(_shutdown_intent())
 
-    assert asked == [messages.get("shutdown.confirm", "en")]
+    # The button position is substituted, not left as a placeholder: a
+    # user hearing "press the {button} button" has been told nothing.
+    assert asked == [
+        messages.get(
+            "shutdown.confirm", "en",
+            button=messages.get("button.ptt_position", "en"),
+        )
+    ]
+    assert "{button}" not in asked[0]
 
 
 def test_a_missing_confirmer_refuses_rather_than_proceeding():

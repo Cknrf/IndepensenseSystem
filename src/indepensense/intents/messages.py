@@ -126,9 +126,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     # Powering off is the one action the wearable cannot undo for its user:
     # afterwards there is no device left to ask for help with, which is why
     # it is the only intent besides navigation that asks before acting.
+    # `{button}` comes from `button.ptt_position`, the same source
+    # `nav.confirm_destination` uses. This sentence used to say only "press
+    # the button" / "pindutin ang butones" on a device with three of them,
+    # which asks someone who cannot see the enclosure to guess — and one of
+    # the two wrong guesses sends a guardian an emergency alert.
     "shutdown.confirm": {
-        "en": "Do you want to turn off IndepenSense? Press the button to confirm.",
-        "tl": "Gusto mo bang patayin ang IndepenSense? Pindutin ang butones para sang-ayunan.",
+        "en": "Do you want to turn off IndepenSense? Press the {button} "
+              "button to confirm.",
+        "tl": "Gusto mo bang patayin ang IndepenSense? Pindutin ang {button} "
+              "pindutan para sang-ayunan.",
     },
     "shutdown.goodbye": {
         "en": "Turning off now. Goodbye, and stay safe.",
@@ -1019,6 +1026,70 @@ def speak_number(value: int | float, language: str) -> str:
     if language == "tl":
         return tagalog_counter(value)
     return str(value)
+
+
+# Hours 1-12 as Tagalog ordinals. A table, for the same reason `_TL_TEENS`
+# is one: the series is not derivable. "ikalawa" and "ikatlo" drop syllables
+# the cardinals keep (dalawa, tatlo), so "ika-" + `tagalog_number` would
+# produce "ikadalawa" and "ikatatlo" — forms a Tagalog speaker would hear as
+# wrong. Twelve entries is also the whole domain, so there is no general
+# rule left unimplemented.
+_TL_HOUR_ORDINALS = (
+    "ikalabindalawa",                                    # index 0 == 12
+    "ikaisa", "ikalawa", "ikatlo", "ikaapat", "ikalima",
+    "ikaanim", "ikapito", "ikawalo", "ikasiyam", "ikasampu",
+    "ikalabing-isa",
+)
+
+
+def _tagalog_day_part(hour24: int) -> str:
+    """The part-of-day word that follows the hour.
+
+    Tagalog divides the day into five named stretches, not two halves, so
+    there is no word for "AM" to translate. 2 a.m. is `madaling araw`, not
+    `umaga` — calling it morning would be understood but is wrong, and noon
+    has its own word rather than being the twelfth hour of anything.
+    """
+    if hour24 < 5:
+        return "madaling araw"
+    if hour24 < 12:
+        return "umaga"
+    if hour24 < 13:
+        return "tanghali"
+    if hour24 < 18:
+        return "hapon"
+    return "gabi"
+
+
+def speak_clock(hour24: int, minute: int, language: str) -> str:
+    """A wall-clock time as the words to speak it in `language`.
+
+    Why a helper and not a `{hour}:{minute}` template: the sentence
+    *structure* differs, not just the words. English joins the two numbers
+    with a colon and appends AM/PM; Tagalog links them with "at", counts
+    the minutes as a noun phrase ("apat na minuto") and names the part of
+    day. An exact hour drops the minute clause entirely in Tagalog, which
+    a format string cannot express.
+
+    This exists because `_handle_system_time` used to pass a finished
+    `"1:04 PM"` string. `get()` routes numbers through `speak_number` but
+    deliberately leaves strings alone, so the digits reached the MMS
+    Tagalog voice untouched — and digits are effectively untrained in that
+    voice, so the time arrived garbled or missing while reading perfectly
+    in English. The fix is to stop pre-formatting, not to special-case
+    strings in `get()`.
+    """
+    if language != "tl":
+        # 12-hour with no leading zero: "1:04 PM", "11:30 AM".
+        period = "AM" if hour24 < 12 else "PM"
+        hour12 = hour24 % 12 or 12
+        return f"{hour12}:{minute:02d} {period}"
+
+    hour_word = _TL_HOUR_ORDINALS[hour24 % 12]
+    day_part = _tagalog_day_part(hour24)
+    if minute == 0:
+        return f"{hour_word} ng {day_part}"
+    return f"{hour_word} at {tagalog_counter(minute)} minuto ng {day_part}"
 
 
 def join_items(items: list[str], language: str) -> str:

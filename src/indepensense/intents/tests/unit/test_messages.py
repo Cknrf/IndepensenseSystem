@@ -242,6 +242,61 @@ def test_proximity_spells_the_number_out_in_tagalog():
     assert "sentimetro" in spoken
 
 
+# --- the clock ---------------------------------------------------------------
+
+
+def test_english_time_keeps_the_familiar_clock_format():
+    assert messages.speak_clock(13, 4, "en") == "1:04 PM"
+    assert messages.speak_clock(0, 0, "en") == "12:00 AM"
+    assert messages.speak_clock(12, 30, "en") == "12:30 PM"
+
+
+@pytest.mark.parametrize("hour", range(24))
+@pytest.mark.parametrize("minute", (0, 1, 4, 15, 30, 45, 59))
+def test_tagalog_clock_never_emits_a_digit(hour, minute):
+    """The bug this helper exists for. `_handle_system_time` passed a
+    finished "1:04 PM" string, and `get()` leaves strings alone by design
+    — so the digits reached a voice that cannot pronounce them."""
+    spoken = messages.speak_clock(hour, minute, "tl")
+    assert not any(character.isdigit() for character in spoken), spoken
+
+
+def test_tagalog_drops_the_minute_clause_on_the_hour():
+    """"Ikaisa at sero minuto" is not something anyone says. The sentence
+    is shorter, not padded — which is why this is a helper and not a
+    format string."""
+    assert messages.speak_clock(13, 0, "tl") == "ikaisa ng hapon"
+    assert "minuto" not in messages.speak_clock(9, 0, "tl")
+
+
+def test_tagalog_hour_ordinals_are_not_derived_from_the_cardinals():
+    """"ikalawa"/"ikatlo", not "ikadalawa"/"ikatatlo" — the reason the
+    hours are a table rather than "ika-" + `tagalog_number`."""
+    assert messages.speak_clock(14, 0, "tl").startswith("ikalawa")
+    assert messages.speak_clock(15, 0, "tl").startswith("ikatlo")
+
+
+@pytest.mark.parametrize("hour,expected", [
+    (0, "madaling araw"), (4, "madaling araw"),
+    (5, "umaga"), (11, "umaga"),
+    (12, "tanghali"),
+    (13, "hapon"), (17, "hapon"),
+    (18, "gabi"), (23, "gabi"),
+])
+def test_tagalog_names_the_part_of_day(hour, expected):
+    """Tagalog has five named stretches of day, not two halves, so there
+    is no "AM" to translate — 2 a.m. is madaling araw, not umaga."""
+    assert messages.speak_clock(hour, 0, "tl").endswith(f"ng {expected}")
+
+
+def test_the_time_message_survives_the_helper_end_to_end():
+    spoken = messages.get(
+        "time.current", "tl", time=messages.speak_clock(13, 4, "tl"),
+    )
+    assert not any(character.isdigit() for character in spoken), spoken
+    assert "ikaisa" in spoken
+
+
 # --- Tagalog never receives a bare digit -------------------------------------
 #
 # The MMS Tagalog voice has digits in its vocabulary but they are

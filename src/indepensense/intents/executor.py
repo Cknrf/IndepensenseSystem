@@ -606,7 +606,11 @@ class IntentExecutor:
             print("[shutdown] no confirmer wired — refusing.", file=sys.stderr, flush=True)
             return messages.get("shutdown.cancelled", self._lang)
 
-        if not self._confirmer(messages.get("shutdown.confirm", self._lang)):
+        prompt = messages.get(
+            "shutdown.confirm", self._lang,
+            button=messages.get("button.ptt_position", self._lang),
+        )
+        if not self._confirmer(prompt):
             return messages.get("shutdown.cancelled", self._lang)
 
         self._shutdown()
@@ -743,9 +747,13 @@ class IntentExecutor:
 
     def _handle_system_time(self, result: IntentResult) -> str:
         now = datetime.now()
-        # e.g. "It's currently 2:34 PM." / "Ganap na 2:34 PM ngayon."
+        # The clock is built by `speak_clock`, not formatted here: Tagalog
+        # names the part of day and counts the minutes as a noun phrase,
+        # which is grammar and belongs in messages.py. Passing a finished
+        # "2:34 PM" string is what dropped the digits in Tagalog.
         return messages.get(
-            "time.current", self._lang, time=now.strftime("%I:%M %p").lstrip("0"),
+            "time.current", self._lang,
+            time=messages.speak_clock(now.hour, now.minute, self._lang),
         )
 
     def _handle_vision_describe(self, result: IntentResult) -> str:
