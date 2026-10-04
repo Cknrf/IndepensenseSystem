@@ -1770,15 +1770,26 @@ class App:
                 f"last alert — not re-sending.",
                 flush=True,
             )
-            # Once per window, and only into silence. Mid-announcement
-            # this would be a *critical* utterance, which preempts — so it
-            # would cut off the confirmation the user pressed again to
-            # hear, and a run of presses would leave only fragments.
-            if not self._already_sent_spoken and not is_playing():
+            # Once per window, and queued rather than spoken over.
+            #
+            # This used to be critical and gated on `is_playing()`, to
+            # stop it preempting the very confirmation the user pressed
+            # again to hear. The gate worked and cost too much: a press
+            # landing while anything was playing consumed the one chance
+            # per window and there was no retry, so in the field the
+            # wearer pressed four times in ten seconds and heard nothing
+            # at all — the exact silence this message exists to break.
+            #
+            # Non-critical fixes both ends. It cannot preempt, so the
+            # confirmation finishes; and it waits in the queue instead of
+            # being discarded, so the answer arrives a second late rather
+            # than never. A genuinely critical event afterwards still
+            # drops it, which is the right order.
+            if not self._already_sent_spoken:
                 self._already_sent_spoken = True
                 self._announce(
                     messages.get("emergency.already_sent", self.language.current),
-                    critical=True,
+                    critical=False,
                 )
             return
 

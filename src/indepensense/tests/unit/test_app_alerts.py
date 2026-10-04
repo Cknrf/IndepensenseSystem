@@ -554,28 +554,37 @@ def test_the_feedback_does_not_delay_the_alert(pressable, monkeypatch):
     released.set()
 
 
-def test_a_suppressed_press_does_not_talk_over_the_confirmation(
+def test_a_suppressed_press_is_answered_without_preempting(
     pressable, monkeypatch,
 ):
-    """"Already sent" is spoken as *critical*, which preempts — so saying
-    it mid-announcement would cut off the very confirmation the user
-    pressed again to hear."""
+    """It must not cut off the confirmation the user pressed again to
+    hear — and it must still be heard.
+
+    The first requirement used to be met by skipping the message whenever
+    anything was playing, which met the second by accident or not at all:
+    a press landing mid-confirmation consumed the single chance per
+    window and nothing retried. A field log shows four presses across ten
+    seconds answered only by console output. Queueing it non-critically
+    satisfies both — it waits its turn rather than being dropped.
+    """
     said = []
     monkeypatch.setattr(pressable, "_announce",
-                        lambda text, critical=False: said.append(text))
+                        lambda text, critical=False: said.append((text, critical)))
     monkeypatch.setattr(app_module, "is_playing", lambda: True)
 
     pressable._on_emergency_press()
-    after_first = list(said)        # the first press speaks its own response
     pressable._on_emergency_press()
 
-    assert said == after_first, "spoke over the confirmation in progress"
+    already = messages.get("emergency.already_sent", "en")
+    assert (already, False) in said, "a press mid-confirmation went unanswered"
+    assert (already, True) not in said, "critical would preempt the confirmation"
 
 
 def test_already_sent_is_spoken_once_per_window(pressable, monkeypatch):
-    """Repeating it on every press would be worse than silence: it is
-    spoken as critical, so each utterance preempts the last and the user
-    hears a stutter of half-sentences."""
+    """Repeating it on every press would be worse than silence. It is
+    queued, so a mashed button would stack one copy per press and the
+    wearer would hear the same sentence five times over while an
+    emergency is in progress."""
     said = []
     monkeypatch.setattr(pressable, "_announce",
                         lambda text, critical=False: said.append(text))
