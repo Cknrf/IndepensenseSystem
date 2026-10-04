@@ -343,7 +343,20 @@ MAG_LEFT_AXIS = "-x"
 #      and a confident wrong bearing. Do it outdoors, clear of buildings.
 #   3. Check the heading against a phone compass at all four cardinals.
 #   4. Set this True.
-COMPASS_CALIBRATED = False
+#
+# Done 2026-10-04. Calibrated with `magnetometer_swing` rather than the
+# three-axis sweep — see the note on MAG_OFFSET_X above for why — and
+# verified against a phone compass at the four cardinals on the
+# assembled vest.
+#
+# The one limitation to carry forward: this is calibrated for the WORN
+# orientation. Heading comes from two horizontal components with no tilt
+# compensation, so holding the vest off-level degrades it, and |B|
+# climbing well above the calibrated ~39 μT is the symptom. Turn
+# verification reads heading while walking, where torso sway is worst, so
+# that is where it will show first. See docs/deferred.md on tilt
+# compensation.
+COMPASS_CALIBRATED = True
 
 # Turn-to-face guidance: pointing the user the right way before they walk.
 #
