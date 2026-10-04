@@ -189,5 +189,23 @@ class SweepStore:
             return 0.0
         return max(times) - min(times)
 
+    def stale_faces(self, tolerance: float = _STALE_SESSION_S):
+        """Faces recorded long before the newest one. `[(face, age_s)]`.
+
+        Named individually rather than reported as one span, because the
+        remedy is to re-record exactly these — and re-recording them is
+        also what clears the condition, so no override flag is needed.
+        """
+        times = {face: data["at"] for face, data in self.data["faces"].items()
+                 if data.get("at") is not None}
+        if len(times) < 2:
+            return []
+        newest = max(times.values())
+        return sorted(
+            ((face, newest - at) for face, at in times.items()
+             if newest - at > tolerance),
+            key=lambda pair: -pair[1],
+        )
+
     def is_stale(self) -> bool:
-        return self.span_seconds() > _STALE_SESSION_S
+        return bool(self.stale_faces())

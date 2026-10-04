@@ -822,6 +822,63 @@ def collect_face(mag, face: str, seconds: float):
     return samples
 
 
+_SWEEP_BINS = 36                     # 10 degrees each
+_GOOD_ARC_DEG = 300.0                # a full turn, minus room for a slow start
+
+
+def arc_covered(samples) -> float:
+    """How far round a face actually turned, in degrees.
+
+    Rotating about one axis traces a circle, so a face's samples lie in a
+    plane. Fit that plane, project onto it, and count how many 10-degree
+    sectors were visited — 36 of 36 is a full revolution.
+
+    This is the question none of the other numbers could answer. Sample
+    count says only that time passed; axis swing says the vest moved;
+    raw range says how the circle sits relative to the hard-iron offset.
+    A half-turn and a full turn are indistinguishable in all three, and a
+    half-turn leaves one side of the circle unsampled — which is exactly
+    where the extremes the derivation needs would have been.
+
+    Sectors rather than first-to-last angle, because a vest rocked back
+    and forth through 90 degrees would otherwise report whatever its
+    endpoints happened to be.
+
+    The angles are taken about the *fitted circle centre*, not about the
+    samples' centroid. For a partial arc those are different points — the
+    centroid sits inside the arc rather than at the centre it curves
+    around — and measuring from it inflates the answer badly: a half turn
+    came out as 260 degrees and a quarter turn as 220.
+    """
+    import numpy as np                  # lazy: Pi-only at module import time
+
+    if len(samples) < 8:
+        return 0.0
+
+    data = np.asarray(samples, dtype=float)
+    centred = data - data.mean(axis=0)
+    # The two directions with the most variance span the circle's plane;
+    # the third is the rotation axis, along which there is nearly none.
+    _u, _s, basis = np.linalg.svd(centred, full_matrices=False)
+    plane = centred @ basis[:2].T
+
+    # Least-squares circle in that plane: |p - c|^2 = r^2 rearranges to
+    # 2c.p + k = |p|^2, which is linear in (c, k).
+    design = np.column_stack([2 * plane, np.ones(len(plane))])
+    target = (plane ** 2).sum(axis=1)
+    try:
+        solution, _res, rank, _sv = np.linalg.lstsq(design, target, rcond=None)
+    except np.linalg.LinAlgError:
+        return 0.0
+    centre = solution[:2] if rank == 3 else np.zeros(2)
+
+    about = plane - centre
+    angles = np.arctan2(about[:, 1], about[:, 0])
+    sectors = np.unique(((angles + np.pi) / (2 * np.pi) * _SWEEP_BINS).astype(int)
+                        % _SWEEP_BINS)
+    return len(sectors) / _SWEEP_BINS * 360.0
+
+
 def status_lines(store) -> list[str]:
     """Progress so far.
 
@@ -838,19 +895,37 @@ def status_lines(store) -> list[str]:
     stats = store.face_stats()
     still = {face for face, _swing in store.still_faces()}
 
-    lines.append("  face      samples   raw |B| range      rotated")
-    lines.append("  " + "-" * 52)
+    lines.append("  face      samples   raw |B| range      turned")
+    lines.append("  " + "-" * 54)
+    short = []
     for face in FACES:
         stat = stats.get(face)
         if stat is None:
             lines.append(f"  {face:9s}       -           -              -")
             continue
-        moved = "NO \u2014 re-record" if face in still else "yes"
+        if face in still:
+            turned = "did not move"
+        else:
+            arc = arc_covered(store.face_samples(face))
+            turned = f"{arc:3.0f}\u00b0"
+            if arc < _GOOD_ARC_DEG:
+                turned += "  <- incomplete"
+                short.append((face, arc))
         lines.append(
             f"  {face:9s} {stat['count']:7d}   "
-            f"{stat['low']:5.1f}-{stat['high']:5.1f} \u03bcT      {moved}"
+            f"{stat['low']:5.1f}-{stat['high']:5.1f} \u03bcT   {turned}"
         )
     lines.append("")
+
+    if short:
+        lines.append("  A face marked incomplete did not get all the way round.")
+        lines.append("  The unswept part of the circle is where that face's")
+        lines.append("  extremes would have been, and the derivation cannot")
+        lines.append(f"  tell 'not reached' from 'reached'. Want {_GOOD_ARC_DEG:.0f}\u00b0 or more;")
+        lines.append("  re-record these, turning a full, flat circle:")
+        for face, arc in short:
+            lines.append(f"    {face} \u2014 only {arc:.0f}\u00b0")
+        lines.append("")
 
     missing = store.missing()
     if missing:
@@ -866,14 +941,29 @@ def status_lines(store) -> list[str]:
         lines.append("  without adding anything the derivation can use.")
         lines.append("  Re-record it, rotating through the full 10 seconds.")
 
-    if store.is_stale():
-        hours = store.span_seconds() / 3600.0
-        lines.append("")
-        lines.append(f"  These faces span {hours:.1f} hours. The offsets being")
-        lines.append("  computed are the device's OWN field, so they are only")
-        lines.append("  valid if nothing about the assembly changed in that")
-        lines.append("  time. If anything was unplugged, --reset and start over.")
+    lines.extend(stale_warning(store))
+    return lines
 
+
+def stale_warning(store) -> list[str]:
+    """Which faces are left over from an earlier session, and what to do."""
+    stale = store.stale_faces()
+    if not stale:
+        return []
+
+    lines = ["", "  LEFT OVER FROM AN EARLIER SESSION:"]
+    for face, age_s in stale:
+        lines.append(f"    {face:9s} recorded {age_s / 3600.0:.1f} hours "
+                     "before the newest face")
+    lines.append("")
+    lines.append("  The offsets being computed are the device's OWN field, so")
+    lines.append("  every face has to come from one unchanged setup in one")
+    lines.append("  place. Faces this far apart are a different measurement")
+    lines.append("  wearing the same name, and mixing them in is worse than")
+    lines.append("  having fewer faces.")
+    lines.append("")
+    lines.append("  Re-record the faces listed above, or --reset and start")
+    lines.append("  over. Re-recording them is what clears this.")
     return lines
 
 
@@ -960,6 +1050,14 @@ def run_face_mode(args) -> int:
             print("worse than none, because it looks like a real answer.")
             return 1
         print("\n".join(status_lines(store)))
+        if store.stale_faces():
+            # Values withheld on a stale session regardless of grade. A
+            # mixed sweep that happens to grade GOOD is the dangerous
+            # case: the warning alone was printed above a full set of
+            # numbers once, and numbers win that argument.
+            print()
+            print("  Values withheld \u2014 the faces above are not one sweep.")
+            return 1
         print()
         print_result(store.samples(), face_diagnosis(store))
         return 0
@@ -994,6 +1092,10 @@ def run_face_mode(args) -> int:
     # run-through there is nothing to decide, so there is no reason to
     # make somebody type a seventh command to see the answer.
     if not store.missing():
+        if store.stale_faces():
+            print()
+            print("  Values withheld \u2014 the faces above are not one sweep.")
+            return 1
         print()
         print_result(store.samples(), face_diagnosis(store))
     return 0

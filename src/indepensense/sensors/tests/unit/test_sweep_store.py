@@ -336,3 +336,157 @@ def test_too_few_samples_to_fit_falls_back():
     )
 
     assert fit_ellipsoid(_sphere(count=10)) is None
+
+
+# --- a sweep spread across sessions -----------------------------------------
+#
+# Reported from the field: five faces recorded one evening, the location
+# changed overnight because the first spot turned out to have a distorted
+# field, then one face re-recorded in the new place. The warning fired
+# correctly — and the tool printed a verdict underneath it anyway. That
+# verdict happened to be BAD. Had the mixture graded GOOD, six numbers
+# would have gone into config.py with a caution above them, and numbers
+# win that argument every time.
+
+def test_faces_from_an_earlier_session_are_named(store):
+    for face in ("back", "left", "right", "top", "bottom"):
+        store.record(face, [(45.0, 0.0, 0.0)], now=0.0)
+    store.record("front", [(45.0, 0.0, 0.0)], now=15.2 * 3600)
+
+    stale = store.stale_faces()
+
+    assert {face for face, _age in stale} == {"back", "left", "right",
+                                             "top", "bottom"}
+    assert all(age == pytest.approx(15.2 * 3600) for _face, age in stale)
+
+
+def test_the_newest_face_is_never_itself_stale(store):
+    """It is the reference the others are judged against."""
+    store.record("back", [(45.0, 0.0, 0.0)], now=0.0)
+    store.record("front", [(45.0, 0.0, 0.0)], now=10 * 3600)
+
+    assert [face for face, _age in store.stale_faces()] == ["back"]
+
+
+def test_re_recording_a_stale_face_clears_it(store):
+    """Why no override flag is needed: the remedy and the fix are the
+    same action."""
+    store.record("back", [(45.0, 0.0, 0.0)], now=0.0)
+    store.record("front", [(45.0, 0.0, 0.0)], now=10 * 3600)
+    assert store.is_stale()
+
+    store.record("back", [(45.0, 0.0, 0.0)], now=10 * 3600 + 60)
+
+    assert store.stale_faces() == []
+
+
+def test_one_face_alone_is_never_stale(store):
+    store.record("front", [(45.0, 0.0, 0.0)], now=0.0)
+
+    assert store.stale_faces() == []
+
+
+def test_a_stale_session_withholds_values_whatever_the_grade(tmp_path,
+                                                             monkeypatch,
+                                                             capsys):
+    """The actual regression: a warning above a full set of numbers is
+    not a guard."""
+    import argparse
+
+    from indepensense.sensors.tests.manual import magnetometer_calibrate as cal
+
+    path = tmp_path / "sweep.json"
+    monkeypatch.setattr(cal, "_SWEEP_PATH", path)
+
+    store = SweepStore(path)
+    clean = _sphere(count=60, centre=(10.0, -4.0, 2.0))
+    for index, face in enumerate(FACES):
+        # A sweep good enough to grade well — but spread over two days.
+        when = 0.0 if face != "front" else 15.2 * 3600
+        store.record(face, clean[index::6], now=when)
+    store.save()
+
+    args = argparse.Namespace(face=None, status=False, finish=True,
+                              reset=False, spin=10.0, seconds=None)
+    code = cal.run_face_mode(args)
+    output = capsys.readouterr().out
+
+    assert code == 1, "a stale sweep must not report success"
+    assert "MAG_OFFSET_X" not in output, "values printed from a mixed sweep"
+    assert "not one sweep" in output
+
+
+# --- how far round each face actually turned --------------------------------
+#
+# The number that was missing. Sample count says only that time passed,
+# axis swing says the vest moved, raw range says where the circle sits
+# relative to the hard-iron offset — and a half turn is indistinguishable
+# from a full one in all three.
+#
+# It showed on the real vest as the same face, recorded three times
+# minutes apart in one place, giving raw ranges of 17-37, 31-65 and
+# 34-62 uT. Re-recording that one face moved the y half-span from 23.3 to
+# 35.6, so a single face had been carrying most of one axis' coverage.
+
+def _arc(degrees, count=190, centre=(12.0, -5.0, 3.0), radius=42.0):
+    """Samples along part of a circle, as one-axis rotation produces."""
+    points = []
+    for i in range(count):
+        angle = math.radians(degrees) * i / max(1, count - 1)
+        points.append((centre[0] + radius * math.cos(angle),
+                       centre[1] + radius * math.sin(angle),
+                       centre[2] + 5.0))
+    return points
+
+
+@pytest.mark.parametrize("turned,expected", [
+    (360, 360), (350, 360), (300, 310), (270, 280), (180, 180),
+])
+def test_the_arc_is_measured_to_within_a_sector(turned, expected):
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        arc_covered,
+    )
+
+    assert arc_covered(_arc(turned)) == pytest.approx(expected, abs=15)
+
+
+def test_a_half_turn_is_not_mistaken_for_a_whole_one():
+    """The whole point — these look identical in every other measure."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        arc_covered, _GOOD_ARC_DEG,
+    )
+
+    assert arc_covered(_arc(360)) >= _GOOD_ARC_DEG
+    assert arc_covered(_arc(180)) < _GOOD_ARC_DEG
+
+
+def test_rocking_back_and_forth_earns_no_credit_for_the_repeats():
+    """A vest waved through 90 degrees many times covers 90 degrees."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        arc_covered,
+    )
+
+    rocked = _arc(90) + list(reversed(_arc(90))) + _arc(90)
+
+    assert arc_covered(rocked) < 120
+
+
+def test_the_angle_is_taken_about_the_circle_not_the_samples():
+    """The bug found while building this: measuring from the centroid of
+    a partial arc inflates it, because the centroid sits inside the arc
+    rather than at the centre it curves around. A half turn read 260
+    degrees and a quarter turn 220."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        arc_covered,
+    )
+
+    assert arc_covered(_arc(180)) == pytest.approx(180, abs=20)
+    assert arc_covered(_arc(90)) == pytest.approx(90, abs=20)
+
+
+def test_too_few_samples_to_judge_reports_nothing_rather_than_guessing():
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        arc_covered,
+    )
+
+    assert arc_covered(_arc(360, count=4)) == 0.0
