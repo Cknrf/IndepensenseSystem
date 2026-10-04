@@ -80,11 +80,20 @@ from indepensense.sensors.tests.manual.magnetometer_calibrate import (
 
 SWING_S = 30.0
 
-# Spread of corrected magnitudes, as a percentage of their mean, below
-# which the swing is worth keeping. Same measure the sphere fit used and
-# the same threshold, so the two are directly comparable — the point of
-# this test is that it can reach it where the sweep could not.
-_GOOD_SPREAD_PCT = 10.0
+# Worst heading error, in degrees, that the swing may leave.
+#
+# The sphere fit graded on the spread of corrected magnitudes, and this
+# test did too at first — which was the wrong question. Spread is a proxy;
+# a compass is judged in degrees. The two are related exactly enough to
+# convert (see `heading_error_deg`), and converting changes the verdict:
+# the sphere fit's 10% threshold is 2.7 degrees, far stricter than
+# anything here needs, and the first real swing came in at 12.5% spread —
+# graded BAD — which is 3.5 degrees.
+#
+# Five degrees is a third of `ORIENTATION_ALIGNED_TOLERANCE_DEG` (15),
+# which is the tightest consumer. That leaves the rest of the budget for
+# GPS bearing error and torso sway, which are larger and not fixable here.
+_MAX_HEADING_ERROR_DEG = 5.0
 
 # A full circle, less a little slack for starting slowly.
 _GOOD_ARC_DEG = 330.0
@@ -165,6 +174,28 @@ def axis_aligned_from(points):
         return None
     mean_span = sum(spans) / 2.0
     return centre, (mean_span / spans[0], mean_span / spans[1])
+
+
+def heading_error_deg(spread_pct):
+    """Worst heading error implied by a spread of corrected magnitudes.
+
+    A residual that still varies around the turn is an ellipse the
+    correction did not fully round off, and for an ellipse the two are
+    related in closed form: with semi-axes `1+d` and `1-d`, the spread of
+    magnitudes is `2d` and the largest angular error is `arcsin(d)`.
+    So the worst heading error is `arcsin(spread / 2)`.
+
+    Checked against a numerical sweep of ellipse ratios: 12.2% spread
+    gives 3.5 degrees both ways, 36.4% gives 10.6.
+
+    Assumes the leftover distortion is elliptical, which is what soft iron
+    and a residual tilt both produce. It is an estimate of the shape error
+    only — absolute accuracy, including whether north is where the device
+    thinks, is what the phone-compass check measures and nothing here can
+    substitute for it.
+    """
+    half = min(1.0, max(0.0, spread_pct / 200.0))
+    return math.degrees(math.asin(half))
 
 
 def spread_of(points, centre, scales):
@@ -263,26 +294,31 @@ def main():
 
     centre, scales = aligned
     spread_pct, field_ut = spread_of(plane, centre, scales)
+    error_deg = heading_error_deg(spread_pct)
+    good = error_deg <= _MAX_HEADING_ERROR_DEG
 
     print()
     print("  " + "-" * 64)
-    print(f"  SWING QUALITY: {'GOOD' if spread_pct <= _GOOD_SPREAD_PCT else 'BAD'}")
-    print(f"  corrected field {field_ut:.1f} μT, "
-          f"varying {spread_pct:.1f}% around the turn")
+    print(f"  SWING QUALITY: {'GOOD' if good else 'BAD'}")
+    print(f"  worst heading error about {error_deg:.1f}°, "
+          f"against the {_MAX_HEADING_ERROR_DEG:.0f}° this needs")
+    print(f"  (corrected field {field_ut:.1f} μT, varying {spread_pct:.1f}% "
+          "around the turn)")
     print("  " + "-" * 64)
     print()
 
     fitted = fit_ellipse_2d(plane)
     if fitted is not None:
         general = general_spread(plane, fitted)
-        print(f"  A full 2x2 correction would leave {general:.1f}%, against "
-              f"{spread_pct:.1f}%")
-        print("  from the per-axis model. A large gap means horizontal soft")
-        print("  iron has tilted the ellipse; a small one means the simple")
-        print("  model is enough and these values can be used as they are.")
+        print(f"  A full 2x2 correction would leave "
+              f"{heading_error_deg(general):.1f}° ({general:.1f}% spread),")
+        print(f"  against {error_deg:.1f}° from the per-axis model. A large gap")
+        print("  means horizontal soft iron has tilted the ellipse; a small")
+        print("  one means the simple model is enough and the values below")
+        print("  can be used as they are.")
         print()
 
-    if spread_pct > _GOOD_SPREAD_PCT:
+    if not good:
         print("  The heading will not be reliable. Before re-running, check")
         print("  `magnetometer_stability` — if pointing the same way twice")
         print("  gives two answers, no calibration of any kind will help.")

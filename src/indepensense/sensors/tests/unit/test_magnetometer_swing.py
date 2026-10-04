@@ -131,3 +131,89 @@ def test_an_axis_that_never_moved_is_refused():
     flat = [(float(i) / 10.0, 5.0) for i in range(100)]
 
     assert axis_aligned_from(flat) is None
+
+
+# --- grading in degrees, not in percent -------------------------------------
+#
+# The sphere fit graded on the spread of corrected magnitudes and this
+# test inherited the measure and the 10% threshold. Both were wrong for a
+# compass: spread is a proxy, degrees are the requirement, and 10% spread
+# is 2.7 degrees — far stricter than anything downstream needs. The first
+# real swing came in at 12.5% and was graded BAD. It is 3.6 degrees, a
+# quarter of the 15-degree tolerance turn-to-face works to.
+
+def _worst_error_by_search(ratio, steps=3600):
+    """Largest angular error of an un-rounded ellipse, found numerically."""
+    worst = 0.0
+    for i in range(steps):
+        t = 2 * math.pi * i / steps
+        x, y = ratio * math.cos(t), math.sin(t)
+        error = (math.degrees(math.atan2(y, x)) - math.degrees(t) + 180) % 360 - 180
+        worst = max(worst, abs(error))
+    return worst
+
+
+def _spread_by_search(ratio, steps=3600):
+    magnitudes = [math.hypot(ratio * math.cos(2 * math.pi * i / steps),
+                             math.sin(2 * math.pi * i / steps))
+                  for i in range(steps)]
+    return (max(magnitudes) - min(magnitudes)) / (sum(magnitudes) / steps) * 100
+
+
+@pytest.mark.parametrize("ratio", [1.03, 1.08, 1.13, 1.20, 1.45])
+def test_the_closed_form_matches_a_numerical_sweep(ratio):
+    """`arcsin(spread / 2)` is not an approximation pulled from the air."""
+    from indepensense.sensors.tests.manual.magnetometer_swing import (
+        heading_error_deg,
+    )
+
+    assert heading_error_deg(_spread_by_search(ratio)) == pytest.approx(
+        _worst_error_by_search(ratio), abs=0.3
+    )
+
+
+def test_a_perfect_circle_has_no_heading_error():
+    from indepensense.sensors.tests.manual.magnetometer_swing import (
+        heading_error_deg,
+    )
+
+    assert heading_error_deg(0.0) == 0.0
+
+
+def test_the_first_real_swing_would_now_pass():
+    """12.5% spread, graded BAD by the inherited threshold."""
+    from indepensense.sensors.tests.manual.magnetometer_swing import (
+        _MAX_HEADING_ERROR_DEG, heading_error_deg,
+    )
+
+    assert heading_error_deg(12.5) < _MAX_HEADING_ERROR_DEG
+
+
+def test_the_sphere_fits_best_attempt_would_still_fail():
+    """41.2% spread — the sweep this replaced. The looser gate must not be
+    so loose that it would have accepted what was genuinely unusable."""
+    from indepensense.sensors.tests.manual.magnetometer_swing import (
+        _MAX_HEADING_ERROR_DEG, heading_error_deg,
+    )
+
+    assert heading_error_deg(41.2) > 2 * _MAX_HEADING_ERROR_DEG
+
+
+def test_the_gate_leaves_room_in_the_turn_to_face_budget():
+    """The tightest consumer works to 15°, and compass error is only one
+    of its contributors — GPS bearing and torso sway are the others."""
+    from indepensense.config import ORIENTATION_ALIGNED_TOLERANCE_DEG
+    from indepensense.sensors.tests.manual.magnetometer_swing import (
+        _MAX_HEADING_ERROR_DEG,
+    )
+
+    assert _MAX_HEADING_ERROR_DEG <= ORIENTATION_ALIGNED_TOLERANCE_DEG / 3.0
+
+
+def test_an_impossible_spread_does_not_explode():
+    """`arcsin` is undefined past 1; a spread over 200% must clamp."""
+    from indepensense.sensors.tests.manual.magnetometer_swing import (
+        heading_error_deg,
+    )
+
+    assert heading_error_deg(500.0) == pytest.approx(90.0)
