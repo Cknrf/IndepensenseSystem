@@ -19,12 +19,28 @@ Environment="PYTHONUNBUFFERED=1"
 # and a system service inherits no session environment. Running the app by
 # hand hides the problem: a login shell already has this set.
 #
-# `%U` expands to the numeric UID of `User=` above, so this stays correct
-# if the account ever changes.
+# The UID is written out in full. `%U` was used here on the belief that it
+# expands to the UID of `User=` above; in this systemd it expands to **0**,
+# the UID of the manager running the unit. The service therefore ran with
+# XDG_RUNTIME_DIR=/run/user/0 — root's runtime directory, which holds no
+# PipeWire socket for cknrf.
+#
+# The failure that caused is worth recording, because none of it mentions
+# the environment. The ALSA PipeWire plugin could not connect, so ALSA
+# stopped offering `pipewire`, `pulse` and `default`: the process saw 14
+# PCMs instead of 17. PortAudio then fell back to index 0, the raw USB
+# headset, which does not resample — so every 16 kHz stream died with
+# `Invalid sample rate [PaErrorCode -9997]` while PipeWire sat healthy and
+# unused, and `wpctl` silently failed for the same reason. The wearable
+# booted, read every sensor and answered every button, in total silence.
+#
+# If the account ever changes, change this number. That is worse than a
+# specifier that worked, and better than one that looks right and is not:
+# `id -u cknrf` must equal 1000.
 #
 # It is only half the fix — the directory exists only while that user has a
 # session. See `loginctl enable-linger` in this directory's README.
-Environment="XDG_RUNTIME_DIR=/run/user/%U"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
 ExecStart=/home/cknrf/Desktop/thesis/IndepensenseSystem/.venv/bin/python -m indepensense.app
 Restart=on-failure
 RestartSec=5

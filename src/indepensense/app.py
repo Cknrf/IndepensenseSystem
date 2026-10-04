@@ -2090,6 +2090,23 @@ class App:
         reads in causal order: what was available, then what happened
         when we used it.
         """
+        # Checked first and loudly, because it is upstream of everything
+        # else here. PipeWire's socket lives in the *running user's*
+        # runtime directory; pointed anywhere else, the ALSA plugin
+        # cannot connect, `default` stops being offered, and PortAudio
+        # quietly settles for raw hardware. The unit file set this with
+        # `%U`, which expanded to 0 rather than to the UID of `User=`,
+        # and nothing anywhere said so — the wearable simply never spoke.
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "")
+        expected = f"/run/user/{os.getuid()}"
+        if runtime_dir != expected:
+            print(
+                f"  Audio: XDG_RUNTIME_DIR is {runtime_dir or '(unset)'}, "
+                f"expected {expected} for uid {os.getuid()}. PipeWire will "
+                f"not be reachable and the wearable will be silent.",
+                file=sys.stderr, flush=True,
+            )
+
         try:
             import sounddevice as sd  # lazy: only resolvable on the Pi
 
@@ -2115,17 +2132,26 @@ class App:
             flush=True,
         )
 
-        # A missing default is the failure worth spending output on, and
-        # it is unreachable by inspecting the system from outside: the
-        # same user, groups, environment and /dev/snd produced a working
-        # device list in every standalone reconstruction while the
-        # service got nothing. So when it happens, dump what the process
-        # actually had rather than leaving the next person to guess.
+        # The failure mode is not only "no default" — it is "the wrong
+        # default". Under systemd this process selected `hw:0,0`, the raw
+        # USB headset, where the same user in a login shell selected
+        # `default` and reached PipeWire. Raw hardware does not resample,
+        # so every 16 kHz stream died with `paInvalidSampleRate` while
+        # PipeWire sat there healthy and unused.
         #
-        # ALSA resolves `default` through config files it locates using
-        # the environment, so these three are the variables that decide
-        # whether PortAudio finds PipeWire or nothing at all.
-        if default_out is None or default_out < 0 or not len(devices):
+        # So the trigger is "the default is not a plugin device", not
+        # "there is no default". An index of 0 looks perfectly valid and
+        # is the thing that was wrong.
+        #
+        # ALSA resolves these names through config files it locates using
+        # the environment, which is why the variables below are dumped
+        # alongside: they decide whether `default` exists in this process
+        # at all. None of it is visible from outside — every standalone
+        # reconstruction of the service enumerated all 17 devices.
+        chosen = ""
+        if isinstance(default_out, int) and 0 <= default_out < len(devices):
+            chosen = devices[default_out]["name"]
+        if chosen not in ("default", "pipewire", "pulse", "sysdefault"):
             for name in ("HOME", "XDG_RUNTIME_DIR", "ALSA_CONFIG_PATH"):
                 print(f"    env {name}={os.environ.get(name) or '(unset)'}",
                       flush=True)
