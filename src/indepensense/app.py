@@ -2615,6 +2615,15 @@ class App:
 
         self._speak_error(question)   # reuse the best-effort speak helper
         if self._voice_cancel.is_set():
+            # Logged, like the other two ways out. An emergency press
+            # during the question lands here, and this used to be the
+            # one path that returned silently — the wearable abandoned a
+            # destination with nothing in the journal saying why.
+            print(
+                f"[nav] confirmation abandoned ({self._cancel_reason()}) "
+                f"while asking.",
+                flush=True,
+            )
             self._waiting_paused.clear()
             return False
 
@@ -2645,6 +2654,15 @@ class App:
                 if declined.is_set():
                     break
                 if self._voice_cancel.is_set():
+                    # Emergency, or a stop from elsewhere in the
+                    # pipeline. Either outranks a destination question:
+                    # return False so navigation never starts, and let
+                    # whoever set the flag own the speaker.
+                    print(
+                        f"[nav] confirmation abandoned "
+                        f"({self._cancel_reason()}).",
+                        flush=True,
+                    )
                     return False
         finally:
             self._waiting_paused.clear()

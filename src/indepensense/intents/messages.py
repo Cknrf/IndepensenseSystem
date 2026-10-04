@@ -30,6 +30,13 @@ everything else falls through to English on purpose, not by omission.
 different code path per language rather than a shared pluraliser — see
 `count_label`.
 
+**The device calls itself "Indepensensya" in Tagalog.** Not a
+translation — a respelling, so the MMS Tagalog voice pronounces it the
+way a Filipino speaker would. Read with Tagalog phonology, "IndepenSense"
+comes out wrong: the final "-se" has no Tagalog reading and the name
+arrives mangled, which is a poor introduction from a device whose first
+words to its user are its own name. English keeps "IndepenSense".
+
 **Tagalog numbers are spelled out; English ones are not.** A digit is
 pronounced by the TTS engine's own text frontend, in the language that
 engine thinks it is speaking — which for Tagalog is never Tagalog. See
@@ -123,7 +130,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "language.greeting": {
         "en": "IndepenSense is ready. I am speaking English.",
-        "tl": "Handa na ang IndepenSense. Tagalog ang ginagamit ko.",
+        "tl": "Handa na ang Indepensensya. Tagalog ang ginagamit ko.",
     },
     # Spoken from a pre-rendered file at the very first line of `start()`,
     # before any model is loaded — see `config.STARTUP_AUDIO_DIR`. It has
@@ -132,7 +139,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "system.starting": {
         "en": "IndepenSense is starting up. This takes about two minutes. "
               "I will tell you when I am ready.",
-        "tl": "Nagsisimula na ang IndepenSense. Aabutin ito ng mga dalawang "
+        "tl": "Nagsisimula na ang Indepensensya. Aabutin ito ng mga dalawang "
               "minuto. Sasabihin ko po kapag handa na ako.",
     },
 
@@ -148,7 +155,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "shutdown.confirm": {
         "en": "Do you want to turn off IndepenSense? Press the {button} "
               "button to confirm, or the {cancel} button to cancel.",
-        "tl": "Gusto mo bang patayin ang IndepenSense? Pindutin ang {button} "
+        "tl": "Gusto mo bang patayin ang Indepensensya? Pindutin ang {button} "
               "pindutan para sang-ayunan, o ang {cancel} pindutan para "
               "kanselahin.",
     },
@@ -416,7 +423,7 @@ MESSAGES: dict[str, dict[str, str]] = {
               "text out loud, or tell me where you want to go. You can also "
               "say save this place as home, ask what places you have saved, "
               "and later say take me home.",
-        "tl": "Ako si IndepenSense. Tinutulungan kitang makapaglakad nang "
+        "tl": "Ako si Indepensensya. Tinutulungan kitang makapaglakad nang "
               "ligtas at malaya. Puwede mong itanong kung nasaan ka, kung ano "
               "ang nasa paligid mo, pabasahin ang nakasulat, o sabihin kung "
               "saan mo gustong pumunta. Puwede mo ring sabihing i-save mo ito "
