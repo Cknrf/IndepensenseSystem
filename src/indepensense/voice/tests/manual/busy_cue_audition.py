@@ -49,6 +49,10 @@ Usage
     # hear it on its own, without the stop cue in front
     python -m indepensense.voice.tests.manual.busy_cue_audition C --solo
 
+    # round two: is it LOUD enough? (F-J, with the waiting blip as a
+    # second reference, since these move pitch)
+    python -m indepensense.voice.tests.manual.busy_cue_audition --loudness
+
 Nothing here changes the running system — `audio._BUSY_CUE` is what the
 wearable uses, and it is only edited once a candidate has won by ear.
 
@@ -63,31 +67,78 @@ import time
 
 from indepensense.voice.audio import play_cue
 
-# (letter, description, steps, gap_s)
+# (letter, description, steps, gap_s, amplitude or None for the default)
 #
-# Amplitude is left at the default for all of them so the comparison is
+# Amplitude is left at the default for all of these so the comparison is
 # about shape. Loudness is a separate decision and a louder cue is not a
-# more distinct one.
+# more distinct one — see LOUDNESS_CANDIDATES below, which is that
+# decision, run after C won here and turned out to be too quiet in use.
 CANDIDATES = [
     ("A", "two flat low beeps (CURRENT — the one being replaced)",
-     [(350.0, 0.06), (350.0, 0.06)], 0.03),
+     [(350.0, 0.06), (350.0, 0.06)], 0.03, None),
 
     ("B", "three quick low beeps — counts differently from the stop cue",
-     [(300.0, 0.07), (300.0, 0.07), (300.0, 0.07)], 0.05),
+     [(300.0, 0.07), (300.0, 0.07), (300.0, 0.07)], 0.05, None),
 
     ("C", "one long low buzz — the only single-tone cue in the set",
-     [(200.0, 0.28)], 0.03),
+     [(200.0, 0.28)], 0.03, None),
 
     ("D", "slow low double, telephone-busy tempo",
-     [(400.0, 0.18), (400.0, 0.18)], 0.12),
+     [(400.0, 0.18), (400.0, 0.18)], 0.12, None),
 
     ("E", "rising pair — opposite contour to the falling stop cue",
-     [(330.0, 0.09), (494.0, 0.09)], 0.03),
+     [(330.0, 0.09), (494.0, 0.09)], 0.03, None),
+]
+
+# Round two: C won on distinctness and was then reported as too quiet to
+# hear on the headset.
+#
+# The cause is where it sits, not how loud it is asked to be. 200 Hz is
+# the worst band available for this: the ear needs roughly 10-15 dB more
+# level there than at 1 kHz to perceive the same loudness, and a small
+# earbud driver is rolling off underneath that. The cue is fighting both
+# at once.
+#
+# The obvious fix — nudge it up to 300-400 Hz — is not available. The
+# waiting blip is a single tone at 520 Hz, and `test_audio_playback`
+# requires a full octave between the only two single-tone cues, so the
+# busy cue must be **at or below 260 Hz, or at or above 1040 Hz**. There
+# is no middle. That is what makes this a real choice rather than a knob:
+#
+#   F, G  stay low and buy level with amplitude alone
+#   H     goes as high as the octave rule permits and adds amplitude
+#   I     jumps the blip entirely — loud and unmistakable, but a high
+#         refusal contradicts the convention that low means "no"
+#   J     keeps the pitch and leans on duration instead
+#
+# Judge F-J on *audibility*, having already decided shape. The question
+# is "could I miss this in a noisy street", not "is it pleasant".
+LOUDNESS_CANDIDATES = [
+    ("F", "CURRENT — 200 Hz at the default level",
+     [(200.0, 0.28)], 0.03, 0.30),
+
+    ("G", "same pitch, half again as loud",
+     [(200.0, 0.28)], 0.03, 0.45),
+
+    ("H", "250 Hz — the ceiling the octave rule allows — and louder",
+     [(250.0, 0.30)], 0.03, 0.55),
+
+    ("I", "1100 Hz, above the blip: the most audible option by far",
+     [(1100.0, 0.26)], 0.03, 0.32),
+
+    ("J", "200 Hz held longer, loud — length instead of pitch",
+     [(200.0, 0.45)], 0.03, 0.55),
 ]
 
 # What the candidate has to be distinguished FROM.
 STOP_STEPS = [(660.0, 0.07), (440.0, 0.10)]
 STOP_GAP = 0.03
+
+# The other single-tone cue, and the one the octave rule is protecting.
+# Played as a reference in the loudness round because that round moves
+# pitch, which is most of what keeps these two apart.
+WAITING_STEPS = [(520.0, 0.12)]
+WAITING_AMPLITUDE = 0.26
 
 NOTES = """\
 Notes worth having before you choose:
@@ -103,6 +154,32 @@ Notes worth having before you choose:
     are the least surprising if you already know the current cues.
 
 Say which letter you want and it goes into `_BUSY_CUE`."""
+
+LOUDNESS_NOTES = """\
+Notes worth having before you choose:
+
+  * A laptop is the wrong judge of F, G and J. Built-in speakers roll off
+    below ~300 Hz, so all three will sound thinner here than on the
+    headset. What the Mac CAN answer is the comparison this round exists
+    for: whether any low option gets close to I, and whether H still
+    reads as a different sound from the 520 Hz blip. Confirm the winner
+    on the Pi.
+  * I is the one that will win on a laptop and may still be right — but
+    it inverts the convention that a low sound means "no", and it sits
+    nearer the rising chime's territory. If you pick it, pick it knowing
+    that.
+  * H is the compromise, and 250 Hz is not an arbitrary number: it is the
+    highest pitch the octave rule allows against the 520 Hz blip, with a
+    little margin. Anything between 260 and 1040 Hz fails the unit test
+    rather than merely sounding worse.
+  * J buys loudness with duration instead of level. The ear integrates
+    over about 200 ms, so a 450 ms tone is no louder than a 280 ms one —
+    it is only more *likely to be noticed*, which for a refusal that must
+    not be missed may be the same thing in practice.
+
+Whichever wins, it goes into `_BUSY_CUE` in voice/audio.py, and any
+amplitude other than the 0.3 default needs `play_busy_cue` to pass it —
+`play_waiting_tick` already does exactly that for the blip."""
 
 
 def parse_cue(spec: str) -> list[tuple[float, float]]:
@@ -136,14 +213,23 @@ def describe(steps: list[tuple[float, float]], gap_s: float) -> str:
 
 
 def audition(label: str, steps, gap_s: float, amplitude: float,
-             solo: bool) -> None:
+             solo: bool, with_blip: bool = False) -> None:
     print(f"  {label}")
-    print(f"     {describe(steps, gap_s)}", flush=True)
+    print(f"     {describe(steps, gap_s)} at amplitude {amplitude:.2f}",
+          flush=True)
 
     if solo:
         play_cue(steps, gap_s=gap_s, amplitude=amplitude)
         time.sleep(1.2)
         return
+
+    # The loudness round moves pitch, and pitch is most of what keeps the
+    # busy cue apart from the waiting blip — so that one is played as a
+    # reference too, or a candidate could win on volume and collide.
+    if with_blip:
+        print("     waiting blip (the other single-tone cue)", flush=True)
+        play_cue(WAITING_STEPS, amplitude=WAITING_AMPLITUDE)
+        time.sleep(0.9)
 
     print("     stop cue", flush=True)
     play_cue(STOP_STEPS, gap_s=STOP_GAP)
@@ -173,10 +259,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gap", type=float, default=None,
                         help="silence between tones in seconds (default 0.03, "
                              "or the candidate's own)")
-    parser.add_argument("--amp", type=float, default=0.3,
-                        help="amplitude 0-1 (default 0.3, as the other cues)")
+    parser.add_argument("--amp", type=float, default=None,
+                        help="override every candidate's amplitude, 0-1 "
+                             "(default: the candidate's own, or 0.3)")
     parser.add_argument("--solo", action="store_true",
                         help="play the candidate alone, without the stop cue")
+    parser.add_argument("--loudness", action="store_true",
+                        help="audition the loudness candidates (F-J) instead "
+                             "of the shape ones (A-E), with the waiting blip "
+                             "played as a reference")
     parser.add_argument("--repeat", type=int, default=1, metavar="N",
                         help="play the whole run N times (default 1)")
     args = parser.parse_args(argv)
@@ -187,17 +278,20 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"bad --cue: {exc}", file=sys.stderr)
             return 2
-        chosen = [("custom", args.cue, steps, args.gap if args.gap else 0.03)]
+        chosen = [("custom", args.cue, steps,
+                   args.gap if args.gap else 0.03, args.amp)]
     else:
+        pool = LOUDNESS_CANDIDATES if args.loudness else CANDIDATES
         wanted = {letter.upper() for letter in args.letters}
-        chosen = [c for c in CANDIDATES if not wanted or c[0] in wanted]
+        chosen = [c for c in pool if not wanted or c[0] in wanted]
         if not chosen:
             print(f"no such candidate: {', '.join(sorted(wanted))}. "
-                  f"Known: {', '.join(c[0] for c in CANDIDATES)}",
+                  f"Known: {', '.join(c[0] for c in pool)}",
                   file=sys.stderr)
             return 2
         if args.gap is not None:
-            chosen = [(a, b, steps, args.gap) for a, b, steps, _ in chosen]
+            chosen = [(a, b, steps, args.gap, amp)
+                      for a, b, steps, _, amp in chosen]
 
     print(__doc__.split("Runs on the Mac")[0].rstrip())
     print("=" * 68)
@@ -208,12 +302,17 @@ def main(argv: list[str] | None = None) -> int:
         print("\nCandidate only, no reference.\n")
 
     for _ in range(max(1, args.repeat)):
-        for letter, description, steps, gap_s in chosen:
-            audition(f"{letter}. {description}", steps, gap_s, args.amp,
-                     args.solo)
+        for letter, description, steps, gap_s, amplitude in chosen:
+            # A candidate's own amplitude wins unless --amp was typed:
+            # in the loudness round the level IS the candidate, so a
+            # shared default would compare every entry at the same volume
+            # and answer nothing.
+            level = args.amp if args.amp is not None else (amplitude or 0.3)
+            audition(f"{letter}. {description}", steps, gap_s, level,
+                     args.solo, with_blip=args.loudness)
 
     if not args.cue:
-        print(NOTES)
+        print(LOUDNESS_NOTES if args.loudness else NOTES)
     return 0
 
 
