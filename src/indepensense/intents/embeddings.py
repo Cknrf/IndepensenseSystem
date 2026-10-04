@@ -124,6 +124,7 @@ _OPEN_SPAN_INTENTS = frozenset({
     Intent.NAVIGATION_START,
     Intent.PLACE_SAVE,
     Intent.PLACE_DELETE,
+    Intent.PLACE_LOCATE,
 })
 
 # Section label marking examples that must be handed to the LLM. Anything

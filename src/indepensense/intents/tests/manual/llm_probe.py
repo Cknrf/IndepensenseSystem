@@ -160,6 +160,12 @@ ENGLISH_CASES = [
     # is ON the list, versus asking about one entry of it — the second has
     # no intent and must stay `unknown`.
     ("Which places do you have saved for me", "place.list", {}),
+    # place.locate. Held out from the prompt: it teaches "the clinic" and
+    # "CN's house", so matching a possessive, a plain noun phrase and a
+    # Tagalog genitive is generalisation rather than lookup.
+    ("What is the exact location of my sister's house",
+     "place.locate", {"label": "my sister's house"}),
+    ("Where is the pharmacy I saved", "place.locate", {"label": "the pharmacy"}),
     ("Say the names of the places I kept", "place.list", {}),
     ("Do you still remember my home",    "unknown", {}),
 
@@ -209,6 +215,8 @@ TAGALOG_CASES = [
     ("I-save mo ito bilang bahay",                    "place.save",          {"label": "bahay"}),
     ("Kalimutan mo ang bahay",                        "place.delete",        {"label": "bahay"}),
     ("Ano-ano ang mga lugar na naitabi ko",           "place.list",          {}),
+    ("Nasaan ang klinika ko",                         "place.locate",
+     {"label": "klinika ko"}),
     ("Pakisabi ang mga lugar na tinago mo",           "place.list",          {}),
     ("Natatandaan mo pa ba ang klinika ko",           "unknown",             {}),
 
@@ -272,7 +280,13 @@ ADVERSARIAL_CASES = [
     ("tulong",                           "emergency.trigger", {}),
 
     # "location" / "where" about a place, not the user
-    ("where is Jollibee",                "unknown", {}),
+    # Was `unknown`, and the behaviour the user sees is unchanged: the
+    # executor finds no saved place by this name and hands the original
+    # transcript to the cloud, exactly as before. What moved is WHERE the
+    # decision is made. The classifier cannot know which labels this user
+    # saved, so it now identifies the question's form and the executor —
+    # which can see the saved places — resolves the referent.
+    ("where is Jollibee",                "place.locate", {"label": "Jollibee"}),
     # Progress is about the journey under way; the distance to some other
     # place would be answered with the current destination's, confidently
     # and wrongly.

@@ -216,6 +216,39 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Wala akong nakitang lugar na tumutugma sa '{location}', at "
               "wala ka ring naka-save na lugar na ganoon ang pangalan.",
     },
+    # --- where a saved place is ---------------------------------------------
+    # Four messages rather than one template with optional halves, because
+    # the two halves fail independently. The address needs Photon and a
+    # network; the distance needs a GPS fix. Saved places are the one
+    # destination that works with no network at all — answering "I can't
+    # look that up right now" to a place the user themselves pinned would
+    # give that up for a reverse-geocode that is nice to have.
+    #
+    # The label is echoed in every variant. The user asked about a name
+    # they chose, and hearing it back is how they catch the wearable
+    # answering about the wrong one.
+    "place.located": {
+        "en": "{label} is near {places}, about {distance} away.",
+        "tl": "Ang {label} ay malapit sa {places}, mga {distance} ang layo.",
+    },
+    "place.located_address_only": {
+        "en": "{label} is near {places}.",
+        "tl": "Ang {label} ay malapit sa {places}.",
+    },
+    "place.located_distance_only": {
+        "en": "{label} is about {distance} away.",
+        "tl": "Ang {label} ay mga {distance} ang layo.",
+    },
+    # Last resort: the place is saved, but there is neither a network to
+    # name it nor a fix to measure from. Coordinates are close to useless
+    # spoken aloud — they are here because confirming the place exists and
+    # where it was pinned still beats saying nothing, and because
+    # `location.near_coordinates` sets the same precedent for the user's
+    # own position.
+    "place.located_coordinates": {
+        "en": "{label} is saved at latitude {lat}, longitude {lon}.",
+        "tl": "Ang {label} ay naka-save sa latitude {lat}, longitude {lon}.",
+    },
     "nav.started": {
         "en": "Navigating to {destination}. Total distance {distance}. {first_action}",
         "tl": "Papunta na tayo sa {destination}. Ang kabuuang distansya ay {distance}. {first_action}",

@@ -34,6 +34,7 @@ class Intent(Enum):
     PLACE_SAVE = "place.save"
     PLACE_DELETE = "place.delete"
     PLACE_LIST = "place.list"
+    PLACE_LOCATE = "place.locate"
     UNKNOWN = "unknown"
 
 

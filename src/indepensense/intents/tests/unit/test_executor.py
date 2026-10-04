@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from indepensense.intents.base import Intent, IntentResult
+from indepensense.intents.base import CloudAnswer, Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.language import LanguageState
 from indepensense.navigation.monitor import NavigationMonitor
@@ -1439,3 +1439,101 @@ def test_the_fallback_answers_in_the_active_language():
     assert english != tagalog
     # Digits are effectively untrained in the MMS Tagalog voice.
     assert "40" not in tagalog
+
+
+# --- where a saved place is --------------------------------------------------
+#
+# The hard part of this intent is not the answer, it is the miss. "Where is
+# CN's house" and "Where is Jollibee" are the same sentence, and the
+# classifier cannot tell them apart — it has no idea which labels a given
+# user saved. So the executor resolves the referent, and anything it does
+# not recognise has to reach the cloud exactly as it did before this intent
+# existed.
+
+class _RecordingCloud:
+    """A cloud answerer that records what it was asked."""
+
+    def __init__(self, text="the cloud answered"):
+        self.asked: list[str] = []
+        self._text = text
+
+    def answer(self, question, language, previous=None):
+        self.asked.append(question)
+        return CloudAnswer(text=self._text)
+
+
+def test_locating_a_saved_place_gives_its_address_and_distance(places):
+    executor = _place_executor(places)
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "CN's house"}))
+
+    response = executor.execute(
+        IntentResult(Intent.PLACE_LOCATE, {"label": "CN's house"})
+    )
+
+    assert "CN's house" in response
+    assert "Mock Place" in response          # reverse-geocoded
+    assert "meters" in response or "kilometer" in response
+
+
+def test_an_unsaved_label_goes_to_the_cloud_rather_than_reporting_failure(
+    places,
+):
+    """The regression this intent could easily have caused. "Where is
+    Jollibee" reached the cloud before `place.locate` existed, and must
+    still — answering "you have no place saved by that name" would make
+    the wearable worse at a question it already handled."""
+    cloud = _RecordingCloud()
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        places=places, cloud=cloud,
+    )
+
+    response = executor.execute(IntentResult(
+        Intent.PLACE_LOCATE, {"label": "Jollibee"},
+        raw_transcript="where is Jollibee",
+    ))
+
+    assert cloud.asked == ["where is Jollibee"], "the miss never reached the cloud"
+    assert response == "the cloud answered"
+
+
+def test_the_address_is_dropped_rather_than_the_whole_answer(places):
+    """Saved places are the one destination that resolves with no network.
+    A reverse-geocode is nice to have; losing it must not cost the user
+    the distance, which needs nothing but GPS."""
+    class _DeadGeocoder(MockGeocoder):
+        def reverse(self, coordinate):
+            raise OSError("photon unreachable")
+
+    executor = _place_executor(places, geocoder=_DeadGeocoder())
+    executor.execute(IntentResult(Intent.PLACE_SAVE, {"label": "home"}))
+
+    response = executor.execute(IntentResult(Intent.PLACE_LOCATE, {"label": "home"}))
+
+    assert "home" in response
+    assert "meters" in response or "kilometer" in response
+
+
+def test_the_distance_is_dropped_rather_than_the_whole_answer(places, tmp_path):
+    """No fix means no distance, but the address still answers the
+    question that was asked."""
+    places.save("home", Coordinate(lat=14.5824, lon=120.9760))
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(),
+        gps=_StaticGPS(fix_quality=0), places=places,
+    )
+
+    response = executor.execute(IntentResult(Intent.PLACE_LOCATE, {"label": "home"}))
+
+    assert "home" in response
+    assert "Mock Place" in response
+    assert "meters" not in response
+
+
+def test_locating_without_a_label_asks_again(places):
+    response = _place_executor(places).execute(
+        IntentResult(Intent.PLACE_LOCATE, {"label": ""})
+    )
+
+    assert "didn't hear" in response.lower()

@@ -382,6 +382,7 @@ class IntentExecutor:
             Intent.SYSTEM_VOLUME:       self._handle_system_volume,
             Intent.PLACE_SAVE:          self._handle_place_save,
             Intent.PLACE_LIST:          self._handle_place_list,
+            Intent.PLACE_LOCATE:        self._handle_place_locate,
             Intent.PLACE_DELETE:        self._handle_place_delete,
         }
 
@@ -905,6 +906,80 @@ class IntentExecutor:
         replaced = self._places.save(label, position)
         key = "place.updated" if replaced else "place.saved"
         return messages.get(key, self._lang, label=label)
+
+    def _handle_place_locate(self, result: IntentResult) -> str:
+        """Say where a saved place is: its address, and how far off.
+
+        **A miss falls through to the cloud, it does not report failure.**
+        "Where is CN's house" and "Where is Jollibee" are the same
+        sentence, and the NLU cannot tell them apart — it has no idea
+        which labels this user saved. So the classifier decides the
+        *form* and this decides the *referent*, which is the only place
+        that can: an unsaved label hands the original transcript to
+        `_handle_unknown`, and the cloud answers it exactly as it did
+        before this intent existed. Answering "you have no place saved by
+        that name" instead would have made the wearable worse at a
+        question it already handled.
+
+        The two halves of the answer fail independently and are reported
+        independently. Reverse-geocoding needs Photon and a network; the
+        distance needs a GPS fix. A saved place is the one destination
+        that resolves with no network at all, so losing the address must
+        not cost the whole answer.
+        """
+        label = (result.parameters.get("label") or "").strip()
+        if not label:
+            return messages.get("place.no_label_heard", self._lang)
+
+        place = self._places.find(label) if self._places is not None else None
+        if place is None:
+            print(
+                f"[place] {label!r} is not saved — handing it to the cloud.",
+                file=sys.stderr, flush=True,
+            )
+            return self._handle_unknown(result)
+
+        # Spoken back as the user said it, not as it was stored: labels
+        # are normalised for lookup (see `_place_key`) and reading the
+        # normalised form back would sound like a correction.
+        parts: list[str] = []
+        try:
+            hit = self._geocoder.reverse(place.coordinate)
+        except Exception as exc:
+            print(f"[place] reverse geocode failed: {exc}",
+                  file=sys.stderr, flush=True)
+            hit = None
+        if hit is not None:
+            parts = _place_parts(hit, "name", "street", "district", "city")
+
+        here = self._current_position()
+        distance = None
+        if here is not None:
+            distance = messages.speak_distance(
+                haversine_m(here, place.coordinate), self._lang,
+            )
+
+        if parts and distance:
+            return messages.get(
+                "place.located", self._lang, label=label,
+                places=messages.join_items(parts, self._lang),
+                distance=distance,
+            )
+        if parts:
+            return messages.get(
+                "place.located_address_only", self._lang, label=label,
+                places=messages.join_items(parts, self._lang),
+            )
+        if distance:
+            return messages.get(
+                "place.located_distance_only", self._lang,
+                label=label, distance=distance,
+            )
+        return messages.get(
+            "place.located_coordinates", self._lang, label=label,
+            lat=f"{place.coordinate.lat:.4f}",
+            lon=f"{place.coordinate.lon:.4f}",
+        )
 
     def _handle_place_list(self, result: IntentResult) -> str:
         """Read back the labels the user has saved.
