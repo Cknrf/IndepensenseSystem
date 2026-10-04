@@ -273,6 +273,18 @@ MAG_SCALE_Z = 1.0
 #     forward="-x"  left="+z"
 #     forward="+z"  left="+x"
 #     forward="-z"  left="-x"      <- in use
+# Fine rotation applied to the computed heading, in degrees, added last.
+#
+# `MAG_FORWARD_AXIS` / `MAG_LEFT_AXIS` can only express whole 90° steps —
+# they choose which axes to use and which way round. Whatever is left
+# after that is a constant rotation: the board is not mounted perfectly
+# square to the wearer's facing, and the mount is permanent, so the error
+# is permanent too.
+#
+# Measured by `magnetometer_swing` against a phone compass, which is also
+# where the rest of the horizontal calibration comes from.
+MAG_HEADING_OFFSET_DEG = 0.0
+
 MAG_FORWARD_AXIS = "-z"
 MAG_LEFT_AXIS = "-x"
 

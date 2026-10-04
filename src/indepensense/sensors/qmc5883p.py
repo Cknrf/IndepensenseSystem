@@ -202,6 +202,7 @@ class QMC5883P:
         scale_z: float = 1.0,
         forward_axis: str = "+x",
         left_axis: str = "+y",
+        heading_offset_deg: float = 0.0,
     ):
         from smbus2 import SMBus  # lazy: only resolvable on the Pi
 
@@ -209,6 +210,11 @@ class QMC5883P:
         self._scales = (scale_x, scale_y, scale_z)
         self._forward_axis = forward_axis
         self._left_axis = left_axis
+        # Configuration, not chip behaviour, so it arrives as an argument
+        # like the axis specs rather than being read here. Applied last,
+        # after the axes have been chosen — those give whole 90° steps and
+        # this is whatever constant rotation the mount leaves over.
+        self._heading_offset_deg = heading_offset_deg
         # Validate the mount configuration before touching the bus, so a
         # typo in config.py surfaces as a config error rather than after a
         # successful device open. axis_component raises on a bad spec.
@@ -263,10 +269,13 @@ class QMC5883P:
             magnetic_x=x,
             magnetic_y=y,
             magnetic_z=z,
-            heading_deg=heading_from_field(
-                axis_component(field, self._forward_axis),
-                axis_component(field, self._left_axis),
-            ),
+            heading_deg=(
+                heading_from_field(
+                    axis_component(field, self._forward_axis),
+                    axis_component(field, self._left_axis),
+                )
+                + self._heading_offset_deg
+            ) % 360.0,
             timestamp=time.time(),
         )
 
