@@ -2115,6 +2115,28 @@ class App:
             flush=True,
         )
 
+        # A missing default is the failure worth spending output on, and
+        # it is unreachable by inspecting the system from outside: the
+        # same user, groups, environment and /dev/snd produced a working
+        # device list in every standalone reconstruction while the
+        # service got nothing. So when it happens, dump what the process
+        # actually had rather than leaving the next person to guess.
+        #
+        # ALSA resolves `default` through config files it locates using
+        # the environment, so these three are the variables that decide
+        # whether PortAudio finds PipeWire or nothing at all.
+        if default_out is None or default_out < 0 or not len(devices):
+            for name in ("HOME", "XDG_RUNTIME_DIR", "ALSA_CONFIG_PATH"):
+                print(f"    env {name}={os.environ.get(name) or '(unset)'}",
+                      flush=True)
+            socket = Path(os.environ.get("XDG_RUNTIME_DIR", "")) / "pipewire-0"
+            print(f"    pipewire socket {socket}: "
+                  f"{'present' if socket.exists() else 'MISSING'}", flush=True)
+            for index, device in enumerate(devices):
+                print(f"    [{index}] {device['name']!r} "
+                      f"in={device['max_input_channels']} "
+                      f"out={device['max_output_channels']}", flush=True)
+
     def _reclaim_repeat_button(self) -> None:
         """Point the repeat button back at `_on_repeat_press`. Never raises.
 
