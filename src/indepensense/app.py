@@ -2136,6 +2136,20 @@ class App:
         our `_on_ptt_press` handler in the `finally` block so the next
         press starts a new cycle correctly.
         """
+        # Per-stage wall clock, reported as one line in the `finally`.
+        #
+        # One line rather than a print per stage: the obstacle poller
+        # writes to the same console several times a second, so six
+        # scattered timings are unreadable in a journal, and a cycle that
+        # returns early still reports what it spent before bailing.
+        #
+        # Recording is excluded — that is the user speaking, it is
+        # already logged as "Captured N s", and including it would hide
+        # the number that matters behind however long they talked. The
+        # total is therefore the wait *after* the user stops: the thing
+        # the waiting blip covers, and the thing to defend in the viva.
+        stages: list[tuple[str, float]] = []
+
         try:
             timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
             input_path = VOICE_TEST_DIR / f"{timestamp}_command.wav"
@@ -2206,6 +2220,7 @@ class App:
             # executor has to fetch, and finally synthesis. The blip is
             # what distinguishes that from a device that has died.
             with self._waiting_cue():
+                _t0 = time.monotonic()
                 transcript = self.stt.transcribe(
                     input_path,
                     language=self.language.current,
@@ -2213,6 +2228,7 @@ class App:
                         WHISPER_INITIAL_PROMPTS.get(self.language.current) or None
                     ),
                 )
+                stages.append(("stt", time.monotonic() - _t0))
                 print(f"[PTT] Transcript: {transcript.text!r}", flush=True)
                 # Split from the empty-transcript case below: a cancelled
                 # cycle has already been answered by the stop cue, and
@@ -2229,7 +2245,9 @@ class App:
                     self._speak_prerendered("not_heard")
                     return
 
+                _t0 = time.monotonic()
                 intent_result = self.parser.parse(transcript.text)
+                stages.append((f"nlu:{intent_result.source}", time.monotonic() - _t0))
                 print(
                     f"[PTT] Intent: {describe(intent_result)} "
                     f"params={intent_result.parameters}",
@@ -2244,6 +2262,17 @@ class App:
                 # failure never reaches the cloud, so promising a wait that is
                 # not coming would have the wearable say "let me think" and
                 # then immediately "I didn't catch that".
+                # Checked here and not only after the cue: classification
+                # is the longest uninterruptible stage in the pipeline
+                # (~5 s for the LLM path), so a press at the start of it
+                # was observed by the check below only *after* the device
+                # had already said "let me think about that" — speech from
+                # a cycle the user had cancelled, which then needed a
+                # second press to stop. Cancelling has to mean silence
+                # from the moment it is noticed, not one sentence later.
+                if self._voice_cancel.is_set():
+                    return
+
                 if (
                     intent_result.intent is Intent.UNKNOWN
                     and intent_result.failure is None
@@ -2253,17 +2282,23 @@ class App:
                     if self._voice_cancel.is_set():
                         return
 
+                _t0 = time.monotonic()
                 response = self.executor.execute(intent_result)
+                stages.append(("exec", time.monotonic() - _t0))
                 print(f"[PTT] Response: {response}", flush=True)
                 if self._voice_cancel.is_set():
                     return
 
+                _t0 = time.monotonic()
                 self.tts.synthesize(
                     response, response_path, language=self.language.current,
                 )
+                stages.append(("tts", time.monotonic() - _t0))
             if self._voice_cancel.is_set():
                 return
+            _t0 = time.monotonic()
             play(response_path)
+            stages.append(("play", time.monotonic() - _t0))
 
             # The goodbye has now been heard, so it is safe to cut power.
             # Before `play()` would truncate it mid-word; from the user's
@@ -2290,6 +2325,13 @@ class App:
             # broken TTS doesn't cascade into an infinite error loop.
             self._speak_error("Something went wrong. Please try again.")
         finally:
+            if stages:
+                spent = " | ".join(f"{name} {secs:.1f}s" for name, secs in stages)
+                total = sum(secs for _, secs in stages)
+                print(
+                    f"[PTT] timing: {spent} | total {total:.1f}s",
+                    flush=True,
+                )
             # Backstop: every path that reached the recorder has already
             # reclaimed the button, but the ones that failed before it
             # have not.
