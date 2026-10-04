@@ -111,6 +111,7 @@ constructor inline in `start()` silently drops it out of mock coverage.
 failure aborts startup. `_try_open_*` means degraded operation is
 acceptable — it logs, returns None, and every caller handles None.
 """
+import faulthandler
 import hashlib
 import os
 import signal
@@ -3057,6 +3058,24 @@ def run_app(app: App) -> None:
 
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
+
+    # `kill -USR1 <pid>` dumps every thread's stack to stderr, which under
+    # systemd lands in the journal alongside the rest of the device's
+    # output.
+    #
+    # This exists because the failure it diagnoses is invisible by
+    # construction. A thread wedged in a socket read prints nothing, logs
+    # nothing and raises nothing — the device simply stops answering its
+    # buttons, because `_voice_active` is cleared in a `finally` that a
+    # blocked thread never reaches. No amount of added logging finds that;
+    # only a stack does, and the device is headless with no debugger
+    # attached.
+    #
+    # SIGUSR1 rather than SIGQUIT: SIGQUIT's default action kills the
+    # process and dumps core, so a mistyped signal on a wearable someone
+    # is relying on would take it down. SIGUSR1 has no default action at
+    # all, which is what makes it safe to send to a device in the field.
+    faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
 
     try:
         app.start()
