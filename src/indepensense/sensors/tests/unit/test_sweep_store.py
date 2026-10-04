@@ -12,6 +12,7 @@ property that matters most: both modes must derive identical numbers from
 identical samples, or the convenient one quietly becomes the wrong one.
 """
 import math
+import statistics
 
 import pytest
 
@@ -490,3 +491,88 @@ def test_too_few_samples_to_judge_reports_nothing_rather_than_guessing():
     )
 
     assert arc_covered(_arc(360, count=4)) == 0.0
+
+
+# --- is the stored model wide enough? ---------------------------------------
+#
+# `config.py` keeps one offset and one scale per axis, which straightens
+# an ellipsoid already lined up with the sensor's axes. Soft iron —
+# ferrous material near the sensor bending the field — tilts it, and a
+# tilted ellipsoid has cross terms no per-axis scale can express.
+#
+# The real vest, once its coverage problem was fixed, still graded BAD at
+# 41.2% spread with balanced half-spans, no flagged face and a correct
+# 42 uT field. A deliberately tilted synthetic sweep reproduces that
+# almost exactly, which is what the diagnostic below is for.
+
+def _tilted_sweep(count=600, centre=(12.0, -5.0, 3.0), radius=42.0,
+                  stretch=(1.0, 0.65, 1.25), degrees=35.0):
+    """A sphere squashed along axes rotated away from the sensor's."""
+    import numpy as np
+
+    angle = math.radians(degrees)
+    rotation = np.array([[math.cos(angle), -math.sin(angle), 0.0],
+                         [math.sin(angle), math.cos(angle), 0.0],
+                         [0.0, 0.0, 1.0]])
+    distortion = rotation @ np.diag(stretch) @ rotation.T
+
+    points = []
+    for i in range(count):
+        phi = math.acos(1 - 2 * ((i + 0.5) / count))
+        theta = math.pi * (1 + 5 ** 0.5) * (i + 0.5)
+        vector = np.array([radius * math.sin(phi) * math.cos(theta),
+                           radius * math.sin(phi) * math.sin(theta),
+                           radius * math.cos(phi)])
+        points.append(tuple(np.asarray(centre) + distortion @ vector))
+    return points
+
+
+def test_the_per_axis_model_handles_hard_iron_alone():
+    """The case the stored model was designed for."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        corrected_magnitudes, general_fit_spread,
+    )
+
+    points = _sphere(count=600, centre=(12.0, -5.0, 3.0))
+    offsets, scales, _spans = calibration_from_samples(points)
+    magnitudes = corrected_magnitudes(points, offsets, scales)
+    per_axis = (max(magnitudes) - min(magnitudes)) / statistics.fmean(magnitudes) * 100
+
+    assert per_axis < 1.0
+    assert general_fit_spread(points)[0] < 1.0
+
+
+def test_tilted_soft_iron_defeats_the_per_axis_model():
+    """And the general fit shows it was the model, not the sweep."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        corrected_magnitudes, general_fit_spread,
+    )
+
+    points = _tilted_sweep()
+    offsets, scales, _spans = calibration_from_samples(points)
+    magnitudes = corrected_magnitudes(points, offsets, scales)
+    per_axis = (max(magnitudes) - min(magnitudes)) / statistics.fmean(magnitudes) * 100
+
+    assert per_axis > 20.0, "this sweep should defeat a per-axis correction"
+    assert general_fit_spread(points)[0] < 1.0, "a 3x3 correction should fix it"
+
+
+def test_the_general_fit_declines_on_data_that_is_not_an_ellipsoid():
+    """It must not answer "a wider model would fix it" when nothing would
+    — that would send somebody rewriting the calibration for nothing."""
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        fit_general_ellipsoid, general_fit_spread,
+    )
+
+    flat = [(x, y, 3.0) for x, y, _z in _sphere(count=600)]
+
+    assert fit_general_ellipsoid(flat) is None
+    assert general_fit_spread(flat) is None
+
+
+def test_the_general_fit_needs_enough_samples():
+    from indepensense.sensors.tests.manual.magnetometer_calibrate import (
+        fit_general_ellipsoid,
+    )
+
+    assert fit_general_ellipsoid(_sphere(count=40)) is None

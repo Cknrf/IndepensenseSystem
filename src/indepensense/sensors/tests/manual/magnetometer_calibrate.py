@@ -164,6 +164,9 @@ _OUTLIER_MADS = 4.0
 # is no worse. Six unknowns, so this is a wide margin, not a tight one.
 _MIN_FIT_SAMPLES = 50
 
+# Nine unknowns rather than six, so a wider margin again.
+_MIN_GENERAL_FIT_SAMPLES = 100
+
 _GOOD_SPREAD_PCT = 10.0
 _MARGINAL_SPREAD_PCT = 20.0
 
@@ -416,6 +419,100 @@ def grade_sweep(samples, offsets, scales):
             "clear of buildings — then re-run."
         )
     return mean, spread_pct, verdict, advice
+
+
+def fit_general_ellipsoid(samples):
+    """Fit a FREELY ORIENTED ellipsoid. `(centre, transform)` or None.
+
+    Diagnostic only — nothing in the runtime can use the result yet.
+
+    `config.py` stores one offset and one scale per axis, which corrects
+    an ellipsoid whose axes line up with the sensor's. That is hard iron
+    plus *axis-aligned* soft iron. Real soft iron — ferrous material near
+    the sensor concentrating the field — tilts the ellipsoid, and a
+    tilted ellipsoid has cross terms no per-axis scale can express.
+
+    So this answers one question and only one: **would a full 3x3
+    correction fix this sweep?** If it drops the residual to something
+    usable, the limitation is the stored model and the fix is to widen
+    it. If it does not, the samples are not on an ellipsoid at all and a
+    richer model would only fit the mess more closely.
+
+    Measuring that before changing the model is the point. The per-axis
+    form is what the whole heading path expects, so widening it is a real
+    change and should not be made on a hunch.
+    """
+    import numpy as np                  # lazy: Pi-only at module import time
+
+    if len(samples) < _MIN_GENERAL_FIT_SAMPLES:
+        return None
+
+    data = np.asarray(samples, dtype=float)
+    x, y, z = data[:, 0], data[:, 1], data[:, 2]
+
+    # (v-c)^T A (v-c) = 1 expanded: every quadratic and linear term.
+    design = np.column_stack([
+        x * x, y * y, z * z, 2 * x * y, 2 * x * z, 2 * y * z, 2 * x, 2 * y, 2 * z,
+    ])
+    try:
+        params, _res, rank, _sv = np.linalg.lstsq(
+            design, np.ones(len(data)), rcond=None
+        )
+    except np.linalg.LinAlgError:
+        return None
+    if rank < 9:
+        return None
+
+    shape = np.array([
+        [params[0], params[3], params[4]],
+        [params[3], params[1], params[5]],
+        [params[4], params[5], params[2]],
+    ])
+    linear = params[6:9]
+
+    eigenvalues, _vectors = np.linalg.eigh(shape)
+    if np.any(eigenvalues <= 0):
+        return None                     # a hyperboloid, not an ellipsoid
+
+    try:
+        centre = -np.linalg.solve(shape, linear)
+    except np.linalg.LinAlgError:
+        return None
+
+    # Rescale so the surface passes through the data rather than through
+    # the unit level set, then take the symmetric square root: the matrix
+    # W with W^T W = A is exactly the transform that maps the ellipsoid
+    # back to a sphere.
+    offset = 1.0 + float(centre @ shape @ centre)
+    if offset <= 0:
+        return None
+    values, vectors = np.linalg.eigh(shape / offset)
+    if np.any(values <= 0):
+        return None
+    transform = vectors @ np.diag(np.sqrt(values)) @ vectors.T
+    return centre, transform
+
+
+def general_fit_spread(samples):
+    """Spread a full 3x3 correction would leave. `(percent, field)` or None."""
+    import numpy as np
+
+    fitted = fit_general_ellipsoid(samples)
+    if fitted is None:
+        return None
+    centre, transform = fitted
+
+    corrected = (np.asarray(samples, dtype=float) - centre) @ transform.T
+    magnitudes = np.linalg.norm(corrected, axis=1)
+    mean = float(magnitudes.mean())
+    if mean <= 0:
+        return None
+    # The fit normalises to a unit sphere; rescale to real units using the
+    # median raw distance from the centre so the number is readable.
+    raw = np.linalg.norm(np.asarray(samples, dtype=float) - centre, axis=1)
+    field = float(np.median(raw))
+    spread = float(magnitudes.max() - magnitudes.min()) / mean * 100.0
+    return spread, field
 
 
 def reject_outliers(samples, tolerance=_OUTLIER_MADS):
@@ -733,6 +830,29 @@ def print_result(samples, diagnosis=()) -> bool:
               "- the same sweep with the extremes ignored")
         print(f"    far-out samples {profile['wild']:5d} of {profile['count']}")
         print()
+        general = general_fit_spread(kept)
+        if general is not None:
+            spread_pct_general, field = general
+            print(f"  A full 3x3 soft-iron correction would leave "
+                  f"{spread_pct_general:.1f}% spread")
+            print(f"  (field {field:.1f} \u03bcT), against "
+                  f"{spread_pct:.1f}% from the per-axis model this")
+            print("  project stores.")
+            if spread_pct_general <= _GOOD_SPREAD_PCT:
+                print()
+                print("  THAT IS THE ANSWER. The sweep is fine and the stored")
+                print("  model is too narrow: one offset and one scale per axis")
+                print("  can only straighten an ellipsoid already lined up with")
+                print("  the sensor's axes. Something ferrous near the sensor")
+                print("  has tilted it. Report this number \u2014 it justifies")
+                print("  widening the calibration to a full matrix.")
+            else:
+                print()
+                print("  So the model is not the limitation: even an unrestricted")
+                print("  ellipsoid cannot fit these samples. Whatever is wrong is")
+                print("  in the measurement, not the correction.")
+            print()
+
         if profile["middle_pct"] <= _GOOD_SPREAD_PCT < profile["peak_to_peak_pct"]:
             print("  The bulk of the sweep is tight and only a few readings are")
             print("  wild, which is not what a distorted field looks like \u2014")
