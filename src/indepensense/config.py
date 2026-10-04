@@ -302,7 +302,17 @@ MAG_SCALE_Z = 1.0564
 #
 # Measured by `magnetometer_swing` against a phone compass, which is also
 # where the rest of the horizontal calibration comes from.
-MAG_HEADING_OFFSET_DEG = 0.0
+#
+# Measured 2026-10-04, facing magnetic north by phone compass: 61 samples
+# averaging 12.4°, so the device reads 12.4° high and this cancels it.
+# Standing still the readings held within 0.9° (std dev), which is well
+# inside the 4.6° the swing predicted and says the heading is steady
+# enough to act on.
+#
+# Small on purpose, and that is the useful part: `magnetometer_axes` left
+# four candidate axis pairs that differ by whole 90° steps, and an offset
+# of 12° rather than ~100° confirms the pair below is the right one.
+MAG_HEADING_OFFSET_DEG = -12.4
 
 MAG_FORWARD_AXIS = "-z"
 MAG_LEFT_AXIS = "-x"
