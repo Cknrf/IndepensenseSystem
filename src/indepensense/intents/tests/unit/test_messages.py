@@ -242,6 +242,28 @@ def test_proximity_spells_the_number_out_in_tagalog():
     assert "sentimetro" in spoken
 
 
+# --- the buttons the user is told to press -----------------------------------
+
+
+@pytest.mark.parametrize("language", ("en", "tl"))
+def test_confirm_and_cancel_are_different_buttons(language):
+    """The whole point of naming them is to tell them apart. A copy-paste
+    that left both as "left" would read perfectly and send every decline
+    to the button that confirms."""
+    assert (messages.get("button.ptt_position", language)
+            != messages.get("button.cancel_position", language))
+
+
+@pytest.mark.parametrize("language", ("en", "tl"))
+@pytest.mark.parametrize("key", ("nav.confirm_destination", "shutdown.confirm"))
+def test_every_confirmation_prompt_offers_both_answers(key, language):
+    """A prompt that only says how to say yes leaves the user waiting out
+    a timeout to say no — which is what both of these used to do."""
+    template = messages.MESSAGES[key][language]
+    assert "{button}" in template, key
+    assert "{cancel}" in template, key
+
+
 # --- the clock ---------------------------------------------------------------
 
 

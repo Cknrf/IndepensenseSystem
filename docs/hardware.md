@@ -165,21 +165,29 @@ Each button needs three wires — VCC and GND tap the shared rails, OUT goes to
 its own GPIO:
 
 ```
-Push-to-talk (PTT)          left on the enclosure
+Push-to-talk (PTT)          RIGHT on the enclosure
     3.3 V rail  (VCC)
     GND rail    (GND)       pins 20, 25, 34 or 39
     Pin 16      (OUT)       GPIO 23
 
-Emergency                   position unrecorded
+Emergency                   FRONT on the enclosure
     3.3 V rail  (VCC)
     GND rail    (GND)
     Pin 18      (OUT)       GPIO 24
 
-Repeat / stop speech        position unrecorded
+Repeat / stop speech        LEFT on the enclosure
     3.3 V rail  (VCC)
     GND rail    (GND)
     Pin 22      (OUT)       GPIO 25
 ```
+
+**The positions are spoken aloud, so they are not cosmetic.** `messages.py`
+fills `{button}` and `{cancel}` in every confirmation prompt from
+`button.ptt_position` and `button.cancel_position`, which describe this
+layout. This table recorded PTT as "left" and the other two as "position
+unrecorded"; the wearable therefore told users to "press the left button to
+confirm" when left is the button that *cancels*. Re-fabricating the
+enclosure means editing those two message values, and this table, together.
 
 VCC is the shared 3.3 V rail, not a header pin — pins 1 and 17 are taken by
 the two DYP-A22s.

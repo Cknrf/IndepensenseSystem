@@ -452,10 +452,19 @@ def test_declining_leaves_no_route_behind():
     assert not monitor.is_active()
 
 
-def test_the_question_names_the_place_the_distance_and_the_button():
-    """All three have to be there: the place so a wrong branch is audible,
-    the distance because that is what gives it away, and the button because
-    the user cannot see which one to press."""
+def test_the_question_names_the_place_the_distance_and_both_buttons():
+    """All four have to be there: the place so a wrong branch is audible,
+    the distance because that is what gives it away, and both buttons
+    because the user cannot see which one to press — for either answer.
+
+    This asserted a bare `"left button" in question` while PTT was wrongly
+    recorded as the left-hand button. The string survived the correction
+    unchanged, because the prompt now says "left button" about the one
+    that *cancels* — a passing test whose meaning had inverted. Both roles
+    are now checked against the message keys that define them, so the two
+    cannot be confused again.
+    """
+    from indepensense.intents import messages
     confirmer = _SpyConfirmer(answer=True)
     _confirming_executor(
         confirmer, [_candidate("Jollibee Manila", 14.5830, 120.9770)],
@@ -466,7 +475,12 @@ def test_the_question_names_the_place_the_distance_and_the_button():
     question = confirmer.questions[0]
     assert "Jollibee Manila" in question
     assert "meters away" in question
-    assert "left button" in question
+    assert "{" not in question, f"unsubstituted placeholder: {question}"
+
+    confirm_word = messages.get("button.ptt_position", "en")
+    cancel_word = messages.get("button.cancel_position", "en")
+    assert f"Press the {confirm_word} button to confirm" in question
+    assert f"the {cancel_word} button to cancel" in question
 
 
 def test_navigation_without_a_confirmer_behaves_as_before():
@@ -1084,15 +1098,14 @@ def test_the_user_is_asked_before_anything_happens():
 
     _shutdown_executor(confirmer=_confirm, shutdown=lambda: None).execute(_shutdown_intent())
 
-    # The button position is substituted, not left as a placeholder: a
-    # user hearing "press the {button} button" has been told nothing.
-    assert asked == [
-        messages.get(
-            "shutdown.confirm", "en",
-            button=messages.get("button.ptt_position", "en"),
-        )
-    ]
-    assert "{button}" not in asked[0]
+    # Asserted by property rather than by rebuilding the exact string:
+    # the point is what the user can act on, and an assertion that mirrors
+    # the call it checks passes even when both are wrong together.
+    assert len(asked) == 1
+    prompt = asked[0]
+    assert "{" not in prompt, f"unsubstituted placeholder: {prompt}"
+    assert messages.get("button.ptt_position", "en") in prompt
+    assert messages.get("button.cancel_position", "en") in prompt
 
 
 def test_a_missing_confirmer_refuses_rather_than_proceeding():

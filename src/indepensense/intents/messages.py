@@ -82,12 +82,26 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     # --- hardware the user is told to touch ---------------------------------
-    # Where the push-to-talk button physically sits on the enclosure, as a
-    # word the wearer can act on. Separate from the sentences that use it so
-    # that re-fabricating the enclosure — or discovering PTT is actually the
-    # middle button — is a single edit that cannot leave the two languages
-    # disagreeing. See docs/hardware.md for the layout this describes.
+    # Where each button physically sits, as a word the wearer can act on.
+    # Separate from the sentences that use them so that re-fabricating the
+    # enclosure is a single edit that cannot leave the two languages
+    # disagreeing. See docs/hardware.md for the layout these describe.
+    #
+    # These were wrong until the layout was checked against the physical
+    # device: PTT was recorded as "left" when it is on the right, so every
+    # confirmation prompt named the button that *declines*. A wrong position
+    # is worse than no position — "press the button" merely leaves the user
+    # guessing, while "press the left button" sends them to the one that
+    # cancels what they were trying to approve.
     "button.ptt_position": {
+        "en": "right",
+        "tl": "kanang",
+    },
+    # The repeat/stop button, borrowed as "no" for the duration of a
+    # confirmation. Its everyday job — stop speaking, abandon the command —
+    # is what "no" means at a confirmation prompt, so the two readings do
+    # not conflict.
+    "button.cancel_position": {
         "en": "left",
         "tl": "kaliwang",
     },
@@ -133,9 +147,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     # the two wrong guesses sends a guardian an emergency alert.
     "shutdown.confirm": {
         "en": "Do you want to turn off IndepenSense? Press the {button} "
-              "button to confirm.",
+              "button to confirm, or the {cancel} button to cancel.",
         "tl": "Gusto mo bang patayin ang IndepenSense? Pindutin ang {button} "
-              "pindutan para sang-ayunan.",
+              "pindutan para sang-ayunan, o ang {cancel} pindutan para "
+              "kanselahin.",
     },
     "shutdown.goodbye": {
         "en": "Turning off now. Goodbye, and stay safe.",
@@ -262,19 +277,32 @@ MESSAGES: dict[str, dict[str, str]] = {
     # the next province — so the wearable reads its choice back and waits for
     # a deliberate press before routing anywhere.
     #
-    # `{button}` is filled from `button.ptt_position` rather than written into
-    # the sentence, so a rebuilt enclosure is one edit in one place instead of
-    # a hunt through every message that names a button.
+    # `{button}` and `{cancel}` are filled from `button.ptt_position` and
+    # `button.cancel_position` rather than written into the sentence, so a
+    # rebuilt enclosure is one edit in one place instead of a hunt through
+    # every message that names a button.
+    #
+    # "or wait to cancel" became an explicit button because waiting is a
+    # poor way to say no: a field log shows a user standing through the
+    # full 13.7 s timeout to decline a destination they had already heard
+    # was wrong. Silence still declines — that is the backstop for a user
+    # who did not hear the question or is not holding the device — but it
+    # is no longer the only way.
     "nav.confirm_destination": {
         "en": "{place}, {distance} away. Press the {button} button to "
-              "confirm, or wait to cancel.",
-        # "kaliwang pindutan", not "kaliwa na pindutan" — the ligature is
-        # baked into the `button.ptt_position` value so the template stays a
-        # plain substitution rather than growing per-language grammar glue.
+              "confirm, or the {cancel} button to cancel.",
+        # "kanang pindutan", not "kanan na pindutan" — the ligature is baked
+        # into the position values so the template stays a plain
+        # substitution rather than growing per-language grammar glue.
         "tl": "{place}, {distance} ang layo. Pindutin ang {button} "
-              "pindutan para kumpirmahin, o maghintay para kanselahin.",
+              "pindutan para kumpirmahin, o ang {cancel} pindutan para "
+              "kanselahin.",
     },
-    "nav.confirm_timed_out": {
+    # Spoken for both ways of declining — the button and the timeout. One
+    # message rather than two because the user's next step is identical:
+    # the destination was not accepted, say another one. The key is no
+    # longer named for the timeout, since that is now the rarer path.
+    "nav.confirm_declined": {
         "en": "Cancelled. Please say where you want to go.",
         "tl": "Kinansela. Pakisabi po kung saan kayo gustong pumunta.",
     },

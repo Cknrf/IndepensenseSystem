@@ -439,7 +439,7 @@ class IntentExecutor:
             # cannot glance at a map to check. Declining costs one repeated
             # command; walking the wrong way costs much more.
             if not self._confirm_destination(destination, start):
-                return messages.get("nav.confirm_timed_out", self._lang)
+                return messages.get("nav.confirm_declined", self._lang)
 
         # Which way the user is facing, so the route does not open by
         # telling them to turn around. Unknown — including whenever the
@@ -609,6 +609,7 @@ class IntentExecutor:
         prompt = messages.get(
             "shutdown.confirm", self._lang,
             button=messages.get("button.ptt_position", self._lang),
+            cancel=messages.get("button.cancel_position", self._lang),
         )
         if not self._confirmer(prompt):
             return messages.get("shutdown.cancelled", self._lang)
@@ -1170,6 +1171,7 @@ class IntentExecutor:
                 haversine_m(origin, destination.coordinate), self._lang,
             ),
             button=messages.get("button.ptt_position", self._lang),
+            cancel=messages.get("button.cancel_position", self._lang),
         )
         try:
             return bool(self._confirmer(question))

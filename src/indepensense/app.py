@@ -2068,6 +2068,26 @@ class App:
             print(f"[PTT] could not reclaim the button: {exc}",
                   file=sys.stderr, flush=True)
 
+    def _reclaim_repeat_button(self) -> None:
+        """Point the repeat button back at `_on_repeat_press`. Never raises.
+
+        Only the destination confirmation borrows this one, where it
+        serves as "no". Same contract as `_reclaim_ptt_button`: idempotent,
+        tolerant of a missing button, and silent on failure because the
+        caller is a `finally` cleaning up after something else.
+
+        Failing to hand this back would leave the user with no way to stop
+        the wearable talking, which is the one control a person who cannot
+        see the device most needs to keep.
+        """
+        if self.repeat_button is None:
+            return
+        try:
+            self.repeat_button.on("pressed", self._on_repeat_press)
+        except Exception as exc:
+            print(f"[REPEAT] could not reclaim the button: {exc}",
+                  file=sys.stderr, flush=True)
+
     def _play_press_feedback(self, rising_chime: bool) -> None:
         """PTT start/stop feedback: all-motor pulse + audio chime.
 
@@ -2461,13 +2481,21 @@ class App:
         voice thread inside `navigation.start` — between choosing a
         destination and asking the router for a path.
 
-        Silence is "no". The prototype's three buttons are all spoken for,
-        so a dedicated "no" button does not exist; a timeout is the decline.
-        That also fails in the right direction, because the two ways this
-        can go wrong — the user did not hear the question, or is not holding
-        the device — should both end in not walking anywhere.
+        **Right confirms, left declines, silence still declines.** This
+        used to say that all three buttons were spoken for and a timeout
+        was therefore the only way to decline. That was wrong about the
+        repeat button: during a confirmation it has nothing to do, because
+        its everyday job — stop talking, abandon the command — is what
+        "no" means here. Leaving the decline to a timeout cost a user in
+        the field the full `DESTINATION_CONFIRM_TIMEOUT_S` of standing
+        still to reject a destination they had already heard was wrong.
 
-        The PTT handler is swapped for the duration and restored afterwards,
+        The timeout stays as the backstop, and still fails in the right
+        direction: the two ways this can go wrong — the user did not hear
+        the question, or is not holding the device — should both end in
+        not walking anywhere.
+
+        Both handlers are swapped for the duration and restored afterwards,
         the same borrow-and-return `record_until_button` performs. The press
         that ends recording cannot leak into this window: several seconds of
         speech separate them.
@@ -2496,25 +2524,47 @@ class App:
             return False
 
         confirmed = threading.Event()
+        declined = threading.Event()
         try:
             self.ptt_button.on("pressed", confirmed.set)
+            # Borrowed the same way, and for the same window. The repeat
+            # button is idle here: its everyday job is to stop speech and
+            # abandon the running command, which is exactly what "no"
+            # means at a confirmation prompt, so there is nothing for it
+            # to do that this displaces.
+            #
+            # A local event rather than letting its normal handler set
+            # `_voice_cancel`. Declining already worked that way by
+            # accident — and because the pipeline treats that flag as
+            # "abandon this cycle", the "please say where you want to go"
+            # that follows was swallowed. Waiting out the timeout got the
+            # user a spoken reply; pressing the button got them silence,
+            # which is the wrong way round.
+            if self.repeat_button is not None:
+                self.repeat_button.on("pressed", declined.set)
 
             deadline = time.monotonic() + DESTINATION_CONFIRM_TIMEOUT_S
             while time.monotonic() < deadline:
                 if confirmed.wait(timeout=0.05):
                     break
+                if declined.is_set():
+                    break
                 if self._voice_cancel.is_set():
                     return False
         finally:
             self._waiting_paused.clear()
-            # Hand the button back even if speaking or waiting blew up,
+            # Hand both buttons back even if speaking or waiting blew up,
             # or the next press would land on a dead handler.
             self._reclaim_ptt_button()
+            self._reclaim_repeat_button()
 
         if confirmed.is_set():
             print("[nav] destination confirmed.", flush=True)
             return True
-        print("[nav] destination confirmation timed out — cancelling.", flush=True)
+        if declined.is_set():
+            print("[nav] declined by button.", flush=True)
+            return False
+        print("[nav] confirmation timed out — cancelling.", flush=True)
         return False
 
     def _prerendered_path(self, name: str, language: str) -> Path:
