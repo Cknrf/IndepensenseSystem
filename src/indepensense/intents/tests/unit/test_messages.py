@@ -255,6 +255,33 @@ def test_confirm_and_cancel_are_different_buttons(language):
 
 
 @pytest.mark.parametrize("language", ("en", "tl"))
+def test_the_three_button_positions_are_all_distinct(language):
+    """Help names all three. Two sharing a word would describe a device
+    the user does not have, and one of the three calls a guardian."""
+    positions = [
+        messages.get(f"button.{name}_position", language)
+        for name in ("ptt", "cancel", "emergency")
+    ]
+    assert len(set(positions)) == 3, positions
+
+
+@pytest.mark.parametrize("language", ("en", "tl"))
+def test_help_names_every_button(language):
+    """The only place a user can learn the layout. Voice commands are
+    guessable; three unlabelled buttons are not, and finding the
+    emergency one by experiment rings a guardian's phone."""
+    spoken = messages.get(
+        "help.capabilities", language,
+        button=messages.get("button.ptt_position", language),
+        cancel=messages.get("button.cancel_position", language),
+        emergency=messages.get("button.emergency_position", language),
+    )
+    assert "{" not in spoken, f"unsubstituted placeholder: {spoken}"
+    for name in ("ptt", "cancel", "emergency"):
+        assert messages.get(f"button.{name}_position", language) in spoken
+
+
+@pytest.mark.parametrize("language", ("en", "tl"))
 @pytest.mark.parametrize("key", ("nav.confirm_destination", "shutdown.confirm"))
 def test_every_confirmation_prompt_offers_both_answers(key, language):
     """A prompt that only says how to say yes leaves the user waiting out

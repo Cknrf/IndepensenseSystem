@@ -112,6 +112,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "left",
         "tl": "kaliwang",
     },
+    # Named only in `help.capabilities`. No prompt asks the user to press
+    # this one, and nothing should: it summons a guardian, so the wearer
+    # has to be the only one who decides to reach for it.
+    "button.emergency_position": {
+        "en": "front",
+        "tl": "harapang",
+    },
 
     # --- language switching -------------------------------------------------
     # Spoken in the language being switched TO, so hearing the confirmation
@@ -413,22 +420,43 @@ MESSAGES: dict[str, dict[str, str]] = {
     # forty-five seconds nobody sits through and nobody remembers; these are
     # the highest-value asks, and anything else is discoverable by trying.
     #
-    # No button is named. The emergency button's position on the enclosure
-    # is still unrecorded (see docs/hardware.md), and telling a blind user
-    # to press a button we cannot locate is worse than not mentioning it.
-    # Add that sentence once the layout is confirmed.
+    # The buttons come first, and they are the reason this message is not
+    # purely a list of phrases. Voice commands are discoverable — a user
+    # can guess "where am I" and be right. Three unlabelled buttons on an
+    # enclosure are not guessable, and one of them calls a guardian, so
+    # the cost of learning them by experiment is someone else's phone
+    # ringing. They were omitted only because two of the three positions
+    # were unrecorded; docs/hardware.md now has all three.
+    #
+    # This costs length, and the length was already a problem. A field
+    # timing shows the previous version taking 16.4 s to speak, with the
+    # tester pressing stop partway through. The following sentences were
+    # tightened to pay for the new one — "ask what places you have saved"
+    # went, being the least safety-relevant line and already implied by
+    # the sentence before it — but that only recovered part of it: 273 ->
+    # 336 characters in English, 344 -> 422 in Tagalog, so roughly 20 s
+    # spoken against 16.4 s.
+    #
+    # Accepted because of *which* 20 seconds it is. A user who gives up
+    # halfway has still heard the buttons, which now come first; under the
+    # old order they would have heard the phrase list and missed the one
+    # thing they cannot discover by guessing. If this needs to shrink
+    # again, split the buttons into their own response rather than
+    # trimming them back out of this one.
     "help.capabilities": {
         "en": "I am IndepenSense. I help you walk safely and independently. "
-              "You can ask me where you are, what is around you, have me read "
-              "text out loud, or tell me where you want to go. You can also "
-              "say save this place as home, ask what places you have saved, "
-              "and later say take me home.",
+              "The {button} button is for talking to me, the {cancel} button "
+              "repeats or stops me, and the {emergency} button calls for "
+              "help. Ask me where you are, what is around you, or have me "
+              "read text out loud. Tell me where you want to go, or save a "
+              "place by name and later ask me to take you there.",
         "tl": "Ako si Indepensensya. Tinutulungan kitang makapaglakad nang "
-              "ligtas at malaya. Puwede mong itanong kung nasaan ka, kung ano "
-              "ang nasa paligid mo, pabasahin ang nakasulat, o sabihin kung "
-              "saan mo gustong pumunta. Puwede mo ring sabihing i-save mo ito "
-              "bilang bahay, itanong kung anong mga lugar ang naka-save mo, "
-              "at mamaya ay dalhin mo ako sa bahay.",
+              "ligtas at malaya. Ang {button} pindutan ay para makipag-usap "
+              "sa akin, ang {cancel} pindutan ay para ulitin o ihinto ako, at "
+              "ang {emergency} pindutan ay para humingi ng tulong. Itanong mo "
+              "kung nasaan ka, kung ano ang nasa paligid mo, o pabasahin ang "
+              "nakasulat. Sabihin mo kung saan mo gustong pumunta, o i-save "
+              "ang isang lugar at mamaya ay sabihing dalhin mo ako doon.",
     },
 
     # --- location -----------------------------------------------------------

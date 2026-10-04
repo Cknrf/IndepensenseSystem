@@ -1017,7 +1017,12 @@ class IntentExecutor:
         and it would be a poor answer to have it depend on whether GPS has
         a fix.
         """
-        return messages.get("help.capabilities", self._lang)
+        return messages.get(
+            "help.capabilities", self._lang,
+            button=messages.get("button.ptt_position", self._lang),
+            cancel=messages.get("button.cancel_position", self._lang),
+            emergency=messages.get("button.emergency_position", self._lang),
+        )
 
     def _handle_unknown(self, result: IntentResult) -> str:
         """Answer an utterance the local NLU declined to classify.
