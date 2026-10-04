@@ -651,6 +651,22 @@ def test_the_waiting_blip_is_quieter_than_the_cues_but_still_audible():
     )
 
 
+def test_the_busy_cue_carries_over_the_waiting_blip():
+    """It is the only cue played while something else is already
+    happening — a press refused mid-command, with the blip ticking
+    underneath it. At the shared 0.3 amplitude and 200 Hz it was reported
+    as inaudible on the headset, so the margin over the background sound
+    is the thing to hold onto if this is retuned.
+    """
+    busy = _level_db(audio._BUSY_CUE, audio._BUSY_AMPLITUDE)
+    blip = _level_db(audio._WAITING_TICK, audio._WAITING_AMPLITUDE)
+
+    assert busy > blip + 4.0, (
+        f"the busy cue is only {busy - blip:.1f} dB over the waiting blip; "
+        "an answer to a press has to carry over the background tick"
+    )
+
+
 def test_no_cue_is_shorter_than_the_ear_can_register():
     """Below ~60 ms a tone is heard as a click of indeterminate pitch, and
     these cues are told apart by pitch."""

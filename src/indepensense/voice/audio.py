@@ -656,10 +656,32 @@ _STOP_CUE = [(660.0, 0.07), (440.0, 0.10)]
 # Being a single tone, it shares a shape with the waiting blip rather
 # than with the other cues, so those two are what must now be kept apart.
 # They are, on three axes at once: 200 Hz against 520 is nearly an octave
-# and a half, 280 ms against 120 is over twice as long, and the blip
-# recurs every 1.2 s while this is heard once. `test_cue_design` pins the
-# first two; the third is a property of the caller, not the sound.
-_BUSY_CUE = [(200.0, 0.28)]
+# and a half, 450 ms against 120 is nearly four times as long, and the
+# blip recurs every 1.2 s while this is heard once. The unit tests pin
+# the first two; the third is a property of the caller, not the sound.
+#
+# It was 280 ms at the shared 0.3 amplitude and was reported as too quiet
+# to hear on the headset. 200 Hz is the worst band available: the ear
+# needs roughly 10-15 dB more level there than at 1 kHz for the same
+# loudness, and a small earbud driver rolls off underneath that.
+#
+# Raising the pitch is not available. The octave rule above forbids
+# anything between 260 and 1040 Hz, so the choice was to stay low or to
+# jump over the blip entirely and give up the convention that a low sound
+# means "no". Auditioned as F-J in `busy_cue_audition --loudness`; J won.
+#
+# J buys its audibility two ways, and only one of them is loudness.
+# Amplitude 0.55 against 0.3 is a genuine +5.3 dB. The extra duration is
+# not: the ear integrates over roughly 200 ms, so 450 ms is no *louder*
+# than 280: it is merely harder to miss, which for a refusal is the
+# property that actually matters. Do not read the length as volume if
+# this is retuned again.
+#
+# The cost is that a refusal now takes 450 ms to say, which is long
+# enough to read as the device doing something rather than declining.
+# That was judged acceptable against not being heard at all.
+_BUSY_CUE = [(200.0, 0.45)]
+_BUSY_AMPLITUDE = 0.55
 
 
 def play_stop_cue() -> None:
@@ -668,8 +690,13 @@ def play_stop_cue() -> None:
 
 
 def play_busy_cue() -> None:
-    """Tell the user a press was heard but cannot be acted on right now."""
-    play_cue(_BUSY_CUE)
+    """Tell the user a press was heard but cannot be acted on right now.
+
+    Louder than the shared default, which the other press cues use. This
+    one competes with whatever made the device busy in the first place —
+    it is the only cue played while something else is already happening.
+    """
+    play_cue(_BUSY_CUE, amplitude=_BUSY_AMPLITUDE)
 
 
 # A single soft blip, repeated by the caller while the device is working.
