@@ -164,8 +164,9 @@ from indepensense.config import (
     GUARDIAN_FETCH_TIMEOUT_S,
     HEADING_CHECK_INTERVAL_S,
     HEARTBEAT_INTERVAL_S,
-    INTERNET_PROBE_TIMEOUT_S,
-    INTERNET_PROBE_URL,
+    BACKEND_PROBE_URL,
+    CLOUD_LLM_PROBE_URL,
+    REACHABILITY_PROBE_TIMEOUT_S,
     LOW_BATTERY_PERCENT,
     LOW_BATTERY_RECOVERY_PERCENT,
     LOW_BATTERY_STATE_PATH,
@@ -921,8 +922,8 @@ class App:
             device_id=self.device_id(),
             interval_s=HEARTBEAT_INTERVAL_S,
             battery=self.battery,
-            internet_probe_url=INTERNET_PROBE_URL,
-            internet_probe_timeout_s=INTERNET_PROBE_TIMEOUT_S,
+            reachability_probe_url=BACKEND_PROBE_URL,
+            reachability_probe_timeout_s=REACHABILITY_PROBE_TIMEOUT_S,
         )
         self.heartbeat_sender.start()
 
@@ -2820,8 +2821,8 @@ class App:
         # the offline path is identical whichever driver is in use.
         return OfflineGuard(
             answerer,
-            probe_url=INTERNET_PROBE_URL,
-            probe_timeout_s=INTERNET_PROBE_TIMEOUT_S,
+            probe_url=CLOUD_LLM_PROBE_URL,
+            probe_timeout_s=REACHABILITY_PROBE_TIMEOUT_S,
         )
 
     def _try_open_sms(self) -> MMCLISMSSender | None:

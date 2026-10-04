@@ -65,7 +65,7 @@ reimplementing per provider.
 import sys
 
 from indepensense.intents.base import CloudAnswer
-from indepensense.net import probe_internet
+from indepensense.net import probe_reachable
 
 
 class OfflineGuard:
@@ -78,9 +78,21 @@ class OfflineGuard:
     Why check before calling rather than letting the request fail: the
     voice pipeline plays a "thinking" cue before a cloud call, and
     playing it only to immediately say "no internet" is a worse
-    experience than answering straight away. A HEAD probe to a known-good
-    target is also a more reliable offline signal than one provider
-    endpoint timing out, which could equally mean that provider is down.
+    experience than answering straight away.
+
+    `probe_url` is the provider's own host, not a neutral third party.
+    The earlier design probed `1.1.1.1` on the theory that one endpoint
+    timing out could mean the provider is down rather than the link, and
+    a well-known target disambiguates. In practice it introduced a third
+    host that can fail on its own, and on the deployment carrier it did:
+    `1.1.1.1` is null-routed there, so every cloud question was refused
+    with "I need an internet connection" while Mistral answered in 0.7 s.
+    The best predictor of "can I reach the provider" is the provider.
+
+    The distinction the old design chased is real but cheap to lose: a
+    provider outage now reads as offline rather than as an error. Both
+    end in the user not getting an answer, and `reason` keeps them
+    separable in the log.
     """
 
     def __init__(
@@ -94,7 +106,7 @@ class OfflineGuard:
         self._probe_timeout_s = probe_timeout_s
 
     def is_online(self) -> bool:
-        return probe_internet(self._probe_url, timeout_s=self._probe_timeout_s)
+        return probe_reachable(self._probe_url, timeout_s=self._probe_timeout_s)
 
     def answer(
         self,

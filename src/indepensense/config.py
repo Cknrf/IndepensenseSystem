@@ -897,14 +897,6 @@ NLU_EMBEDDING_BANK_PATH = PROJECT_ROOT / "prompts" / "nlu_examples.md"
 NLU_EMBEDDING_SCORE_THRESHOLD = 0.86
 NLU_EMBEDDING_MARGIN_THRESHOLD = 0.02
 
-# Internet connectivity probe. The heartbeat sender uses this before
-# each POST to populate `internet_status` honestly (rather than
-# hardcoded True). Cloudflare's 1.1.1.1 is the target — direct IP so
-# DNS breakage doesn't confuse it with internet breakage, high uptime,
-# fast response globally.
-INTERNET_PROBE_URL = "http://1.1.1.1"
-INTERNET_PROBE_TIMEOUT_S = 2.0
-
 # Guardian-dashboard backend (NestJS + MySQL, see ../IndepenSense).
 #
 # Production. No port: https implies 443.
@@ -921,6 +913,25 @@ INTERNET_PROBE_TIMEOUT_S = 2.0
 BACKEND_URL = "https://indepensense-api.maendou.com"
 HEARTBEAT_INTERVAL_S = 30
 TELEMETRY_TIMEOUT_S = 5.0
+
+# Reachability probes. Each consumer probes the host it is about to use,
+# not a neutral third party — see the module docstring in `net.py` for
+# why, and for the carrier behaviour that forced the change.
+#
+# Both are aliases rather than fresh literals on purpose. The probe
+# target and the real target cannot drift apart, and swapping the cloud
+# provider moves its probe automatically. An unauthenticated HEAD to
+# either returns an error status (401 from Mistral, 404 from the
+# backend); `net.probe_reachable` counts any response as reachable, so
+# that is fine and no dedicated health endpoint is needed.
+CLOUD_LLM_PROBE_URL = CLOUD_LLM_URL
+BACKEND_PROBE_URL = BACKEND_URL
+
+# 2 s. Both hosts were measured at ~0.7-0.8 s round trip over the
+# SIM7600 link, so this is roughly 2.5x headroom. It is an upper bound on
+# how long the voice thread can stall before the cloud call it guards,
+# which is the reason not to raise it casually.
+REACHABILITY_PROBE_TIMEOUT_S = 2.0
 
 # Per-device credential, written by provisioning as one line:
 #

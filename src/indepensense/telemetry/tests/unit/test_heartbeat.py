@@ -5,7 +5,7 @@ polling with a 2 s hard timeout so tests never hang if a bug freezes
 the worker thread.
 
 The sender's `_probe_internet()` makes a real HTTP HEAD request once per
-heartbeat. Left unstubbed that would make this suite depend on the dev
+heartbeat (at the backend — see `heartbeat.py`). Left unstubbed that would make this suite depend on the dev
 machine's connectivity — tests would flip result offline, and each beat
 would stall for the 2 s probe timeout behind a firewall. The autouse
 `_no_network` fixture below stubs it out for every test in this module;
@@ -302,7 +302,7 @@ def test_internet_status_true_when_probe_reaches_target(monkeypatch):
 
     tel = MockTelemetryClient()
     sender = PeriodicHeartbeatSender(
-        tel, _FakeGPS(), "dev", interval_s=0.02, internet_probe_url="http://probe.test",
+        tel, _FakeGPS(), "dev", interval_s=0.02, reachability_probe_url="http://probe.test",
     )
     sender.start()
     try:

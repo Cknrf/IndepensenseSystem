@@ -9,7 +9,9 @@ than silence, even when we can't say where the device is).
 `battery_health` comes from the Waveshare UPS HAT when one is wired and
 defaults to 100 when none is (see `_read_battery_percent_or_default` for
 why 100 rather than 0). `internet_status` comes from a real HTTP HEAD
-probe — see `net.probe_internet`.
+probe against the backend — see `net.probe_reachable` and
+`_probe_internet` below for why the target is the backend and not a
+neutral third party.
 
 Threading model
 ---------------
@@ -36,7 +38,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 
-from indepensense.net import probe_internet
+from indepensense.net import probe_reachable
 from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import IntervalInformation, TelemetryClient
@@ -50,8 +52,14 @@ class PeriodicHeartbeatSender:
         device_id: str,
         interval_s: float = 30.0,
         battery: BatteryReader | None = None,
-        internet_probe_url: str = "http://1.1.1.1",
-        internet_probe_timeout_s: float = 2.0,
+        # app.py supplies the real target from `config.BACKEND_PROBE_URL`.
+        # The default is deliberately a dead local address rather than a
+        # copy of the production URL: this module must not import config
+        # (drivers don't), and a duplicated literal would drift silently.
+        # Failing closed means a miswiring reports offline loudly instead
+        # of probing some stale host and reporting a confident wrong answer.
+        reachability_probe_url: str = "http://localhost:1",
+        reachability_probe_timeout_s: float = 2.0,
     ):
         if interval_s <= 0:
             raise ValueError("interval_s must be > 0")
@@ -60,8 +68,8 @@ class PeriodicHeartbeatSender:
         self._battery = battery
         self._device_id = device_id
         self._interval_s = interval_s
-        self._internet_probe_url = internet_probe_url
-        self._internet_probe_timeout_s = internet_probe_timeout_s
+        self._reachability_probe_url = reachability_probe_url
+        self._reachability_probe_timeout_s = reachability_probe_timeout_s
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -121,15 +129,29 @@ class PeriodicHeartbeatSender:
         )
 
     def _probe_internet(self) -> bool:
-        """Whether we currently have internet, for the heartbeat payload.
+        """Whether the backend is reachable, for the heartbeat payload.
 
         Runs on the heartbeat thread once per interval — no contention
         with the main loop or voice pipeline. The probe itself lives in
-        `net.py` because the cloud LLM fallback needs the same answer.
+        `net.py` because the cloud LLM fallback needs the same mechanism.
+
+        An independent probe rather than "did the POST succeed": telemetry
+        is buffered and retried, so a sample taken during an outage is
+        sent minutes later and would otherwise arrive stamped as online
+        for a moment when it wasn't. The field records connectivity at
+        sample time, which only a probe at sample time can capture.
+
+        The target is the backend, so `internet_status` means "could
+        reach the guardian backend" rather than "has internet at all".
+        That is a narrowing: backend downtime now reads as device
+        offline. Accepted because a device that cannot reach the backend
+        cannot be monitored regardless of what else it can reach, and
+        because the neutral target this replaced was unreachable on the
+        deployment carrier and reported every device permanently offline.
         """
-        return probe_internet(
-            self._internet_probe_url,
-            timeout_s=self._internet_probe_timeout_s,
+        return probe_reachable(
+            self._reachability_probe_url,
+            timeout_s=self._reachability_probe_timeout_s,
         )
 
     def _read_battery_percent_or_default(self) -> int:
