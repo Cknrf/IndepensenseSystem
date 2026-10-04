@@ -214,23 +214,42 @@ MAG_ADDRESS = 0x2C
 # and the UPS HAT.
 HEADING_CHECK_INTERVAL_S = 0.5
 
-# Magnetometer calibration. Identity values until you run the helper:
-#   python -m indepensense.sensors.tests.manual.magnetometer_calibrate
-# Paste the printed values here. Re-run whenever the wearable's
-# physical layout changes materially (batteries moved, motor added,
-# ferromagnetic component relocated).
+# Magnetometer calibration. Produced by:
+#   python -m indepensense.sensors.tests.manual.magnetometer_swing
+# Re-run whenever the wearable's physical layout changes materially
+# (batteries moved, motor added, ferromagnetic component relocated).
 #
 # OFFSET (μT) cancels hard-iron bias — the constant pull of permanent
-# magnets and ferrous mass bolted to the cane. SCALE (dimensionless)
-# cancels soft-iron distortion, which stretches the field sphere into an
-# ellipsoid so that a given rotation reads as a different number of
+# magnets and ferrous mass bolted to the vest. SCALE (dimensionless)
+# cancels soft-iron distortion, which stretches the field circle into an
+# ellipse so that a given rotation reads as a different number of
 # degrees depending on which way you face.
-MAG_OFFSET_X = 0.0
+#
+# Measured 2026-10-04 on the assembled vest, one horizontal swing:
+# 573 samples over a full 360°, worst heading error 4.6°, corrected
+# field 39.5 μT. A full 2×2 correction would have left 3.9°, so the
+# ellipse is barely tilted and this per-axis form is enough.
+#
+# **Y stays 0.0 / 1.0 on purpose.** With the upright mount, y is the
+# VERTICAL axis and heading never reads it — see MAG_FORWARD_AXIS below.
+# Only the two horizontal axes were measured, and deliberately so.
+#
+# Why not `magnetometer_calibrate`, which fits all three: on this build
+# it never produced a usable result. Its best attempt left 41.2% spread
+# — about 12° of heading error — and a freely oriented ellipsoid fitted
+# to the same samples still left 38.1%, so the samples were not on an
+# ellipsoid at all. That sweep requires the vest tumbled onto all six
+# faces, and the magnetometer is mounted permanently upright on a vest
+# that only ever turns horizontally. It was failing on orientations the
+# device never experiences. The horizontal swing fits two or three
+# unknowns instead of nine, in the one plane that matters, and reached
+# 4.6° on the first attempt. Full account in docs/deferred.md.
+MAG_OFFSET_X = -14.053
 MAG_OFFSET_Y = 0.0
-MAG_OFFSET_Z = 0.0
-MAG_SCALE_X = 1.0
+MAG_OFFSET_Z = -8.627
+MAG_SCALE_X = 0.9493
 MAG_SCALE_Y = 1.0
-MAG_SCALE_Z = 1.0
+MAG_SCALE_Z = 1.0564
 
 # Mount orientation: which sensor axis ends up pointing where on the
 # assembled wearable. Heading is computed from the two axes that are
