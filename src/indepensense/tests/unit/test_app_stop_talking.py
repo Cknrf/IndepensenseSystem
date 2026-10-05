@@ -36,6 +36,13 @@ class _SpyExecutor:
         self.response = response
         self.intents: list[Intent] = []
 
+    def emergency_acknowledgement(self) -> str:
+        # Present so the emergency path takes the branch that ships.
+        # Without it `_on_emergency_press` logs and falls back to
+        # announcing after dispatch — the pre-fix behaviour — so the
+        # test would pass while exercising the wrong code.
+        return self.response
+
     def execute(self, result: IntentResult) -> str:
         self.intents.append(result.intent)
         return self.response

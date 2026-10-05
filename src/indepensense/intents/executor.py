@@ -534,6 +534,44 @@ class IntentExecutor:
             )
         return _format_location_response(hit, self._lang)
 
+    def emergency_acknowledgement(self) -> str | None:
+        """What to speak *before* the alert is dispatched, or None.
+
+        Exists to close an ordering race, not to add a feature. The
+        caller used to run `execute()` — which dispatches the alert and
+        starts the SMS fan-out — and announce the result afterwards. The
+        fan-out can finish first, and then `_on_alert_delivery` queues
+        "the alert arrived" *before* "sending your alert" is queued at
+        all. That is not merely out of order: the acknowledgement is
+        announced as critical, and a critical announcement drops every
+        pending non-critical one, so it deletes the confirmation the
+        wearer most needs — the one that tells them they can stop
+        pressing the button.
+
+        The window is microseconds against a real HTTP round trip, so it
+        is rare in the field and routine on a unit with no modem, where
+        the SMS leg resolves instantly. It also failed the unit suite
+        about half the time, which is its own problem.
+
+        Returning None means "there is no race here, announce the result
+        as usual":
+
+          * no telemetry wired — nothing is dispatched at all;
+          * `reports_delivery` false — no delivery callback exists, and
+            the wording depends on whether the send succeeded, so it
+            cannot be known in advance anyway.
+
+        With delivery reporting on, the wording is fixed in advance
+        precisely because it no longer depends on the outcome, which is
+        what makes announcing first possible. `_handle_emergency_trigger`
+        returns the same string, and `test_executor` pins that.
+        """
+        if self._telemetry is None or not self._device_id:
+            return None
+        if not self._reports_delivery:
+            return None
+        return messages.get("emergency.sending", self._lang)
+
     def _handle_emergency_trigger(self, result: IntentResult) -> str:
         # If no telemetry client is wired up (dev / early integration),
         # acknowledge the intent locally without pretending we sent

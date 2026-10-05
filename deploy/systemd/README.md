@@ -31,6 +31,17 @@ sudo systemctl enable graphhopper.service photon.service ollama-warmup.service i
 sudo systemctl start  graphhopper.service photon.service ollama-warmup.service indepensense.service
 ```
 
+**`ollama-warmup.service` runs a script from the repo**, by absolute path:
+`deploy/systemd/ollama-warmup.sh`. Nothing to copy — but the repo has to
+stay at `/home/cknrf/Desktop/thesis/IndepensenseSystem`, and if it moves,
+that path in the unit moves with it.
+
+The script exists so the model name is read from `config.NLU_MODEL`
+rather than written into the unit. It used to be hardcoded as
+`qwen3:1.7b` in two places while `config.py` switched between that and
+`qwen3:4b`, so flipping `NLU_LARGE_MODEL` would have left the unit
+waiting for a model nobody pulled and then pinning the wrong one.
+
 ### Emergency SMS needs one more file
 
 Unit files alone do not get SMS working. ModemManager refuses

@@ -497,8 +497,19 @@ def pressable(app, monkeypatch):
 
 
 class _StubExecutor:
+    """Stands in for `IntentExecutor` on the emergency path.
+
+    It must implement `emergency_acknowledgement` as well as `execute`:
+    the handler asks for the pre-dispatch line before sending, and a
+    stub missing the method tests a different code path than the one
+    that ships.
+    """
+
     def __init__(self):
         self.calls = 0
+
+    def emergency_acknowledgement(self):
+        return "sending"
 
     def execute(self, result):
         self.calls += 1
@@ -806,3 +817,108 @@ def test_an_unprovisioned_unit_marks_its_telemetry_as_unable_to_deliver(
     finally:
         app._shutdown.set()
         app.stop()
+
+
+# --- the acknowledgement is queued before the alert is dispatched ------------
+#
+# `execute()` starts the SMS fan-out, and that thread announces the
+# delivery result. If it wins, `_on_alert_delivery` queues "the alert
+# arrived" first — and the acknowledgement, being critical, then DROPS it
+# (`Announcer.say` discards pending non-critical items). The wearer hears
+# "sending your emergency alert" and never learns it got there, which is
+# the one thing that tells them to stop pressing the button.
+#
+# The window is microseconds against a real HTTP round trip and wide open
+# on a unit with no modem, where the SMS leg resolves instantly. It also
+# failed this suite about half the time.
+
+class _OrderRecordingExecutor:
+    """Records the order of acknowledgement vs dispatch."""
+
+    def __init__(self):
+        self.order: list[str] = []
+
+    def emergency_acknowledgement(self):
+        self.order.append("ack")
+        return "Sending your emergency alert."
+
+    def execute(self, result):
+        self.order.append("dispatch")
+        return "Sending your emergency alert."
+
+
+def test_the_acknowledgement_is_queued_before_the_alert_is_dispatched(
+    pressable, monkeypatch,
+):
+    """Ordering by construction, not by winning a race."""
+    pressable.executor = _OrderRecordingExecutor()
+    announced: list[str] = []
+    monkeypatch.setattr(pressable, "_announce",
+                        lambda text, critical=False: announced.append(text))
+
+    pressable._on_emergency_press()
+
+    assert pressable.executor.order == ["ack", "dispatch"], \
+        "the alert was dispatched before the acknowledgement was queued"
+    assert announced == ["Sending your emergency alert."], \
+        f"announced once, before dispatch — got {announced!r}"
+
+
+def test_a_broken_acknowledgement_never_stops_the_alert(pressable, monkeypatch):
+    """Announcing is a courtesy; dispatching is the point.
+
+    An earlier draft looked the acknowledgement up inside the dispatch
+    `try`, so an executor without the method threw an AttributeError that
+    was swallowed and **no alert was sent at all** — the worst possible
+    outcome from a change meant to improve the emergency path.
+    """
+    class _AngryExecutor:
+        def __init__(self):
+            self.calls = 0
+
+        def emergency_acknowledgement(self):
+            raise RuntimeError("messages catalogue exploded")
+
+        def execute(self, result):
+            self.calls += 1
+            return "Sending your emergency alert."
+
+    pressable.executor = _AngryExecutor()
+    monkeypatch.setattr(pressable, "_announce", lambda *a, **k: None)
+
+    pressable._on_emergency_press()
+
+    assert pressable.executor.calls == 1, "a speaking failure suppressed the alert"
+
+
+def test_the_pre_dispatch_line_matches_what_the_handler_returns():
+    """`emergency_acknowledgement` promises to predict
+    `_handle_emergency_trigger`'s answer. If they drift, the wearer hears
+    one thing and the log records another."""
+    from indepensense.intents.base import Intent, IntentResult
+    from indepensense.intents.executor import IntentExecutor
+    from indepensense.routing.mock import MockGeocoder, MockRouter
+
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=None,
+        telemetry=MockTelemetryClient(), device_id="dev",
+        reports_delivery=True,
+    )
+
+    assert executor.emergency_acknowledgement() == \
+        executor.execute(IntentResult(Intent.EMERGENCY_TRIGGER))
+
+
+def test_without_delivery_reporting_there_is_nothing_to_say_in_advance():
+    """No delivery callback means no race — and the wording depends on
+    whether the send succeeded, so it cannot be known before sending."""
+    from indepensense.intents.executor import IntentExecutor
+    from indepensense.routing.mock import MockGeocoder, MockRouter
+
+    executor = IntentExecutor(
+        router=MockRouter(), geocoder=MockGeocoder(), gps=None,
+        telemetry=MockTelemetryClient(), device_id="dev",
+        reports_delivery=False,
+    )
+
+    assert executor.emergency_acknowledgement() is None

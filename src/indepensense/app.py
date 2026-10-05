@@ -1934,12 +1934,41 @@ class App:
         self._already_sent_spoken = False
         print("\n[EMERGENCY BUTTON] Pressed. Firing alert...", flush=True)
 
+        # Queued BEFORE the alert is dispatched, and that order is the
+        # whole point. `execute()` starts the SMS fan-out; that thread can
+        # reach the announcer first, and because this acknowledgement is
+        # critical it drops every pending non-critical item — including
+        # the delivery confirmation that had already arrived. The wearer
+        # would then hear "sending your alert" and never hear that it got
+        # there, which is the one thing that tells them they can stop
+        # pressing.
+        #
+        # None means there is no race to avoid (no telemetry, or no
+        # delivery reporting); then the wording depends on the send result
+        # and is announced afterwards as before. See
+        # `IntentExecutor.emergency_acknowledgement`.
+        #
+        # In its own `try`, deliberately separate from the dispatch below.
+        # The first draft put this inside that block, and an executor
+        # without the method swallowed the AttributeError and sent **no
+        # alert at all**. Announcing is a courtesy; dispatching is the
+        # point, and nothing on the speaking path may stop it.
+        try:
+            acknowledgement = self.executor.emergency_acknowledgement()
+        except Exception as exc:
+            print(f"[EMERGENCY BUTTON] could not pre-announce: {exc}",
+                  file=sys.stderr, flush=True)
+            acknowledgement = None
+        if acknowledgement is not None:
+            self._announce(acknowledgement, critical=True)
+
         try:
             response = self.executor.execute(
                 IntentResult(intent=Intent.EMERGENCY_TRIGGER)
             )
             print(f"[EMERGENCY BUTTON] response: {response}", flush=True)
-            self._announce(response, critical=True)
+            if acknowledgement is None:
+                self._announce(response, critical=True)
         except Exception as exc:
             print(f"[EMERGENCY BUTTON] handler error: {exc}", file=sys.stderr, flush=True)
 
