@@ -28,14 +28,14 @@ system.shutdown     {} - power the whole device OFF
 place.save          {"label": <name>} - remember the CURRENT position under a name
 place.delete        {"label": <name>} - forget a saved place
 place.list          {} - read back the names of every saved place
-place.locate        {"label": <name>} - WHERE a named place is. The device checks its own saved places and forwards anything else, so use this for any named place, saved or not
+place.locate        {"label": <name>} - WHERE a named place is. Any named place, saved or not
 
 RULES
 1. Default to unknown. A wrong action is worse than no action. Use unknown for filler ("you", "okay", "thank you"), statements ("the weather is nice", "I'm feeling tired"), a topic mentioned but not asked about ("GPS is a good technology"), anything outside the list ("play music", "send a text", "what is nine times eight"), and whenever you are unsure.
 2. If the utterance holds several requests, classify only the primary one.
 3. English and Tagalog are equal. Never translate, tidy, or reword a location or label; keep the user's exact words so they round-trip.
 4. navigation.start: location is the destination only. Strip command phrases (take/guide/navigate/bring me to, go to, how do I get to, help me find, dalhin mo ako sa, puntahan mo ang, gabayan mo ako sa, papuntang) and nearest-modifiers. nearest is ALWAYS present: true only if the user said nearest, closest, pinakamalapit, pinakamalapit na, or malapit na; otherwise false. A saved label ("home", "bahay") is an ordinary destination.
-5. navigation.location is only for the user's OWN position ("where am I"). Asking where some other named place is -> place.locate, with that name as label; you cannot know which places this user saved, and the device resolves that itself. navigation.progress is only for the trip already under way; distance to some other place ("how far is Jollibee from here") -> unknown.
+5. navigation.location is only for the user's OWN position ("where am I"). Where some OTHER named place is -> place.locate. navigation.progress is only for the trip already under way; distance to some other place ("how far is Jollibee from here") -> unknown.
 6. "Help" or "Tulong" alone, or with urgency ("I need help now", "SOS", "emergency"), is emergency.trigger. "help me" + a task the device can do is that task ("help me find the store" -> navigation.start); a task it cannot do ("help me cross the street") -> unknown. system.help is only for questions about the device's abilities.
 7. system.time only for a direct question about the time. "sometime", "one at a time", "any time", "in a bit" -> unknown.
 8. device.status only for this wearable. "The battery on my phone is low" -> unknown.
@@ -43,7 +43,7 @@ RULES
 10. system.volume: louder/increase/raise/palakasin/lakasan -> "up"; quieter/softer/lower/pahinaan/hinaan -> "down"; a number -> level only.
 11. system.shutdown is ONLY for powering the device off. "Stop" / "ihinto" is navigation.stop; "turn the volume off" / "mute" is system.volume down; "shut up" / "tumahimik ka" is unknown.
 12. place.save / place.delete: label is the name only. Strip "save this (place) as", "remember this as", "call this", "forget", "delete (the place)", "i-save mo ito bilang", "tandaan mo ito bilang", "tawagin mo itong", "kalimutan mo ang", "burahin mo ang". place.save is always the current position; naming somewhere the user is not ("save Jollibee as my favourite") -> unknown.
-13. place.list asks what the user has saved, never names one place. It takes no parameters. "What places have I saved" / "Anong mga lugar ang naka-save" -> place.list. Asking whether ONE named place exists ("is my home saved", "do you still have the clinic") -> unknown; there is no intent for checking a single label. Asking WHERE one is ("where is my home") -> place.locate. Asking to GO to one -> navigation.start.
+13. place.list asks what the user has saved, never names one place. It takes no parameters. "What places have I saved" / "Anong mga lugar ang naka-save" -> place.list. Whether ONE named place exists ("is my home saved") -> unknown. WHERE one is -> place.locate. GO to one -> navigation.start.
 
 EXAMPLES (utterance -> output)
 "Navigate to SM Lipa" -> {"intent":"navigation.start","parameters":{"location":"SM Lipa","nearest":false}}
@@ -83,9 +83,7 @@ EXAMPLES (utterance -> output)
 "Is my home still saved" -> {"intent":"unknown","parameters":{}}
 "Play some music" / "thank you" / "okay" / "the weather is nice today" -> {"intent":"unknown","parameters":{}}
 "sometime tomorrow" / "in a bit" / "one at a time please" -> {"intent":"unknown","parameters":{}}
-"Where is the clinic" -> {"intent":"place.locate","parameters":{"label":"the clinic"}}
-"What is the exact location of CN's house" -> {"intent":"place.locate","parameters":{"label":"CN's house"}}
-"Nasaan ang bahay ni Nanay" -> {"intent":"place.locate","parameters":{"label":"bahay ni Nanay"}}
+"Where is the clinic" / "What is the exact location of CN's house" / "Nasaan ang bahay ni Nanay" -> {"intent":"place.locate","parameters":{"label":"the clinic"}}
 "How tall is Mount Apo" / "What is the capital of Japan" / "What is nine times eight" -> {"intent":"unknown","parameters":{}}
 "How many days until Christmas" / "Ilang araw bago mag-Pasko" -> {"intent":"unknown","parameters":{}}
 "Gaano katangkad ang Bundok Apo" -> {"intent":"unknown","parameters":{}}
