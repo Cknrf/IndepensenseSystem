@@ -65,6 +65,7 @@ from typing import Callable
 
 from indepensense.messaging.base import SMSSender
 from indepensense.telemetry.base import AlertEvent, IntervalInformation, TelemetryClient
+from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.guardians import GuardianDirectory
 
 # A (0.0, 0.0) fix means "no GPS lock", not a position off the coast of
@@ -203,6 +204,15 @@ class SMSAlertNotifier:
 
         backend = _BackendOutcome()
         self._dispatch_sms(event, backend)
+
+        # The buffered client's True means "queued", not "delivered" — it
+        # returns before any network call. Publishing that made backend_ok
+        # permanently True in production, so an offline unit whose SMS
+        # also failed told the wearer the dashboard had been reached. Its
+        # first real attempt is the honest answer, so wait for that one.
+        if isinstance(self._inner, BufferedTelemetryClient):
+            return self._inner.send_alert(event, on_first_attempt=backend.publish)
+
         ok = self._inner.send_alert(event)
         backend.publish(ok)
         return ok

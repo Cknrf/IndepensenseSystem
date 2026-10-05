@@ -1751,16 +1751,27 @@ class App:
 
         The feedback is spawned rather than played inline so a burst of
         presses neither delays the alert behind ~0.4 s of buzzing nor
-        blocks gpiozero's callback thread. `_warning_lock` inside
-        `_spawn_haptic` serialises the patterns, so held-down presses
-        queue into continuous sound instead of overlapping into mush.
+        blocks gpiozero's callback thread. `_play_emergency_feedback`
+        takes `_warning_lock` itself, which serialises the patterns, so
+        held-down presses queue into continuous sound instead of
+        overlapping into mush.
+
+        A plain thread, not `_spawn_haptic`: that helper runs its action
+        *inside* `_warning_lock`, and the lock is not reentrant. Passing it
+        this method deadlocked the ack thread on its own lock — no buzz, no
+        pulse, and the lock held for good, which then froze every obstacle
+        warning and, through `_play_press_feedback`, push-to-talk.
         """
         # Outside the re-arm check on purpose: see the docstring.
         self._voice_cancel_reason = "emergency"
         self._voice_cancel.set()
 
         # Before the re-arm check, so every press is felt and heard.
-        self._spawn_haptic("emergency-ack", self._play_emergency_feedback)
+        threading.Thread(
+            target=self._play_emergency_feedback,
+            name="emergency-ack",
+            daemon=True,
+        ).start()
 
         now = time.monotonic()
         since_last = now - self._last_emergency_fired
@@ -2476,6 +2487,11 @@ class App:
             # reclaimed the button, but the ones that failed before it
             # have not.
             self._reclaim_ptt_button()
+            # A shutdown armed in this cycle is spent by the end of it,
+            # whether it ran or not. A cancel during the goodbye skips the
+            # power-off correctly, and left armed it fired after the *next*
+            # command instead — "what time is it", answered, then dark.
+            self._shutdown_requested = False
             self._voice_active.clear()
 
     def _orient_towards_route(self) -> None:

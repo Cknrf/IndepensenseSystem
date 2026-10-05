@@ -263,3 +263,47 @@ def test_zero_max_queue_size_is_rejected():
     import pytest
     with pytest.raises(ValueError):
         BufferedTelemetryClient(_ScriptedTelemetryClient(), max_queue_size=0)
+
+
+# --- first-attempt reporting -------------------------------------------------
+#
+# `send_alert` returns True on queueing, before any network call. A caller
+# that has to tell a person whether the alert got through needs the result
+# of the first real attempt instead — see SMSAlertNotifier.
+
+def test_the_first_attempt_is_reported_once_even_across_retries():
+    inner = _ScriptedTelemetryClient(script=[False, False, True])
+    buffered = BufferedTelemetryClient(inner, retry_interval_s=0.02)
+    outcomes = []
+    try:
+        assert buffered.send_alert(_make_alert(), on_first_attempt=outcomes.append)
+        assert _wait_until(lambda: buffered.delivered_alerts == 1, timeout_s=3.0)
+        assert outcomes == [False], "reported more than once, or the wrong result"
+    finally:
+        buffered.close(drain_timeout_s=1.0)
+
+
+def test_a_successful_first_attempt_is_reported_as_success():
+    inner = _ScriptedTelemetryClient()
+    buffered = BufferedTelemetryClient(inner, retry_interval_s=0.02)
+    outcomes = []
+    try:
+        buffered.send_alert(_make_alert(), on_first_attempt=outcomes.append)
+        assert _wait_until(lambda: outcomes == [True])
+    finally:
+        buffered.close(drain_timeout_s=1.0)
+
+
+def test_a_raising_attempt_callback_does_not_stop_the_worker():
+    def _explode(_ok):
+        raise RuntimeError("caller bug")
+
+    inner = _ScriptedTelemetryClient()
+    buffered = BufferedTelemetryClient(inner, retry_interval_s=0.02)
+    try:
+        buffered.send_alert(_make_alert(), on_first_attempt=_explode)
+        buffered.send_heartbeat(_make_heartbeat())
+        assert _wait_until(lambda: buffered.delivered_heartbeats == 1)
+        assert buffered.delivered_alerts == 1
+    finally:
+        buffered.close(drain_timeout_s=1.0)
