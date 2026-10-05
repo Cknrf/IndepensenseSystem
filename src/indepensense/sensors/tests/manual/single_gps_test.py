@@ -17,6 +17,15 @@ After that, NMEA streams on interface 1. This test opens
 if it raises FileNotFoundError, the modem is absent or has re-enumerated
 into a composition without serial ports, not "the GPS is broken".
 
+**Stop the service before running this.** A serial port takes as many
+readers as ask for one, and they do not get copies — each byte goes to
+whichever process reads it first. With `indepensense` running, the
+runtime's 1 Hz GPS cache and this test split the NMEA stream between
+them, so both see torn sentences, both fail their checksums, and both
+report no fix on a receiver that is working perfectly:
+
+    sudo systemctl stop indepensense
+
 Run from repo root with:
     python -m indepensense.sensors.tests.manual.single_gps_test
 
