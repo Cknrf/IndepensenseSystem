@@ -29,7 +29,7 @@ EMPTY = 60.0
 
 @pytest.mark.parametrize("raw,expected", [
     (100, 100),      # full stays full
-    (60, 0),         # the measured floor is zero
+    (60, 1),         # the floor reports 1, never 0 — see the test below
     (80, 50),        # midpoint of the usable span
     (70, 25),
     (90, 75),
@@ -56,10 +56,20 @@ def test_rounding_goes_down_and_never_alternates():
     assert correct_percentage(69, EMPTY) == 22      # 22.5 exactly
 
 
-def test_below_the_floor_clamps_to_zero():
-    """A pack reading under the floor is flat, not negative."""
-    assert correct_percentage(57, EMPTY) == 0
-    assert correct_percentage(0, EMPTY) == 0
+def test_the_floor_is_one_rather_than_zero():
+    """A pack reading under the floor is flat, not negative — and not
+    zero either.
+
+    Anything able to report this number is still running, so "zero
+    percent" contradicts itself. The gauge earns that: on a watched
+    discharge it fell to raw 57, pinned, and the device kept going for a
+    long stretch before losing power. Nothing can measure how much of
+    that stretch remains, and 1 says "almost none" without claiming none.
+    """
+    assert correct_percentage(57, EMPTY) == 1
+    assert correct_percentage(0, EMPTY) == 1
+    assert correct_percentage(50, 0.0) == 50, "no correction still passes through"
+    assert correct_percentage(0, 0.0) == 1, "the floor applies uncorrected too"
 
 
 def test_above_full_clamps_to_full():
@@ -97,11 +107,19 @@ def test_both_alert_thresholds_now_fall_inside_the_gauges_range():
 
 
 def test_the_configured_floor_is_at_or_above_what_was_measured():
-    """Measured at 59. The error is asymmetric — setting this below the
-    true floor warns early and costs nothing, setting it above reports
-    charge remaining on a dead pack — so the constant must never be
-    tuned down past the observation."""
-    assert BATTERY_EMPTY_RAW_PERCENT >= 59.0
+    """Measured live at raw 57: the gauge fell there, pinned, and the
+    device kept running before losing power.
+
+    The error is asymmetric, and this docstring previously had the
+    direction backwards. From `correct_percentage`'s formula,
+    `(raw - EMPTY) / (100 - EMPTY)`: setting EMPTY *above* the true floor
+    reaches zero while charge remains, which warns early and costs
+    nothing. Setting it *below* still claims a few percent on a pack that
+    is already dead — the warning arriving after it was useful. Higher is
+    the safe direction, so this must never be tuned down past the lowest
+    live reading observed.
+    """
+    assert BATTERY_EMPTY_RAW_PERCENT >= 57.0
 
 
 # --- the raw value stays available -------------------------------------------

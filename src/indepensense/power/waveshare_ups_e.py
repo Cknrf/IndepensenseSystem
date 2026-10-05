@@ -75,6 +75,11 @@ _STATUS_CHARGING = 0x80
 _STATUS_DISCHARGING = 0x20
 
 
+# The lowest percentage this driver will ever report. See
+# `correct_percentage` for why it is 1 rather than 0.
+_MINIMUM_LIVE_PERCENT = 1
+
+
 def correct_percentage(raw: int, empty_raw_percent: float) -> int:
     """Rescale a raw gauge reading onto a real 0-100. See the module docstring.
 
@@ -82,13 +87,24 @@ def correct_percentage(raw: int, empty_raw_percent: float) -> int:
     device involved, which is what lets the mapping be asserted directly
     rather than inferred from a mocked I²C bus.
 
-    Clamped at both ends. Below the floor is a pack already flat — the
-    gauge reading 57 when empty is 60 says "dead", not "minus seven" —
-    and above 100 would be a gauge fault, not a battery that is more than
-    full. An `empty_raw_percent` of 100 or more is a misconfiguration;
-    the raw value passes through unchanged rather than dividing by zero,
-    because a wrong percentage is survivable and an exception on the
-    battery path is not.
+    Clamped at both ends, and the bottom clamp is **1, not 0**. Above 100
+    would be a gauge fault rather than a battery more than full. An
+    `empty_raw_percent` of 100 or more is a misconfiguration; the raw
+    value passes through unchanged rather than dividing by zero, because
+    a wrong percentage is survivable and an exception on the battery path
+    is not.
+
+    Why the floor is 1: anything that can report this number is, by
+    construction, still running. "Zero percent" from a device that is
+    audibly speaking the words contradicts itself, and the gauge earns
+    that reading honestly — it pins near its floor and stops tracking
+    while the pack keeps draining, so a measured discharge sat at raw 57
+    for a long stretch before the Pi actually lost power. The device has
+    no way to know how much of that stretch is left, and 1 is the honest
+    way to say "almost none" without claiming none.
+
+    An `empty_raw_percent` of 0 — the default, meaning no correction — is
+    floored the same way, for the same reason.
 
     Rounds **down**, via `floor` rather than `round`. Two reasons, and
     the first is the one that matters: understating remaining charge is
@@ -101,9 +117,9 @@ def correct_percentage(raw: int, empty_raw_percent: float) -> int:
     """
     span = 100.0 - empty_raw_percent
     if span <= 0:
-        return max(0, min(100, raw))
+        return max(_MINIMUM_LIVE_PERCENT, min(100, raw))
     scaled = (raw - empty_raw_percent) / span * 100.0
-    return int(max(0, min(100, math.floor(scaled))))
+    return int(max(_MINIMUM_LIVE_PERCENT, min(100, math.floor(scaled))))
 
 
 class WaveshareUPSHatE:

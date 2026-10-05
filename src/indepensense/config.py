@@ -405,24 +405,42 @@ UPS_HAT_I2C_ADDRESS = 0x2D
 
 # What the HAT's fuel gauge reports when the pack is actually flat.
 #
-# The gauge does not read 0 at empty. Measured on this unit across three
-# discharges: the Pi lost power, and on reconnecting the charger and
-# reading immediately the gauge showed 59%. So 59 is the real floor and
-# the usable span is 41 raw points, not 100.
+# The gauge does not read 0 at empty. 57 is a **live** reading: watched
+# on a full discharge, the gauge fell to 57, pinned there, and the device
+# kept running for a long stretch before the Pi lost power. So 57 is the
+# bottom of the gauge's useful range and the usable span is 43 raw
+# points, not 100.
+#
+# This was 60, from an earlier measurement of 59 taken by reconnecting
+# the charger at death and reading immediately. That method inflates the
+# number: terminal voltage rises the moment charge is applied, and this
+# gauge may well be a voltage reading in disguise (see below). A live
+# reading does not have that error, which is why 57 supersedes 59 despite
+# being lower.
 #
 # This was not cosmetic. `LOW_BATTERY_PERCENT` (15) and
 # `CRITICAL_BATTERY_PERCENT` (5) both sit *below* a floor the gauge never
 # reaches, so neither alert had ever fired or could: the wearable gave no
 # warning at all and simply died. `WaveshareUPSHatE` now rescales the raw
 # reading onto 0-100 against this constant, which puts the two thresholds
-# back inside the range the gauge actually produces (raw ~65% and ~61%).
+# back inside the range the gauge actually produces (raw ~63% and ~59%).
 #
-# Rounded UP from the measured 59, and deliberately so. The error is
-# asymmetric: setting this *below* the true floor warns early, which
-# costs the user nothing, while setting it above reports "10 percent
-# left" on a pack that is already dead — a warning that arrives after it
-# is useful. If a later discharge dies at a higher raw reading, raise
-# this; never lower it to the smallest value ever seen.
+# The error here is asymmetric, and an earlier version of this comment
+# had the direction backwards. Work it from the formula in
+# `correct_percentage`: reported = (raw - EMPTY) / (100 - EMPTY) × 100.
+# Set EMPTY *above* the true floor and the reading hits zero while charge
+# remains — warns early, costs nothing. Set it *below* and the device
+# still claims a few percent on a pack that is already dead, which is the
+# warning arriving after it was useful. **Higher is the safe direction.**
+#
+# So lowering this to 57 spends the margin that 60 was holding, and it is
+# deliberate: 60 was margin on top of a measurement now known to be
+# inflated, not margin on top of the truth. The LOW warning moves from
+# raw 65 to raw 63 as a result — later, but measured rather than padded.
+#
+# If a later discharge pins at a HIGHER raw reading, raise this. Do not
+# lower it further on a single observation: the next pack, or the same
+# pack colder, may well stop higher.
 #
 # Re-measure with:
 #   python -m indepensense.power.tests.manual.single_ups_test --csv
@@ -431,7 +449,7 @@ UPS_HAT_I2C_ADDRESS = 0x2D
 # sags in the lower half and this linear map over-reports in exactly the
 # band the warnings live in. `raw_percentage` is kept on every
 # `BatteryReading` so the correction can always be undone for analysis.
-BATTERY_EMPTY_RAW_PERCENT = 60.0
+BATTERY_EMPTY_RAW_PERCENT = 57.0
 
 # Low-battery alert thresholds, in CORRECTED percent (see
 # `BATTERY_EMPTY_RAW_PERCENT`). Fires LOW_BATTERY when percentage drops
