@@ -580,8 +580,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     # already knows, while both failing means nobody does and the user
     # should get help another way.
     #
-    # The both-succeeded case reuses `emergency.sent` — the sentence was
-    # always correct, it was just being said too early.
+    # The success cases (both channels, or the dashboard on a unit with no
+    # SMS) reuse `emergency.sent` — the sentence was always correct, it was
+    # just being said too early, before anything had been delivered.
     "emergency.delivery.sms_failed": {
         "en": "Your guardian was notified online, but the text message "
               "did not go through.",

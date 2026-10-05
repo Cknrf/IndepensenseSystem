@@ -1968,19 +1968,23 @@ class App:
         find a phone. Queueing that behind an obstacle warning would delay
         the one announcement with a time cost attached to it.
 
-        Silent when everything worked. The acknowledgement already said
-        the alert was going out, so the only thing left worth the
-        interruption is news that it did not.
+        Success is confirmed too, but not as critical. The acknowledgement
+        only said the alert was going out, and someone who has just
+        pressed a panic button should hear that it arrived — that is what
+        tells them they can stop pressing. Good news has no time cost, so
+        it queues behind the acknowledgement instead of cutting it off
+        mid-word the way a second critical utterance would.
         """
         if event.event_type not in self._DELIVERY_REPORTED_EVENTS:
             return
-        if delivery.backend_ok and delivery.sms == SMS_SENT:
-            print("[alert] delivered on both channels.", flush=True)
-            return
-        if delivery.backend_ok and delivery.sms == SMS_UNAVAILABLE:
-            # The dashboard has it and this unit cannot text, so there is
-            # no failure to correct — "Sending your emergency alert" stands.
-            print("[alert] delivered to the backend; SMS unavailable.", flush=True)
+        if delivery.backend_ok and delivery.sms in (SMS_SENT, SMS_UNAVAILABLE):
+            # Both channels, or the dashboard on a unit that cannot text —
+            # either way a guardian has been told.
+            print(f"[alert] delivered (sms={delivery.sms}).", flush=True)
+            self._announce(
+                messages.get("emergency.sent", self.language.current),
+                critical=False,
+            )
             return
 
         if not delivery.backend_ok and delivery.sms != SMS_SENT:

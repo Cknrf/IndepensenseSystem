@@ -33,6 +33,7 @@ from indepensense.telemetry.sms_alerts import (
     SMS_FAILED,
     SMS_NO_NUMBER,
     SMS_SENT,
+    SMS_UNAVAILABLE,
     AlertDelivery,
     SMSAlertNotifier,
 )
@@ -395,11 +396,15 @@ def _emergency():
     )
 
 
-def test_a_fully_delivered_alert_is_not_announced(speaking_app):
-    """Nothing to correct. The wearer already heard the acknowledgement and
-    does not need the same news twice."""
-    speaking_app._on_alert_delivery(_emergency(), _delivery(True, SMS_SENT))
-    assert speaking_app.spoken == []
+@pytest.mark.parametrize("sms", [SMS_SENT, SMS_UNAVAILABLE])
+def test_a_delivered_alert_is_confirmed_without_preempting(speaking_app, sms):
+    """The acknowledgement only said the alert was going out. Someone who
+    pressed a panic button needs to hear it arrived — but good news must
+    queue behind that acknowledgement, not cut it off mid-word."""
+    speaking_app._on_alert_delivery(_emergency(), _delivery(True, sms))
+
+    sent = messages.get("emergency.sent", "en")
+    assert speaking_app.spoken == [(sent, False)]
 
 
 @pytest.mark.parametrize("backend_ok,sms", [
@@ -774,7 +779,7 @@ def test_with_no_modem_and_no_data_the_wearer_is_not_told_it_was_sent(
         app.stop()
 
 
-def test_with_no_modem_but_a_reachable_backend_nothing_is_corrected(
+def test_with_no_modem_but_a_reachable_backend_it_confirms_the_alert_was_sent(
     app, monkeypatch,
 ):
     monkeypatch.setattr(app, "_try_open_sms", lambda: None)
@@ -782,8 +787,9 @@ def test_with_no_modem_but_a_reachable_backend_nothing_is_corrected(
         spoken = _start_and_press(app, monkeypatch)
         lang = app.language.current
         assert _wait_for(lambda: len(app.buffered._inner.alerts) == 1)
-        time.sleep(0.2)                       # let any delivery report land
-        assert spoken == [messages.get("emergency.sending", lang)], spoken
+        sent = messages.get("emergency.sent", lang)
+        assert _wait_for(lambda: sent in spoken), f"heard {spoken!r}"
+        assert spoken == [messages.get("emergency.sending", lang), sent], spoken
     finally:
         app._shutdown.set()
         app.stop()
