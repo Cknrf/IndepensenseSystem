@@ -423,7 +423,7 @@ UPS_HAT_I2C_ADDRESS = 0x2D
 # reaches, so neither alert had ever fired or could: the wearable gave no
 # warning at all and simply died. `WaveshareUPSHatE` now rescales the raw
 # reading onto 0-100 against this constant, which puts the two thresholds
-# back inside the range the gauge actually produces (raw ~63% and ~59%).
+# back inside the range the gauge actually produces (raw ~69% and ~65%).
 #
 # The error here is asymmetric, and an earlier version of this comment
 # had the direction backwards. Work it from the formula in
@@ -456,26 +456,47 @@ BATTERY_EMPTY_RAW_PERCENT = 57.0
 # BELOW `_PERCENT` (once, then latched until it recovers above
 # `_RECOVERY_PERCENT`). This hysteresis prevents flapping alerts at
 # the boundary.
-LOW_BATTERY_PERCENT = 15
-LOW_BATTERY_RECOVERY_PERCENT = 20
+# 30, not 15, and the reason is a separation worth keeping straight.
+#
+# `BATTERY_EMPTY_RAW_PERCENT` is a *measurement* — where this gauge
+# bottoms out — and must stay accurate. These two are a *policy* — when
+# to warn — and are free to be cautious. Lowering the floor to its true
+# value cost warning margin, and the fix is to buy that margin back here
+# rather than by padding the floor, which would have made the spoken
+# percentage lie in order to make the alert fire sooner.
+#
+# Cautious on purpose while one question is open: whether this gauge is a
+# voltage reading in disguise. If it is, the bottom of the range drains
+# faster in wall-clock time than the linear map implies, and the error
+# lands exactly where these warnings live. Warning early is robust
+# against that; warning late is not. Tighten these once the `--csv`
+# discharge gives real minutes-per-raw-point.
+#
+# Recovery must stay ABOVE its trigger. The latch clears at
+# `pct >= _RECOVERY_PERCENT` (see `_check_battery_and_alert`), so a
+# recovery below the trigger would clear the latch while still under it
+# and re-fire on the next poll — an SMS to every guardian every ten
+# seconds. `test_app_battery` pins the ordering.
+LOW_BATTERY_PERCENT = 30
+LOW_BATTERY_RECOVERY_PERCENT = 35
 BATTERY_CHECK_INTERVAL_S = 10.0
 
 # Second, spoken-only tier. The wearer is told at `LOW_BATTERY_PERCENT`
 # ("charge soon") and again here ("about to shut down"), because those are
-# different instructions and 15% on this pack is still a long while.
+# different instructions and 30% on this pack is still a long while.
 #
-# Only the critical one preempts speech in progress. A 15% warning is not
+# Only the critical one preempts speech in progress. A 30% warning is not
 # worth cutting off a turn instruction the user is mid-way through hearing;
 # "your device is about to die" is, because everything else the wearable
 # might be saying stops mattering shortly afterwards.
 #
-# No second guardian alert fires here. They were already told at 15% over
+# No second guardian alert fires here. They were already told at 30% over
 # both SMS and the dashboard, and texting them again as the battery dies
 # tells them nothing they can act on.
-CRITICAL_BATTERY_PERCENT = 5
-CRITICAL_BATTERY_RECOVERY_PERCENT = 10
+CRITICAL_BATTERY_PERCENT = 20
+CRITICAL_BATTERY_RECOVERY_PERCENT = 25
 
-# Separate latch file from the 15% one, so the two tiers cannot clear each
+# Separate latch file from the 30% one, so the two tiers cannot clear each
 # other. Same presence-is-the-state trick — see `LOW_BATTERY_STATE_PATH`.
 CRITICAL_BATTERY_STATE_PATH = PROJECT_ROOT / "var" / "critical_battery_alerted"
 
