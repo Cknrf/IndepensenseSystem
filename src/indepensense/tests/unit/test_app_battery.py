@@ -487,3 +487,47 @@ def test_the_voltage_net_shares_the_critical_latch(app):
     _check_now(app)
 
     assert len(app.spoken) == spoken_once
+
+
+# --- the threshold ladder ----------------------------------------------------
+#
+# Four constants that have to stay in a particular order. Nothing enforced
+# it until the tiers moved from 15/5 to 30/20 and the recovery values were
+# briefly left behind at 20/10 — below their own triggers, which is not a
+# cosmetic mistake. See `test_recovery_sits_above_its_trigger`.
+
+def test_recovery_sits_above_its_trigger():
+    """The latch clears at `pct >= RECOVERY` and fires at `pct < PERCENT`.
+    Put recovery below its trigger and the two windows overlap: the latch
+    clears while the battery is still under the warning level and re-fires
+    on the very next poll — a guardian SMS every `BATTERY_CHECK_INTERVAL_S`
+    for the rest of the discharge.
+    """
+    assert LOW_BATTERY_RECOVERY_PERCENT > LOW_BATTERY_PERCENT
+    assert CRITICAL_BATTERY_RECOVERY_PERCENT > CRITICAL_BATTERY_PERCENT
+
+
+def test_critical_is_below_low_and_their_bands_do_not_overlap():
+    """Critical has to be the inner tier, and its recovery must not reach
+    into the low band — otherwise clearing the critical latch could leave
+    the wearer above "critical" and below "low" with neither tier armed.
+    """
+    assert CRITICAL_BATTERY_PERCENT < LOW_BATTERY_PERCENT
+    assert CRITICAL_BATTERY_RECOVERY_PERCENT <= LOW_BATTERY_PERCENT
+
+
+def test_both_tiers_are_reachable_by_the_corrected_gauge():
+    """The original bug: both thresholds sat below a floor the gauge never
+    reached, so neither alert could ever fire. They are expressed in
+    corrected percent now, so this checks the raw reading each one needs
+    is inside the span the gauge actually produces.
+    """
+    from indepensense.config import BATTERY_EMPTY_RAW_PERCENT
+    from indepensense.power.waveshare_ups_e import correct_percentage
+
+    reachable = {correct_percentage(raw, BATTERY_EMPTY_RAW_PERCENT)
+                 for raw in range(0, 101)}
+    for threshold in (LOW_BATTERY_PERCENT, CRITICAL_BATTERY_PERCENT):
+        assert any(value < threshold for value in reachable), (
+            f"no raw reading produces a corrected value under {threshold}%"
+        )
