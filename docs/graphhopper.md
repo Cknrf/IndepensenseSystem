@@ -255,7 +255,20 @@ until the cache is rebuilt — the old graph simply keeps serving routes
 that omit the roads you just re-admitted.
 
 ```bash
-sudo systemctl stop graphhopper
+bash deploy/graphhopper/rebuild.sh
+```
+
+That checks the config, verifies every custom model file the profile
+lists actually exists (before stopping anything), stops the services,
+re-imports, waits for the real completion marker, restarts, and routes a
+known journey to prove the new weighting took. Three minutes, one
+command, and it cannot leave you with a half-written cache because it
+stopped at the wrong log line.
+
+By hand, if you need to watch it:
+
+```bash
+sudo systemctl stop indepensense graphhopper ollama
 cd ~/graphhopper
 rm -rf graph-cache/
 java -Xmx6g -Xms2g -jar graphhopper-web-11.0.jar server config.yml

@@ -192,12 +192,17 @@ def main(argv: list[str] | None = None) -> int:
         # Longer is only acceptable if it buys a real drop in how much
         # the wearable has to say. 10% is the line: past that the user is
         # walking meaningfully further to hear fewer turns.
+        # Turn count alone is not a verdict. A candidate that walks half
+        # a kilometre LESS while adding six turns was once flagged
+        # "WORSE — more turns", which read as a regression and was the
+        # opposite. Distance is checked first, and extra turns only
+        # count against a route that is not also shorter.
         if km_delta > stock[0] * 0.10:
             verdict = "WORSE — much longer"
-        elif instr_delta <= -3:
-            verdict = "better"
-        elif instr_delta >= 3:
+        elif instr_delta >= 3 and km_delta > -0.05:
             verdict = "WORSE — more turns"
+        elif instr_delta <= -3 or km_delta < -0.05:
+            verdict = "better"
         else:
             verdict = "~same"
 
