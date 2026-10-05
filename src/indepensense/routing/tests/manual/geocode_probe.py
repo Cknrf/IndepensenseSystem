@@ -1,27 +1,39 @@
 """Manual test: see exactly why the wearable chose the destination it did.
 
-Field report: "take me to the nearest Jollibee" from Lipa routed 17 km.
-The NLU was innocent — the log shows `nearest: True` parsed correctly —
-and so is `rank_candidates`, which for a nearest query is a pure distance
-sort and cannot pick a far candidate over a near one. That leaves only
-one place for the bug: **a nearer branch was never in the candidate list
-Photon returned.**
+Field report: "take me to the nearest Jollibee" from Lipa announced
+17 km. The NLU was innocent — the log shows `nearest: True` parsed
+correctly — and so is `rank_candidates`, which for a nearest query is a
+pure distance sort and cannot pick a far candidate over a near one.
 
-This prints that list, with distances, exactly as the executor sees it,
-then shows how ranking orders it. Three things it distinguishes:
+Run against the coordinates from that day, this probe cleared the
+geocoder too: Photon returns the 1.3 km Lipa branch at rank 1, at every
+limit tried. So the chain *geocode -> rank* was working, and the
+explanation lies outside it. Two candidates remain, and `--route` tells
+them apart:
 
-  * **Nearby branches absent at any limit** — the Photon index does not
-    have them, or they are not named what the user said. No amount of
-    ranking fixes that; the index or the query does.
-  * **Nearby branches appear only at a higher `--limit`** — Photon
-    returns its top N by *relevance*, and `config.GEOCODE_CANDIDATE_LIMIT`
-    is 10. If the near one sits at rank 14, the executor never sees it
-    and sorting the ten it did see by distance is just picking the
-    closest of the wrong set.
-  * **Nearby branches present and ranked first** — then the fault is
-    somewhere else entirely, most likely a bad GPS fix at the time, and
-    `--from` lets you re-run against the coordinates the device actually
-    had.
+  * **The walk really is that long.** The announced number is the ROUTE
+    distance, not the straight line, and a foot profile will not take a
+    pedestrian along a tollway. The device was at a railroad crossing on
+    the Southern Tagalog Arterial Road; 1.3 km across it can be many
+    kilometres around it. That is the router being right and the
+    wearable being honest.
+  * **The origin was not where the user was.** `GPSCache.latest_fix()`
+    has no expiry: a fix from before a modem disconnect is served
+    indefinitely, and ranking would faithfully sort by distance from
+    somewhere the user has since left. The modem on this unit drops
+    often enough for that to be routine.
+
+What it still distinguishes, for the next query that goes wrong:
+
+  * **Nearby candidates absent at any limit** — the Photon index does
+    not have them, or they are not named what the user said. No amount
+    of ranking fixes that; the index or the query does.
+  * **Nearby candidates only at a higher `--limit`** — Photon returns
+    its top N by *relevance*, and `config.GEOCODE_CANDIDATE_LIMIT` is
+    10. One at rank 14 is invisible to the executor, and sorting the ten
+    it did see is just picking the closest of the wrong set.
+  * **Nearby candidates present and ranked first** — as happened here.
+    Look past the geocoder: `--route`, then the origin.
 
 Usage
 -----
@@ -33,6 +45,10 @@ Usage
     # does a bigger candidate list contain a closer branch?
     python -m indepensense.routing.tests.manual.geocode_probe \\
         "Jollibee" --from 13.937387,121.118698 --nearest --limit 50
+
+    # is the WALK as long as the device said? (needs GraphHopper too)
+    python -m indepensense.routing.tests.manual.geocode_probe \\
+        "Jollibee" --from 13.937387,121.118698 --nearest --route
 
     # what the raw geocoder does with no location bias at all
     python -m indepensense.routing.tests.manual.geocode_probe \\
@@ -61,14 +77,60 @@ def _parse_origin(text: str) -> Coordinate:
 
 def _show(label: str, hits, origin: Coordinate, query: str) -> None:
     print(f"\n{label}")
-    print(f"  {'#':>2}  {'distance':>9}  {'name match':>10}  name / city")
-    print("  " + "-" * 72)
+    print(f"  {'#':>2}  {'straight':>9}  {'match':>6}  {'coordinate':>21}  name / city")
+    print("  " + "-" * 78)
     for index, hit in enumerate(hits, 1):
         metres = haversine_m(origin, hit.coordinate)
         distance = f"{metres/1000:.1f} km" if metres >= 1000 else f"{metres:.0f} m"
         city = hit.city or ""
-        print(f"  {index:>2}  {distance:>9}  {name_match_score(query, hit.name):>10.2f}  "
-              f"{hit.name}{f'  ({city})' if city else ''}")
+        where = f"{hit.coordinate.lat:.5f},{hit.coordinate.lon:.5f}"
+        print(f"  {index:>2}  {distance:>9}  {name_match_score(query, hit.name):>6.2f}  "
+              f"{where:>21}  {hit.name}{f'  ({city})' if city else ''}")
+
+
+def _route_to(origin: Coordinate, chosen) -> None:
+    """Walk-route to the chosen candidate and compare with the straight line.
+
+    This closes the loop the field report left open. A log showed
+    "Navigating to Jollibee. Total distance 17 kilometers" while the
+    nearest branch is 1.3 km away in a straight line — and the number the
+    wearable speaks is the ROUTE distance, not the straight one. The two
+    can legitimately differ by an order of magnitude: the device was at a
+    railroad crossing on the Southern Tagalog Arterial Road, and a foot
+    profile will not take a pedestrian along a tollway, so the walk can
+    be a long way round. That is the router being right, and a wearable
+    telling its blind user the truth about a 17 km walk.
+
+    If the ratio is small, the stale-origin explanation survives instead:
+    `GPSCache.latest_fix()` has no expiry, so a fix from before a modem
+    disconnect is served indefinitely and ranking would faithfully sort
+    by distance from somewhere the user no longer is.
+    """
+    from indepensense.config import GRAPHHOPPER_URL
+    from indepensense.routing.graphhopper import GraphHopperRouter
+
+    straight = haversine_m(origin, chosen.coordinate)
+    try:
+        route = GraphHopperRouter(base_url=GRAPHHOPPER_URL).route(
+            origin, chosen.coordinate, profile="foot",
+        )
+    except Exception as exc:
+        print(f"\nrouting failed: {exc}", file=sys.stderr)
+        print("Is GraphHopper up? `systemctl status graphhopper`", file=sys.stderr)
+        return
+
+    print(f"\nOn foot      : {route.distance_m/1000:.1f} km, "
+          f"{route.duration_s/60:.0f} min")
+    print(f"Straight line: {straight/1000:.1f} km")
+    if straight > 0:
+        ratio = route.distance_m / straight
+        print(f"Detour factor: {ratio:.1f}x", end="  ")
+        if ratio >= 3.0:
+            print("<- the walk really is that long. Expect a barrier "
+                  "(tollway, river, railway) between here and there.")
+        else:
+            print("<- normal. If the device announced far more than this, "
+                  "it was routing from a different origin.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,6 +147,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-bias", action="store_true",
                         help="omit lat/lon from the Photon query, to see what the "
                              "location bias is actually contributing")
+    parser.add_argument("--route", action="store_true",
+                        help="also ask GraphHopper to walk to the top choice. A "
+                             "short straight line and a long route is a real "
+                             "answer, not a bug: a pedestrian cannot cross a "
+                             "tollway, and the wearable announces the ROUTE "
+                             "distance")
     args = parser.parse_args(argv)
 
     try:
@@ -134,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
     # and the executor only ever sees the first `limit`, so a nearer
     # branch sitting outside that window is invisible to a distance sort
     # no matter how correct the sort is.
+    if args.route:
+        _route_to(origin, chosen)
+
     closest = min(hits, key=lambda h: haversine_m(origin, h.coordinate))
     if args.limit <= GEOCODE_CANDIDATE_LIMIT:
         print(
