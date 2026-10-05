@@ -185,6 +185,7 @@ from indepensense.config import (
     MMS_VOICES,
     MPU6050_ADDRESS,
     MPU6050_I2C_BUS,
+    NLU_COMPACT_PREFILL,
     NLU_EMBEDDING_BANK_PATH,
     NLU_EMBEDDING_MARGIN_THRESHOLD,
     NLU_EMBEDDING_MODEL,
@@ -3087,6 +3088,7 @@ class App:
                 timeout_s=NLU_TIMEOUT_S,
                 warmup=True,
                 warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
+                compact_prefill=NLU_COMPACT_PREFILL,
             ),
         )
 

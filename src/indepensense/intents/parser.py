@@ -52,6 +52,18 @@ survives beyond commit history:
 - **A capped `num_predict`.** See `_MAX_OUTPUT_TOKENS`. Bounds the worst
   case so a model that never stops generating fails in a second rather
   than eating the whole per-query timeout.
+- **Compact-JSON prefill (`compact_prefill=True`).** Instead of JSON mode,
+  the request goes to `/api/chat` with the reply already begun —
+  `{"intent":"` as a partial assistant message — and stops at the first
+  newline. Qwen 3 4B pretty-prints JSON whatever the prompt says: the same
+  answer cost it ~20 output tokens against ~12 compact, and on a CPU every
+  output token is the slow part. The prefill also supplies the first few
+  tokens itself, so the model generates ~7. JSON mode cannot be combined
+  with it — Ollama's grammar restarts the object and ignores the prefill —
+  so validity is no longer enforced by the server. A reply that does not
+  parse takes the existing `"malformed"` path and never reaches the cloud;
+  measured at 0 of 170 on the pipeline_probe sets. Off by default: it buys
+  speed and accuracy on 4B, but slightly more false triggers on 1.7B.
 - **stderr logging on failure.** When the HTTP call fails we log the exact
   exception before returning UNKNOWN. Early builds swallowed these errors
   silently, which cost hours during debugging when the model weights had
@@ -85,6 +97,11 @@ _MAX_OUTPUT_TOKENS = 128
 # the journal on a device with an SD card for a disk.
 _LOG_EXCERPT_CHARS = 200
 
+# The start of every reply under `compact_prefill`: written by us, continued
+# by the model. Compact, so the model continues in the compact style; and the
+# reply ends at the first newline, which compact JSON never contains.
+_COMPACT_PREFIX = '{"intent":"'
+
 
 class OllamaIntentParser:
     def __init__(
@@ -95,9 +112,12 @@ class OllamaIntentParser:
         timeout_s: float = 30.0,
         warmup: bool = True,
         warmup_timeout_s: float = 90.0,
+        compact_prefill: bool = False,
     ):
         self._model = model
-        self._url = f"{ollama_url.rstrip('/')}/api/generate"
+        self._compact_prefill = compact_prefill
+        endpoint = "/api/chat" if compact_prefill else "/api/generate"
+        self._url = f"{ollama_url.rstrip('/')}{endpoint}"
         self._system_prompt = prompt_path.read_text()
         self._timeout_s = timeout_s
 
@@ -121,20 +141,9 @@ class OllamaIntentParser:
         print(f"  Warming up {self._model} (up to {timeout_s:.0f}s if cold)...", flush=True)
         t0 = _time.time()
         try:
-            requests.post(
-                self._url,
-                json={
-                    "model": self._model,
-                    "system": self._system_prompt,     # same prompt → warms prefix cache
-                    "prompt": "ok",
-                    "stream": False,
-                    "format": "json",
-                    "think": False,                    # see module docstring
-                    "options": {"temperature": 0.0, "num_predict": 32},
-                    "keep_alive": -1,
-                },
-                timeout=timeout_s,
-            )
+            # Built by the same method as a real query, so the warmed prefix
+            # is the one queries reuse — in either request style.
+            requests.post(self._url, json=self._payload("ok", 32), timeout=timeout_s)
             print(f"  Warmup done in {_time.time() - t0:.1f}s.", flush=True)
         except requests.RequestException as exc:
             print(
@@ -143,26 +152,52 @@ class OllamaIntentParser:
                 file=sys.stderr,
             )
 
+    def _payload(self, transcript: str, num_predict: int) -> dict:
+        """The request body, in whichever style this parser was built for."""
+        common = {
+            "model": self._model,
+            "stream": False,
+            "think": False,             # see module docstring
+            "keep_alive": -1,           # keep model resident between queries
+        }
+        if not self._compact_prefill:
+            return {
+                **common,
+                "system": self._system_prompt,
+                "prompt": transcript,
+                "format": "json",
+                "options": {"temperature": 0.0, "num_predict": num_predict},
+            }
+        return {
+            **common,
+            "messages": [
+                {"role": "system", "content": self._system_prompt},
+                {"role": "user", "content": transcript},
+                # A trailing assistant message is continued, not answered.
+                {"role": "assistant", "content": _COMPACT_PREFIX},
+            ],
+            "options": {
+                "temperature": 0.0,
+                "num_predict": num_predict,
+                "stop": ["\n"],
+            },
+        }
+
     def parse(self, transcript: str) -> IntentResult:
         import requests  # lazy: keeps the module importable off-device
 
-        payload = {
-            "model": self._model,
-            "system": self._system_prompt,
-            "prompt": transcript,
-            "stream": False,
-            "format": "json",
-            "think": False,             # see module docstring
-            "options": {
-                "temperature": 0.0,
-                "num_predict": _MAX_OUTPUT_TOKENS,
-            },
-            "keep_alive": -1,           # keep model resident between queries
-        }
         try:
-            response = requests.post(self._url, json=payload, timeout=self._timeout_s)
+            response = requests.post(
+                self._url,
+                json=self._payload(transcript, _MAX_OUTPUT_TOKENS),
+                timeout=self._timeout_s,
+            )
             response.raise_for_status()
-            raw = response.json().get("response", "")
+            body = response.json()
+            if self._compact_prefill:
+                raw = _COMPACT_PREFIX + (body.get("message") or {}).get("content", "")
+            else:
+                raw = body.get("response", "")
         except (requests.RequestException, ValueError) as exc:
             print(f"[parser] Ollama request failed: {exc}", file=sys.stderr)
             return IntentResult(

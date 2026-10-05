@@ -23,6 +23,15 @@ Run from repo root:
 
     # or specify a different model — e.g. to re-run the old baseline
     python -m indepensense.intents.tests.manual.llm_probe qwen2.5:1.5b-instruct
+
+    # the request style `config.NLU_LARGE_MODEL` switches to: compact-JSON
+    # prefill instead of JSON mode (see intents/parser.py). Measure 4B this
+    # way — in JSON mode it pretty-prints and the latency is not the one
+    # the device would see.
+    python -m indepensense.intents.tests.manual.llm_probe qwen3:4b --prefill
+
+With no model named, the model and request style are whatever `config.py`
+selects, so a bare run measures exactly what the device runs.
 """
 import json
 import sys
@@ -30,12 +39,19 @@ import time
 
 import requests
 
-from indepensense.config import PROJECT_ROOT
+from indepensense.config import (
+    NLU_COMPACT_PREFILL,
+    NLU_MODEL,
+    NLU_WARMUP_TIMEOUT_S,
+    PROJECT_ROOT,
+)
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-# Kept in sync with `config.NLU_MODEL`. Override on the command line to
-# benchmark other models — that is the point of this script.
-DEFAULT_MODEL = "qwen3:1.7b"
+OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
+# Read from config rather than copied, so the default can never drift from
+# the device. Override on the command line to benchmark other models — that
+# is the point of this script.
+DEFAULT_MODEL = NLU_MODEL
 
 # Two separate budgets, because the first query is not like the others.
 #
@@ -54,7 +70,13 @@ DEFAULT_MODEL = "qwen3:1.7b"
 # instead of a slow one.
 COLD_QUERY_TIMEOUT_S = 300.0
 WARM_QUERY_TIMEOUT_S = 120.0
-MODEL = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
+_ARGS = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
+MODEL = _ARGS[0] if _ARGS else DEFAULT_MODEL
+# A named model is measured in JSON mode unless `--prefill` says otherwise;
+# the bare default follows config, like the device.
+PREFILL = "--prefill" in sys.argv or (not _ARGS and NLU_COMPACT_PREFILL)
+# Must match `intents/parser.py`'s `_COMPACT_PREFIX`.
+_COMPACT_PREFIX = '{"intent":"'
 
 # Qwen 3 is a hybrid reasoning model and emits a `<think>` block unless told
 # otherwise, which wrecks both latency and the strict-JSON contract. Ollama
@@ -357,19 +379,33 @@ def query(
     """
     global _send_think
 
-    payload = {
-        "model": MODEL,
-        "system": SYSTEM_PROMPT,
-        "prompt": text,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.0},
-    }
+    if PREFILL:
+        url = OLLAMA_CHAT_URL
+        payload = {
+            "model": MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+                {"role": "assistant", "content": _COMPACT_PREFIX},
+            ],
+            "stream": False,
+            "options": {"temperature": 0.0, "stop": ["\n"]},
+        }
+    else:
+        url = OLLAMA_URL
+        payload = {
+            "model": MODEL,
+            "system": SYSTEM_PROMPT,
+            "prompt": text,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.0},
+        }
     if _send_think:
         payload["think"] = False
 
     t0 = time.time()
-    response = requests.post(OLLAMA_URL, json=payload, timeout=timeout_s)
+    response = requests.post(url, json=payload, timeout=timeout_s)
     elapsed = time.time() - t0
 
     try:
@@ -387,7 +423,10 @@ def query(
             return query(text, timeout_s=timeout_s)
         return elapsed, None, f"HTTP {response.status_code}: {error[:150]}"
 
-    raw = body.get("response", "")
+    if PREFILL:
+        raw = _COMPACT_PREFIX + (body.get("message") or {}).get("content", "")
+    else:
+        raw = body.get("response", "")
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
@@ -439,7 +478,7 @@ def score(
 
 
 def main():
-    print(f"Model:  {MODEL}")
+    print(f"Model:  {MODEL}  ({'compact-JSON prefill' if PREFILL else 'JSON mode'})")
     print(f"Prompt: {PROMPT_PATH} ({len(SYSTEM_PROMPT)} chars)")
     print(f"Free RAM before loading model: {free_ram_mb()} MB")
     print("Warming up with a throwaway query...")
@@ -447,14 +486,21 @@ def main():
     cold_elapsed, _, _ = query("Hello", timeout_s=COLD_QUERY_TIMEOUT_S)
     print(f"Cold query took {cold_elapsed:.2f}s")
     print(f"Free RAM after model loaded: {free_ram_mb()} MB")
-    if cold_elapsed > 90:
-        # `config.NLU_WARMUP_TIMEOUT_S` is 90 s. A cold query slower than
-        # that means the app's own startup warmup gives up, so the first
-        # real voice command after boot pays this cost instead.
+    if cold_elapsed > NLU_WARMUP_TIMEOUT_S:
+        # A cold query slower than the app's warmup budget means its startup
+        # warmup gives up, so the first real voice command after boot pays
+        # this cost instead.
         print(
-            f"  NOTE: this exceeds NLU_WARMUP_TIMEOUT_S (90s), so app.py's "
-            f"startup warmup would time out and the first voice command "
-            f"would pay the prefill."
+            f"  NOTE: this exceeds NLU_WARMUP_TIMEOUT_S "
+            f"({NLU_WARMUP_TIMEOUT_S:.0f}s), so app.py's startup warmup would "
+            f"time out and the first voice command would pay the prefill."
+        )
+    if MODEL != NLU_MODEL:
+        # The budget follows `config.NLU_LARGE_MODEL`, which is set for a
+        # different model than the one measured here.
+        print(
+            f"  (config is set for {NLU_MODEL}; flipping NLU_LARGE_MODEL "
+            f"changes the warmup budget along with the model.)"
         )
     print()
 
@@ -510,7 +556,7 @@ def main():
 
     total = len(TEST_CASES)
     print()
-    print(f"Summary for model: {MODEL}")
+    print(f"Summary for model: {MODEL} ({'compact-JSON prefill' if PREFILL else 'JSON mode'})")
     print(f"  Total queries:       {total}")
     print(f"  JSON parse failures: {parse_failures}")
     print(f"  Intent accuracy:     {intent_correct_count}/{total} "

@@ -950,10 +950,43 @@ CLOUD_MAX_RESPONSE_CHARS = 500
 CLOUD_CONTEXT_TTL_S = 120.0
 
 OLLAMA_URL = "http://127.0.0.1:11434"
-NLU_MODEL = "qwen3:1.7b"
+
+# The NLU model switch. Flip to True only after measuring on the Pi:
+#
+#     ollama pull qwen3:4b
+#     python -m indepensense.intents.tests.manual.llm_probe qwen3:4b
+#
+# False — Qwen 3 1.7B, JSON mode. The baseline the device has shipped with.
+# True  — Qwen 3 4B with the compact-JSON prefill (see `intents/parser.py`).
+#
+# Measured with `pipeline_probe` on a Mac (accuracy carries over to the Pi,
+# latency does not):
+#
+#                          1.7B, JSON mode   4B, compact prefill
+#     dev accuracy              79.0%              93.4%
+#     held-out accuracy         80.2%              95.2%
+#     "unknown" (dev/held-out)  41% / 30%          94% / 87%
+#     false emergency/shutdown  6 / 2              0 / 1
+#     missed emergencies        1 / 1              2 / 2
+#     output tokens (median)    12                 7
+#     resident memory           1.9 GB             3.2 GB
+#
+# The cost is the Pi's CPU. Per command, 4B is estimated at ~1.5-3 s against
+# 1.7B's ~1-2 s — the prefill cut 4B's output from ~20 tokens to ~7, which is
+# most of what made it slow. Startup is the larger cost: the ~2,500-token
+# system prompt is prefilled ~2.7x slower, an estimated 65-105 s on a cold
+# Pi, hence the longer warmup budget below. Watch `vcgencmd measure_temp`
+# and the 100 Hz loop's timing when trying it — 4B holds all four cores
+# about twice as long per command.
+#
+# The prefill is tied to 4B rather than offered separately: on 1.7B it is
+# faster but no more accurate, and raised false triggers (dev 6 -> 8).
+NLU_LARGE_MODEL = False
+NLU_MODEL = "qwen3:4b" if NLU_LARGE_MODEL else "qwen3:1.7b"
+NLU_COMPACT_PREFILL = NLU_LARGE_MODEL
 NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 NLU_TIMEOUT_S = 30.0
-NLU_WARMUP_TIMEOUT_S = 90.0
+NLU_WARMUP_TIMEOUT_S = 180.0 if NLU_LARGE_MODEL else 90.0
 
 # Semantic fast path in front of the LLM — see intents/embeddings.py for
 # the full rationale and prompts/nlu_examples.md for the example bank.

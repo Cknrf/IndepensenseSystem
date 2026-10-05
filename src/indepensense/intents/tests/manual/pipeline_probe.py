@@ -48,6 +48,10 @@ pulled, and downloads the embedding model on first use):
     python -m indepensense.intents.tests.manual.pipeline_probe \\
         --prompt /tmp/nlu_system_v2.md --bank /tmp/nlu_examples_v2.md
 
+    # 4B the way config.NLU_LARGE_MODEL would run it
+    python -m indepensense.intents.tests.manual.pipeline_probe \\
+        --model qwen3:4b --compact-prefill
+
     # one stage only
     python -m indepensense.intents.tests.manual.pipeline_probe --llm-only
     python -m indepensense.intents.tests.manual.pipeline_probe --no-llm
@@ -65,6 +69,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from indepensense.config import (
+    NLU_COMPACT_PREFILL,
     NLU_EMBEDDING_BANK_PATH,
     NLU_EMBEDDING_MARGIN_THRESHOLD,
     NLU_EMBEDDING_MODEL,
@@ -223,6 +228,7 @@ def build_parser(args):
         timeout_s=NLU_TIMEOUT_S,
         warmup=True,
         warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
+        compact_prefill=args.compact_prefill,
     )
     return matcher, TieredIntentParser(matcher=matcher, llm=llm)
 
@@ -315,6 +321,11 @@ def main():
     ap.add_argument("--prompt", default=str(NLU_PROMPT_PATH))
     ap.add_argument("--bank", default=str(NLU_EMBEDDING_BANK_PATH))
     ap.add_argument("--model", default=NLU_MODEL)
+    ap.add_argument(
+        "--compact-prefill", action=argparse.BooleanOptionalAction,
+        default=NLU_COMPACT_PREFILL,
+        help="request style; defaults to what config.NLU_LARGE_MODEL selects",
+    )
     ap.add_argument("--score", type=float, default=NLU_EMBEDDING_SCORE_THRESHOLD)
     ap.add_argument("--margin", type=float, default=NLU_EMBEDDING_MARGIN_THRESHOLD)
     ap.add_argument("--llm-only", action="store_true", help="skip the fast path")
@@ -339,7 +350,8 @@ def main():
     print(f"\nCases:  {path} ({len(cases)})")
     print(f"Prompt: {args.prompt}")
     print(f"Bank:   {args.bank}" + ("  (fast path skipped)" if args.llm_only else ""))
-    print(f"Model:  {args.model}" + ("  (LLM skipped)" if args.no_llm else ""))
+    style = "compact-JSON prefill" if args.compact_prefill else "JSON mode"
+    print(f"Model:  {args.model} ({style})" + ("  (LLM skipped)" if args.no_llm else ""))
     print()
 
     matcher, parser = build_parser(args)
