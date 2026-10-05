@@ -74,8 +74,34 @@ graphhopper:
   datareader.file: "philippines-latest.osm.pbf"
   graph.location: graph-cache
 
-  # Skip non-walkable motorized highways at import — required as of GH 11
-  import.osm.ignored_highways: "motorway,trunk,motorway_link,trunk_link"
+  # Skip non-walkable motorized highways at import — required as of GH 11.
+  #
+  # `trunk` and `trunk_link` are NOT in this list, and that is specific to
+  # where this device is used. GraphHopper's own examples exclude trunk,
+  # which is reasonable in Europe where trunk roads are near-motorways.
+  # In the Philippines the same tag sits on ordinary national highways
+  # that people walk along, with shoulders and shops fronting them.
+  #
+  # Measured, from 13.937387,121.118698 to the Jollibee 1.3 km away:
+  #
+  #   trunk excluded : 3.5 km, 41 min, start snapped 230 m off-position
+  #   reference (OSRM, same two points) : 1.4 km, 19 min
+  #
+  # 1200 m of that 1400 m reference route runs along President Jose P.
+  # Laurel Highway — tagged `trunk`, therefore absent from the graph
+  # entirely. That is also why the start snapped 230 m away: the nearest
+  # way to the user was the highway, and it was not there to snap to. The
+  # wearable announced a walk 2.5x longer than the real one.
+  #
+  # Pedestrian safety is handled by tags, not by road class: the foot
+  # profile still honours `foot=no` and `foot_access`, so segments
+  # genuinely barred to pedestrians stay excluded. A blanket class
+  # exclusion cannot make that distinction, and the detour it forces has
+  # its own cost — more road crossings and longer exposure.
+  #
+  # `motorway` and `motorway_link` stay excluded. The STAR Tollway really
+  # does bar pedestrians.
+  import.osm.ignored_highways: "motorway,motorway_link"
 
   # Encoded values required for the foot profile's internal schema
   graph.encoded_values: "foot_access, hike_rating, foot_priority, country, road_class, foot_road_access, mtb_rating, foot_average_speed"
@@ -99,6 +125,35 @@ server:
       port: 8990
       bind_host: 0.0.0.0
 ```
+
+## Changing `ignored_highways` means rebuilding the graph
+
+The exclusion list is applied **at import**, so editing it has no effect
+until the cache is rebuilt — the old graph simply keeps serving routes
+that omit the roads you just re-admitted.
+
+```bash
+sudo systemctl stop graphhopper
+cd ~/graphhopper
+rm -rf graph-cache/
+java -Xmx6g -Xms2g -jar graphhopper-web-11.0.jar server config.yml
+# wait for "Started GraphHopperApplication", then Ctrl-C
+sudo systemctl start graphhopper
+```
+
+The one-off import needs the 6 GB heap; the service runs at 2 GB because
+that is enough once `graph-cache/` exists. Verify with the same two
+points the measurement above used:
+
+```bash
+python -m indepensense.routing.tests.manual.geocode_probe \
+    "Jollibee" --from 13.937387,121.118698 --nearest --route
+```
+
+Expect roughly 1.4 km and a start snap under 50 m. A snap still in the
+hundreds of metres means the road network near that point is missing for
+some other reason, and the reference link the probe prints is the way to
+tell.
 
 ## First run — builds the graph cache
 
