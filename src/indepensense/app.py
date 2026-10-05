@@ -2487,6 +2487,11 @@ class App:
             # reclaimed the button, but the ones that failed before it
             # have not.
             self._reclaim_ptt_button()
+            # A shutdown armed in this cycle is spent by the end of it,
+            # whether it ran or not. A cancel during the goodbye skips the
+            # power-off correctly, and left armed it fired after the *next*
+            # command instead — "what time is it", answered, then dark.
+            self._shutdown_requested = False
             self._voice_active.clear()
 
     def _orient_towards_route(self) -> None:
