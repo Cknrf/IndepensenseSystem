@@ -379,3 +379,21 @@ def test_a_failed_heartbeat_keeps_its_place_among_heartbeats():
         assert delivered == [1, 1, 2], delivered    # failed, retried, then the next
     finally:
         buffered.close(drain_timeout_s=0.5)
+
+
+def test_a_client_that_cannot_reach_the_backend_reports_failure_without_retrying():
+    """NullTelemetryClient returns True so undeliverable sends are not
+    retried forever — but that True is "handled", not "delivered", and must
+    not be reported to the wearer as the dashboard having been reached."""
+    inner = _ScriptedTelemetryClient()
+    buffered = BufferedTelemetryClient(
+        inner, retry_interval_s=0.02, reaches_backend=False,
+    )
+    outcomes = []
+    try:
+        buffered.send_alert(_make_alert(), on_first_attempt=outcomes.append)
+        assert _wait_until(lambda: outcomes == [False])
+        assert buffered.queue_depth() == 0
+        assert len(inner.alerts) == 1, "an undeliverable alert was retried"
+    finally:
+        buffered.close(drain_timeout_s=0.5)

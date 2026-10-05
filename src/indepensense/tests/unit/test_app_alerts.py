@@ -742,3 +742,61 @@ def test_offline_with_a_refusing_modem_the_wearer_hears_nobody_was_told(
         )
     finally:
         buffered.close(drain_timeout_s=0.1)
+
+
+def _start_and_press(app, monkeypatch):
+    spoken = []
+    monkeypatch.setattr(app, "_announce",
+                        lambda text, critical=False: spoken.append(text))
+    app.start()
+    app.emergency_button.press()
+    return spoken
+
+
+def test_with_no_modem_and_no_data_the_wearer_is_not_told_it_was_sent(
+    app, monkeypatch,
+):
+    """No SMS sender used to mean no notifier, so the executor answered
+    "Emergency alert sent to your guardian" from the buffered client's
+    queued-True — offline, with nobody told."""
+    monkeypatch.setattr(app, "_try_open_sms", lambda: None)
+    monkeypatch.setattr(app, "_open_telemetry_client",
+                        lambda: MockTelemetryClient(succeed=False))
+    try:
+        spoken = _start_and_press(app, monkeypatch)
+        lang = app.language.current
+        failed = messages.get("emergency.delivery.all_failed", lang)
+        assert _wait_for(lambda: failed in spoken), f"heard {spoken!r}"
+        assert messages.get("emergency.sent", lang) not in spoken
+        assert app._last_emergency_fired == float("-inf")
+    finally:
+        app._shutdown.set()
+        app.stop()
+
+
+def test_with_no_modem_but_a_reachable_backend_nothing_is_corrected(
+    app, monkeypatch,
+):
+    monkeypatch.setattr(app, "_try_open_sms", lambda: None)
+    try:
+        spoken = _start_and_press(app, monkeypatch)
+        lang = app.language.current
+        assert _wait_for(lambda: len(app.buffered._inner.alerts) == 1)
+        time.sleep(0.2)                       # let any delivery report land
+        assert spoken == [messages.get("emergency.sending", lang)], spoken
+    finally:
+        app._shutdown.set()
+        app.stop()
+
+
+def test_an_unprovisioned_unit_marks_its_telemetry_as_unable_to_deliver(
+    app, monkeypatch,
+):
+    from indepensense.telemetry.null import NullTelemetryClient
+    monkeypatch.setattr(app, "_open_telemetry_client", NullTelemetryClient)
+    try:
+        app.start()
+        assert app.buffered._reaches_backend is False
+    finally:
+        app._shutdown.set()
+        app.stop()

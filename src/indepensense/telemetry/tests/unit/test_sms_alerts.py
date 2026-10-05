@@ -16,10 +16,12 @@ from indepensense.conftest import TEST_BACKEND_URL, make_credential
 from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.mock import MockTelemetryClient
+from indepensense.telemetry.null import NullTelemetryClient
 from indepensense.telemetry.sms_alerts import (
     SMS_FAILED,
     SMS_NO_NUMBER,
     SMS_SENT,
+    SMS_UNAVAILABLE,
     SMSAlertNotifier,
     compose_alert_sms,
 )
@@ -369,3 +371,47 @@ def test_a_buffered_backend_that_is_up_is_reported_as_up(tmp_path):
     delivery = _deliver_buffered(tmp_path, backend_ok=True)
     assert delivery.backend_ok is True
     assert delivery.sms == SMS_SENT
+
+
+# --- no SMS sender, or no backend credential ----------------------------------
+
+def _report(notifier_inner, sms, tmp_path):
+    received, on_delivery = _report_collector()
+    notifier = SMSAlertNotifier(
+        notifier_inner, sms, _directory(tmp_path, "09171234567"),
+        SMS_EVENT_TYPES, on_delivery=on_delivery,
+    )
+    notifier.send_alert(_alert())
+    assert _wait_until(lambda: len(received) == 1), "no delivery report arrived"
+    return received[0][1]
+
+
+def test_without_an_sms_sender_the_backend_result_is_still_reported(tmp_path):
+    buffered = BufferedTelemetryClient(
+        MockTelemetryClient(succeed=False), retry_interval_s=60.0,
+    )
+    try:
+        delivery = _report(buffered, None, tmp_path)
+    finally:
+        buffered.close(drain_timeout_s=0.1)
+    assert delivery == type(delivery)(backend_ok=False, sms=SMS_UNAVAILABLE)
+
+
+def test_without_an_sms_sender_a_reached_backend_is_reported_as_reached(tmp_path):
+    delivery = _report(MockTelemetryClient(succeed=True), None, tmp_path)
+    assert delivery.backend_ok is True
+    assert delivery.sms == SMS_UNAVAILABLE
+
+
+def test_an_unprovisioned_unit_does_not_claim_the_dashboard_was_reached(tmp_path):
+    buffered = BufferedTelemetryClient(
+        NullTelemetryClient(), retry_interval_s=60.0, reaches_backend=False,
+    )
+    try:
+        delivery = _report(
+            buffered, MockSMSSender(fail_numbers={"+639171234567"}), tmp_path,
+        )
+    finally:
+        buffered.close(drain_timeout_s=0.1)
+    assert delivery.backend_ok is False
+    assert delivery.sms == SMS_FAILED

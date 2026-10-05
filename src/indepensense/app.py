@@ -281,6 +281,7 @@ from indepensense.telemetry.sms_alerts import (
     SMS_FAILED,
     SMS_NO_NUMBER,
     SMS_SENT,
+    SMS_UNAVAILABLE,
     AlertDelivery,
     SMSAlertNotifier,
 )
@@ -919,7 +920,11 @@ class App:
             print(f"  Device {self.credential.device_id}", flush=True)
 
         print(f"  Building buffered telemetry to {BACKEND_URL}...", flush=True)
-        self.buffered = BufferedTelemetryClient(self._open_telemetry_client())
+        telemetry_client = self._open_telemetry_client()
+        self.buffered = BufferedTelemetryClient(
+            telemetry_client,
+            reaches_backend=not isinstance(telemetry_client, NullTelemetryClient),
+        )
 
         # Guardian numbers + emergency SMS. The notifier decorates the
         # telemetry client, so every alert path — fall detection, low
@@ -936,20 +941,21 @@ class App:
         )
         self.guardians.refresh()
 
-        alert_sink = self.buffered
         if SMS_ENABLED:
             print("  Opening SMS sender (mmcli)...", flush=True)
             self.sms = self._try_open_sms()
-            if self.sms is not None:
-                alert_sink = SMSAlertNotifier(
-                    inner=self.buffered,
-                    sms=self.sms,
-                    guardians=self.guardians,
-                    event_type_values=SMS_ALERT_EVENT_TYPES,
-                    on_delivery=self._on_alert_delivery,
-                )
-        self.alert_sink = alert_sink
-        reports_delivery = isinstance(alert_sink, SMSAlertNotifier)
+        # Built even without SMS. The buffered client's True only means
+        # "queued", so without a delivery report the executor answered
+        # "Emergency alert sent to your guardian" from that alone — offline,
+        # with nobody told. The notifier still reports the backend leg.
+        self.alert_sink = SMSAlertNotifier(
+            inner=self.buffered,
+            sms=self.sms,
+            guardians=self.guardians,
+            event_type_values=SMS_ALERT_EVENT_TYPES,
+            on_delivery=self._on_alert_delivery,
+        )
+        reports_delivery = True
 
         # NB: battery isn't opened yet — wire it after this block. Store
         # the executor construction here anyway so the button handlers
@@ -1942,6 +1948,7 @@ class App:
         (False, SMS_SENT):       "emergency.delivery.backend_failed",
         (False, SMS_FAILED):     "emergency.delivery.all_failed",
         (False, SMS_NO_NUMBER):  "emergency.delivery.all_failed",
+        (False, SMS_UNAVAILABLE): "emergency.delivery.all_failed",
     }
 
     def _on_alert_delivery(
@@ -1968,6 +1975,11 @@ class App:
             return
         if delivery.backend_ok and delivery.sms == SMS_SENT:
             print("[alert] delivered on both channels.", flush=True)
+            return
+        if delivery.backend_ok and delivery.sms == SMS_UNAVAILABLE:
+            # The dashboard has it and this unit cannot text, so there is
+            # no failure to correct — "Sending your emergency alert" stands.
+            print("[alert] delivered to the backend; SMS unavailable.", flush=True)
             return
 
         if not delivery.backend_ok and delivery.sms != SMS_SENT:

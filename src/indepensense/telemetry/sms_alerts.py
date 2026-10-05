@@ -32,7 +32,8 @@ long-lived one: alerts are rare, the thread exists for a few seconds and
 exits.
 
 The consequence, stated plainly: `send_alert` returns before the SMS has
-been sent, and its boolean reflects only the HTTP result. SMS outcomes
+been sent, and its boolean is the inner client's own — for the buffered
+client in production, "queued", not even the HTTP result. SMS outcomes
 are logged and counted, never folded into that return value — an
 unreachable backend and an unreachable cell network are different
 failures and the caller's retry logic only governs the former.
@@ -84,6 +85,7 @@ _BACKEND_WAIT_S = 20.0
 SMS_SENT = "sent"             # at least one guardian's phone accepted it
 SMS_FAILED = "failed"         # numbers existed, none of them went through
 SMS_NO_NUMBER = "no_number"   # nobody to text — the directory is empty
+SMS_UNAVAILABLE = "unavailable"  # this unit has no working SMS sender
 
 
 @dataclass(frozen=True)
@@ -170,7 +172,10 @@ class SMSAlertNotifier:
     def __init__(
         self,
         inner: TelemetryClient,
-        sms: SMSSender,
+        # None when the unit cannot text at all (SMS disabled, or no modem
+        # at startup). The notifier is still built, so the backend result
+        # is still reported to the wearer instead of being assumed.
+        sms: SMSSender | None,
         guardians: GuardianDirectory,
         event_type_values: tuple[str, ...],
         # Called once per qualifying alert, from the fan-out thread, with
@@ -195,9 +200,11 @@ class SMSAlertNotifier:
     def send_alert(self, event: AlertEvent) -> bool:
         """Post the alert, and dispatch SMS off-thread if it qualifies.
 
-        Returns the HTTP result only — unchanged, because fall detection
-        calls this from the 100 Hz main loop and cannot wait for a modem.
-        The combined result reaches the caller through `on_delivery`.
+        Returns the inner client's result unchanged — for the buffered
+        client that only means "queued" — because fall detection calls this
+        from the 100 Hz main loop and cannot wait for the network or a
+        modem. What actually got through reaches the caller through
+        `on_delivery`.
         """
         if event.event_type.value not in self._event_type_values:
             return self._inner.send_alert(event)
@@ -226,8 +233,8 @@ class SMSAlertNotifier:
         number is saved" is a result the wearer needs to hear and
         returning early here would silently skip the report.
         """
-        numbers = self._guardians.sms_numbers()
-        if not numbers:
+        numbers = self._guardians.sms_numbers() if self._sms is not None else []
+        if self._sms is not None and not numbers:
             print(
                 "[sms] no guardian numbers known — nothing to notify. "
                 "Check the guardian fetch succeeded at startup.",
@@ -246,7 +253,12 @@ class SMSAlertNotifier:
         numbers: list[str],
         backend: _BackendOutcome,
     ) -> None:
-        state = self._text_everyone(event, numbers) if numbers else SMS_NO_NUMBER
+        if self._sms is None:
+            state = SMS_UNAVAILABLE
+        elif numbers:
+            state = self._text_everyone(event, numbers)
+        else:
+            state = SMS_NO_NUMBER
         if self._on_delivery is None:
             return
 

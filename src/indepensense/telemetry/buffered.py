@@ -82,6 +82,12 @@ class BufferedTelemetryClient:
         max_queue_size: int = 500,
         retry_interval_s: float = 10.0,
         auth_retry_interval_s: float = 900.0,
+        # False when `inner` cannot reach the backend at all — the
+        # unprovisioned unit's NullTelemetryClient, which returns True so
+        # that undeliverable sends are not retried forever. Its True means
+        # "handled", not "delivered", so `on_first_attempt` must not
+        # report it as success.
+        reaches_backend: bool = True,
     ):
         if max_queue_size < 1:
             raise ValueError("max_queue_size must be >= 1")
@@ -89,6 +95,7 @@ class BufferedTelemetryClient:
         self._max_queue_size = max_queue_size
         self._retry_interval_s = retry_interval_s
         self._auth_retry_interval_s = auth_retry_interval_s
+        self._reaches_backend = reaches_backend
 
         self._queue: deque[_QueueItem] = deque()
         self._lock = threading.Lock()
@@ -211,7 +218,7 @@ class BufferedTelemetryClient:
                 success = False
 
             if on_attempt is not None:
-                self._report_attempt(on_attempt, success)
+                self._report_attempt(on_attempt, success and self._reaches_backend)
                 item = (kind, payload, None)
 
             if success:
