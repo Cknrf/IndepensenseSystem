@@ -651,19 +651,89 @@ def test_the_waiting_blip_is_quieter_than_the_cues_but_still_audible():
     )
 
 
+def _a_weight(frequency_hz):
+    """IEC 61672 A-weighting as a linear gain, 1.0 at 1 kHz.
+
+    An approximation of how much quieter the ear hears each frequency.
+    It is what makes a 165 Hz buzz and a 520 Hz beep comparable at all:
+    by raw energy the old 200 Hz busy cue was well clear of the blip, and
+    it was still reported as inaudible.
+    """
+    import numpy as np
+
+    f2 = np.maximum(frequency_hz, 1.0) ** 2
+    gain = (12194.0 ** 2 * f2 ** 2) / (
+        (f2 + 20.6 ** 2)
+        * np.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2))
+        * (f2 + 12194.0 ** 2)
+    )
+    return gain * 10 ** (2.0 / 20)
+
+
+def _rendered_level_db(samples, samplerate: int = 22050) -> float:
+    """Perceived level of real samples, on the same scale as `_level_db`.
+
+    Measured rather than estimated, because the busy cue is not a sine:
+    its flutter and overtones put a different amount of energy behind
+    the same peak, and `_level_db` would misstate it.
+    """
+    import numpy as np
+
+    spectrum = np.fft.rfft(samples)
+    frequencies = np.fft.rfftfreq(len(samples), 1.0 / samplerate)
+    weighted = np.fft.irfft(spectrum * _a_weight(frequencies), len(samples))
+
+    seconds = len(samples) / samplerate
+    energy = np.sum(weighted ** 2) / samplerate * min(1.0, 0.2 / seconds)
+    # x2 so a 1.0-amplitude 1 kHz sine lasting 1 s reads 0 dB, like `_level_db`.
+    return float(10.0 * np.log10(2.0 * energy))
+
+
 def test_the_busy_cue_carries_over_the_waiting_blip():
     """It is the only cue played while something else is already
     happening — a press refused mid-command, with the blip ticking
-    underneath it. At the shared 0.3 amplitude and 200 Hz it was reported
+    underneath it. A 200 Hz tone at the shared 0.3 amplitude was reported
     as inaudible on the headset, so the margin over the background sound
     is the thing to hold onto if this is retuned.
-    """
-    busy = _level_db(audio._BUSY_CUE, audio._BUSY_AMPLITUDE)
-    blip = _level_db(audio._WAITING_TICK, audio._WAITING_AMPLITUDE)
 
-    assert busy > blip + 4.0, (
+    3 dB rather than more because a buzz cannot buy more without clipping
+    (see `_BUSY_AMPLITUDE`). The margin is weighted, so it is a margin the
+    ear hears, not one only the arithmetic sees.
+    """
+    pytest.importorskip("numpy")
+
+    busy = _rendered_level_db(audio._render_cue(
+        audio._BUSY_CUE, audio._BUSY_GAP_S, audio._BUSY_AMPLITUDE,
+        audio._buzz, 22050))
+    blip = _rendered_level_db(audio._render_cue(
+        audio._WAITING_TICK, 0.03, audio._WAITING_AMPLITUDE,
+        audio._tone, 22050))
+
+    assert busy > blip + 3.0, (
         f"the busy cue is only {busy - blip:.1f} dB over the waiting blip; "
         "an answer to a press has to carry over the background tick"
+    )
+
+
+def test_the_busy_buzz_does_not_clip():
+    """Clipping a buzz turns it into a harsh crackle, which sounds like a
+    broken speaker rather than a refusal."""
+    pytest.importorskip("numpy")
+    import numpy as np
+
+    samples = audio._render_cue(audio._BUSY_CUE, audio._BUSY_GAP_S,
+                                audio._BUSY_AMPLITUDE, audio._buzz, 22050)
+
+    assert np.max(np.abs(samples)) <= 0.95
+
+
+def test_the_busy_and_stop_cues_have_different_rhythms():
+    """Both are two pulses, the same count that made the original busy
+    cue indistinguishable from the stop cue. Pitch and timbre now keep
+    them apart, and a clearly longer gap is the third axis — the one the
+    ear reads first on sounds this short."""
+    assert audio._BUSY_GAP_S >= 2 * 0.03, (
+        "the busy cue's gap has drifted to the stop cue's 30 ms"
     )
 
 

@@ -17,10 +17,13 @@ What to check, in this order:
      final — something being set down — and must NOT be mistakable for the
      falling chime, which already means "recording ended". The two can
      occur within seconds of each other in one exchange.
-  3. **Busy cue** answers a press that was refused — one long low buzz.
-     It must not be mistakable for the **waiting blip**, which is the
-     only other single-tone cue. That pairing is new: the busy cue used
-     to be two beeps and shared its shape with the stop cue instead.
+  3. **Busy cue** answers a press that was refused — two short buzzes,
+     like a phone rejecting a wrong passcode. It must not be mistakable
+     for the **stop cue**: both are two pulses, which is the exact
+     collision the original busy cue had. Pitch, timbre and a longer gap
+     are meant to keep them apart; this is where to check that they do.
+     It must also carry over the waiting blip, which it often plays on
+     top of.
   4. **Waiting blip** must be *audible but not demanding*. It repeats
      every ~1.2 s while the device thinks, so it should sit under the
      other cues without disappearing. It originally did disappear — 45 ms
@@ -74,13 +77,12 @@ def main() -> None:
         time.sleep(_GAP_S)
 
     # Two pairs, not one. The stop/falling-chime pair share a falling
-    # contour; the busy/waiting pair share being a single tone, which they
-    # did not until the busy cue stopped being two beeps.
+    # contour; the stop/busy pair share a count of two pulses.
     for first_label, first, second_label, second in (
         ("falling chime", lambda: play_chime(rising=False),
          "stop cue", play_stop_cue),
-        ("busy cue", play_busy_cue,
-         "waiting blip", play_waiting_tick),
+        ("stop cue", play_stop_cue,
+         "busy cue", play_busy_cue),
     ):
         print(f"\nThe {first_label} and the {second_label}, back to back —")
         print("they share a shape, so this is where confusion would show:\n")

@@ -2174,13 +2174,13 @@ class App:
         return self._voice_cancel_reason or "unknown"
 
     def _play_cue(self, cue) -> None:
-        """Play a short audio cue, never raising. 200-450 ms.
+        """Play a short audio cue, never raising. 200-260 ms.
 
         Synchronous, on whichever thread pressed the button — gpiozero's
         callback thread, never the main loop. That matters most for the
-        busy cue, the longest at 450 ms: gpiozero serialises callbacks
+        busy cue, the longer at 260 ms: gpiozero serialises callbacks
         per device, so a user mashing PTT while the pipeline is busy gets
-        one cue every 450 ms rather than a pile of overlapping tones.
+        one cue every 260 ms rather than a pile of overlapping tones.
 
         Audio only, no motors. The three vibration motors already carry
         two meanings — turn direction and obstacle proximity — and a third

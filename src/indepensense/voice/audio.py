@@ -595,10 +595,87 @@ def _tone(
     return wave.astype(np.float32)
 
 
+# Overtones of a buzz pulse, as (harmonic, relative level). The fundamental
+# alone is no use on an earbud: a small driver barely reproduces 165 Hz,
+# and the ear needs 10-15 dB more level down there for the same loudness.
+# The ear rebuilds a missing fundamental from its harmonics, so these
+# keep the sound reading as low while putting most of the energy at
+# 330-825 Hz, where both the driver and the ear work. The 3rd and 5th
+# are deliberately strong — that is the rasp that makes it a buzz.
+_BUZZ_HARMONICS = ((1, 1.0), (2, 0.8), (3, 0.7), (5, 0.4))
+
+# How fast the buzz rattles. A vibration motor's sound is not a steady
+# tone but one fluttering at a few tens of hertz, slower than pitch and
+# faster than rhythm, and that flutter is what the ear files as "buzz".
+_BUZZ_FLUTTER_HZ = 28.0
+
+
+def _buzz(
+    frequency_hz: float,
+    duration_s: float,
+    samplerate: int,
+    amplitude: float = 0.3,
+):
+    """One vibration-motor pulse, as a float32 array peaking at `amplitude`.
+
+    Takes `_tone`'s arguments so `play_cue` can use either. Peak, not
+    level: the flutter and overtones mean a buzz carries less energy
+    than a sine with the same peak, so the two amplitudes are not
+    comparable — the unit tests compare rendered energy instead.
+
+    The release is longer than `_tone`'s 8 ms fade on purpose. A buzz
+    that stops dead sounds cut off, and a cue that sounds cut off reads
+    as a fault on a device the user cannot see.
+    """
+    import numpy as np
+
+    n_samples = int(samplerate * duration_s)
+    t = np.arange(n_samples) / samplerate
+    wave = sum(
+        level * np.sin(2.0 * np.pi * harmonic * frequency_hz * t)
+        for harmonic, level in _BUZZ_HARMONICS
+    )
+    wave *= 0.55 + 0.45 * np.sin(2.0 * np.pi * _BUZZ_FLUTTER_HZ * t) ** 2
+
+    attack, release = int(0.006 * samplerate), int(0.025 * samplerate)
+    if n_samples > attack + release:
+        wave[:attack] *= np.linspace(0.0, 1.0, attack)
+        wave[-release:] *= np.linspace(1.0, 0.0, release)
+    wave *= amplitude / np.max(np.abs(wave))
+    return wave.astype(np.float32)
+
+
+def _render_cue(
+    steps: list[tuple[float, float]],
+    gap_s: float,
+    amplitude: float,
+    timbre,
+    samplerate: int,
+):
+    """The samples `play_cue` would play, or `None` for an empty cue.
+
+    Separate so the unit tests can measure exactly what reaches the
+    speaker rather than estimating it from the step list.
+    """
+    import numpy as np
+
+    silence = np.zeros(int(gap_s * samplerate), dtype="float32")
+
+    parts: list = []
+    for frequency_hz, duration_s in steps:
+        if parts:
+            parts.append(silence)
+        parts.append(timbre(frequency_hz, duration_s, samplerate, amplitude))
+    if not parts:
+        return None
+    return np.concatenate(parts)
+
+
 def play_cue(
     steps: list[tuple[float, float]],
     gap_s: float = 0.03,
     amplitude: float = 0.3,
+    timbre=_tone,
 ) -> None:
     """Play a sequence of `(frequency_hz, duration_s)` tones as one cue.
 
@@ -608,23 +685,18 @@ def play_cue(
     sounds apart — the wearer has to identify these without seeing
     anything, and two similar sweeps would blur together.
 
+    `timbre` renders each step: `_tone` for a pure beep, `_buzz` for a
+    vibration pulse.
+
     Takes the same playback lock as everything else here and generates
     its own audio, so it is safe from any thread.
     """
-    import numpy as np
-
     samplerate = 22050
-    silence = np.zeros(int(gap_s * samplerate), dtype="float32")
-
-    parts: list = []
-    for frequency_hz, duration_s in steps:
-        if parts:
-            parts.append(silence)
-        parts.append(_tone(frequency_hz, duration_s, samplerate, amplitude))
-    if not parts:
+    audio = _render_cue(steps, gap_s, amplitude, timbre, samplerate)
+    if audio is None:
         return
 
-    audio = np.concatenate(parts).reshape(-1, 1)
+    audio = audio.reshape(-1, 1)
     with _playback_lock:
         _stop_requested.clear()
         # Like `play_chime`, deliberately does not set `_playing`: a cue is
@@ -640,48 +712,42 @@ def play_cue(
 # screen to disambiguate them.
 _STOP_CUE = [(660.0, 0.07), (440.0, 0.10)]
 
-# One long low buzz. Says the press was heard and refused, which is the
-# thing a silently-ignored button cannot say — and a button that appears
-# to do nothing reads as broken hardware.
+# Two short buzzes, like a phone shaking its head at a wrong passcode.
+# Says the press was heard and refused, which is the thing a silently-
+# ignored button cannot say — and a button that appears to do nothing
+# reads as broken hardware. Most people already know a phone's rejection
+# buzz, so this one needs no explaining.
 #
-# This was two flat 60 ms beeps at 350 Hz, chosen for the telephone
-# busy-signal convention, and it was reported as indistinguishable from
-# the stop cue. The reason was not pitch: flat-350 against falling-660-to-
-# 440 is a large difference written down, but both were two short beeps
-# 30 ms apart, and at 60 ms a tone barely has a pitch to hear at all.
-# Rhythm and count are what the ear uses at this duration, and on those
-# the two cues were identical. Chosen by ear from five candidates in
-# `busy_cue_audition`, all of which varied rhythm rather than frequency.
+# History, because each version fixed the last one's failure:
 #
-# Being a single tone, it shares a shape with the waiting blip rather
-# than with the other cues, so those two are what must now be kept apart.
-# They are, on three axes at once: 200 Hz against 520 is nearly an octave
-# and a half, 450 ms against 120 is nearly four times as long, and the
-# blip recurs every 1.2 s while this is heard once. The unit tests pin
-# the first two; the third is a property of the caller, not the sound.
+#   1. Two flat 60 ms beeps at 350 Hz. Indistinguishable from the stop
+#      cue: both were two short beeps 30 ms apart, and at 60 ms a tone
+#      barely has a pitch. Rhythm and count are what the ear reads first.
+#   2. One 280 ms buzz at 200 Hz (`busy_cue_audition`, C). Distinct, but
+#      too quiet on the headset — 200 Hz is the band where the ear is
+#      least sensitive and a small earbud rolls off.
+#   3. The same tone at 450 ms and 0.55 (`--loudness`, J). Audible, but
+#      a 450 ms flat tone sounds like the device starting something
+#      rather than declining, and it does not feel like a "no".
+#   4. This. Chosen by ear from six tactile candidates — knocks, taps
+#      and buzzes — on the grounds that it is the most immediately
+#      understood. The candidates were played in a browser, from a port of
+#      this synthesis; confirm on the headset with `cue_test`.
 #
-# It was 280 ms at the shared 0.3 amplitude and was reported as too quiet
-# to hear on the headset. 200 Hz is the worst band available: the ear
-# needs roughly 10-15 dB more level there than at 1 kHz for the same
-# loudness, and a small earbud driver rolls off underneath that.
+# It is two pulses, the same count as the stop cue, which is exactly
+# what sank version 1. It is kept apart by everything else: a fundamental
+# two octaves below the stop cue's first tone, a buzz against pure tones,
+# and a 70 ms gap against 30. `cue_test` plays the two back to back
+# because that is the pair to listen for.
 #
-# Raising the pitch is not available. The octave rule above forbids
-# anything between 260 and 1040 Hz, so the choice was to stay low or to
-# jump over the blip entirely and give up the convention that a low sound
-# means "no". Auditioned as F-J in `busy_cue_audition --loudness`; J won.
-#
-# J buys its audibility two ways, and only one of them is loudness.
-# Amplitude 0.55 against 0.3 is a genuine +5.3 dB. The extra duration is
-# not: the ear integrates over roughly 200 ms, so 450 ms is no *louder*
-# than 280: it is merely harder to miss, which for a refusal is the
-# property that actually matters. Do not read the length as volume if
-# this is retuned again.
-#
-# The cost is that a refusal now takes 450 ms to say, which is long
-# enough to read as the device doing something rather than declining.
-# That was judged acceptable against not being heard at all.
-_BUSY_CUE = [(200.0, 0.45)]
-_BUSY_AMPLITUDE = 0.55
+# Peak 0.9 is close to the most it can take without clipping. It has to
+# be that loud: a fluttering pulse has much less energy than a sine with
+# the same peak, and this cue must carry over the waiting blip it often
+# plays on top of. The stronger upper overtones in `_BUZZ_HARMONICS` are
+# for the same reason.
+_BUSY_CUE = [(165.0, 0.09), (165.0, 0.10)]
+_BUSY_GAP_S = 0.07
+_BUSY_AMPLITUDE = 0.9
 
 
 def play_stop_cue() -> None:
@@ -692,11 +758,12 @@ def play_stop_cue() -> None:
 def play_busy_cue() -> None:
     """Tell the user a press was heard but cannot be acted on right now.
 
-    Louder than the shared default, which the other press cues use. This
+    Buzzed rather than beeped, and louder than the shared default. This
     one competes with whatever made the device busy in the first place —
     it is the only cue played while something else is already happening.
     """
-    play_cue(_BUSY_CUE, amplitude=_BUSY_AMPLITUDE)
+    play_cue(_BUSY_CUE, gap_s=_BUSY_GAP_S, amplitude=_BUSY_AMPLITUDE,
+             timbre=_buzz)
 
 
 # A single soft blip, repeated by the caller while the device is working.
