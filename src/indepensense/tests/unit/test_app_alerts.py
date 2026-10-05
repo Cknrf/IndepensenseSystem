@@ -693,3 +693,52 @@ def test_a_real_press_buzzes_and_releases_the_warning_lock(app, monkeypatch):
     acquired = app._warning_lock.acquire(timeout=2.0)
     assert acquired, "the emergency ack left _warning_lock held"
     app._warning_lock.release()
+
+
+def test_offline_with_a_refusing_modem_the_wearer_hears_nobody_was_told(
+    tmp_path, app, monkeypatch,
+):
+    """The production chain — notifier over the *buffered* client — with
+    both channels down. The buffered client returns True on queueing, and
+    reporting that as delivery made the wearer hear "your guardian was
+    notified online" when nobody had been told anything, and kept the
+    button from re-arming for a retry."""
+    from indepensense.telemetry.buffered import BufferedTelemetryClient
+
+    cache = tmp_path / "guardians.json"
+    cache.write_text(json.dumps({
+        "guardians": [{"name": "Maria", "contactNumber": "09171234567", "role": "parent"}]
+    }))
+    spoken = []
+    monkeypatch.setattr(app, "_announce",
+                        lambda text, critical=False: spoken.append(text))
+    buffered = BufferedTelemetryClient(
+        MockTelemetryClient(succeed=False), retry_interval_s=60.0,
+    )
+    try:
+        app.alert_sink = SMSAlertNotifier(
+            inner=buffered,
+            sms=MockSMSSender(fail_numbers={"+639171234567"}),
+            guardians=GuardianDirectory(
+                base_url=TEST_BACKEND_URL, credential=make_credential(),
+                cache_path=cache,
+            ),
+            event_type_values=SMS_EVENT_TYPES,
+            on_delivery=app._on_alert_delivery,
+        )
+        app._last_emergency_fired = time.monotonic()
+
+        app.alert_sink.send_alert(AlertEvent(
+            device_id="dev-1", event_type=EventType.EMERGENCY_ALERT,
+            latitude=14.58, longitude=120.97,
+            occurred_at=datetime.now(timezone.utc),
+        ))
+
+        expected = messages.get("emergency.delivery.all_failed",
+                                app.language.current)
+        assert _wait_for(lambda: expected in spoken), f"heard {spoken!r}"
+        assert app._last_emergency_fired == float("-inf"), (
+            "the button was not re-armed for a retry"
+        )
+    finally:
+        buffered.close(drain_timeout_s=0.1)

@@ -13,6 +13,7 @@ import requests
 from indepensense.messaging.mock import MockSMSSender
 from indepensense.telemetry.base import AlertEvent, EventType
 from indepensense.conftest import TEST_BACKEND_URL, make_credential
+from indepensense.telemetry.buffered import BufferedTelemetryClient
 from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.mock import MockTelemetryClient
 from indepensense.telemetry.sms_alerts import (
@@ -327,3 +328,44 @@ def test_no_callback_keeps_the_old_silent_behaviour(tmp_path):
     )
     assert notifier.send_alert(_alert()) is True
     assert _wait_until(lambda: notifier.sms_sent_count == 1)
+
+
+# --- the production wiring: a buffered inner client ---------------------------
+#
+# The runtime wraps BufferedTelemetryClient, whose send_alert returns True
+# on queueing. Reporting that as the backend result made `backend_ok`
+# permanently True: offline with a refusing modem, the wearer heard "your
+# guardian was notified online" when nobody had been told anything.
+
+def _deliver_buffered(tmp_path, *, backend_ok, fail_numbers=frozenset()):
+    received, on_delivery = _report_collector()
+    buffered = BufferedTelemetryClient(
+        MockTelemetryClient(succeed=backend_ok), retry_interval_s=60.0,
+    )
+    try:
+        notifier = SMSAlertNotifier(
+            buffered,
+            MockSMSSender(fail_numbers=set(fail_numbers)),
+            _directory(tmp_path, "09171234567"),
+            SMS_EVENT_TYPES,
+            on_delivery=on_delivery,
+        )
+        assert notifier.send_alert(_alert()) is True   # queued
+        assert _wait_until(lambda: len(received) == 1), "no delivery report arrived"
+        return received[0][1]
+    finally:
+        buffered.close(drain_timeout_s=0.1)
+
+
+def test_a_buffered_backend_that_is_down_is_reported_as_down(tmp_path):
+    delivery = _deliver_buffered(
+        tmp_path, backend_ok=False, fail_numbers={"+639171234567"},
+    )
+    assert delivery.backend_ok is False
+    assert delivery.sms == SMS_FAILED
+
+
+def test_a_buffered_backend_that_is_up_is_reported_as_up(tmp_path):
+    delivery = _deliver_buffered(tmp_path, backend_ok=True)
+    assert delivery.backend_ok is True
+    assert delivery.sms == SMS_SENT

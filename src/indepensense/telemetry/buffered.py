@@ -16,7 +16,10 @@ Wraps any `TelemetryClient` (typically `NestJSTelemetryClient`) with:
 Semantics of the returned booleans:
 
 - `send_alert(event)` — always returns True. Alerts are always accepted
-  because they are safety-critical.
+  because they are safety-critical. That True means "queued", never
+  "delivered" — a caller that has to tell a person whether the alert
+  reached anyone passes `on_first_attempt` and hears the real outcome
+  of the first try (see `SMSAlertNotifier`).
 - `send_heartbeat(info)` — returns True when queued, False when the
   queue is at capacity AND contains no heartbeats to evict (i.e. the
   queue is saturated with alerts and this heartbeat is discarded).
@@ -49,7 +52,7 @@ shutdowns.
 import sys
 import threading
 from collections import deque
-from typing import Union
+from typing import Callable, Union
 
 from indepensense.telemetry.base import (
     AlertEvent,
@@ -59,8 +62,13 @@ from indepensense.telemetry.base import (
 )
 
 
-# Internal queue item: either ("alert", AlertEvent) or ("heartbeat", IntervalInformation)
-_QueueItem = tuple[str, Union[AlertEvent, IntervalInformation]]
+# Called once with whether the first delivery attempt of an alert succeeded.
+_AttemptCallback = Callable[[bool], None]
+
+# Internal queue item: ("alert", AlertEvent, callback-or-None) or
+# ("heartbeat", IntervalInformation, None). The callback is dropped after
+# it fires, so a retried alert does not report twice.
+_QueueItem = tuple[str, Union[AlertEvent, IntervalInformation], _AttemptCallback | None]
 
 
 class BufferedTelemetryClient:
@@ -99,8 +107,18 @@ class BufferedTelemetryClient:
 
     # ------- public API (matches TelemetryClient protocol) -----------------
 
-    def send_alert(self, event: AlertEvent) -> bool:
+    def send_alert(
+        self,
+        event: AlertEvent,
+        on_first_attempt: _AttemptCallback | None = None,
+    ) -> bool:
         """Queue an alert. Always accepted (never dropped, however full).
+
+        `on_first_attempt`, if given, is called from the worker thread with
+        the result of the first try to deliver this alert. Only the first:
+        retries continue in the background, but the caller is deciding what
+        to tell someone *now*, and "it did not get through yet" is the
+        honest answer to that question.
 
         If the queue is at capacity, evicts the oldest HEARTBEAT to make
         room. If the queue is full of alerts (very rare — implies the
@@ -112,7 +130,7 @@ class BufferedTelemetryClient:
             if len(self._queue) >= self._max_queue_size:
                 self._evict_oldest_heartbeat_locked()   # best-effort, may be a no-op
             # Alerts jump to the front.
-            self._queue.appendleft(("alert", event))
+            self._queue.appendleft(("alert", event, on_first_attempt))
         self._wakeup.set()
         return True
 
@@ -126,7 +144,7 @@ class BufferedTelemetryClient:
                     # Queue is 100% alerts and at capacity — drop this heartbeat.
                     self.dropped_heartbeats += 1
                     return False
-            self._queue.append(("heartbeat", info))
+            self._queue.append(("heartbeat", info, None))
         self._wakeup.set()
         return True
 
@@ -161,7 +179,7 @@ class BufferedTelemetryClient:
                 self._wakeup.clear()
                 continue
 
-            kind, payload = item
+            kind, payload, on_attempt = item
             retry_after = self._retry_interval_s
             try:
                 if kind == "alert":
@@ -187,6 +205,10 @@ class BufferedTelemetryClient:
                 # queue to keep making progress instead of crashing the worker.
                 print(f"[telemetry-worker] inner client raised: {exc}", file=sys.stderr)
                 success = False
+
+            if on_attempt is not None:
+                self._report_attempt(on_attempt, success)
+                item = (kind, payload, None)
 
             if success:
                 # A success after a rejection means the unit was
@@ -219,6 +241,15 @@ class BufferedTelemetryClient:
 
     # ------- helpers -------------------------------------------------------
 
+    @staticmethod
+    def _report_attempt(callback: _AttemptCallback, success: bool) -> None:
+        """Run a caller's callback without letting it kill the worker."""
+        try:
+            callback(success)
+        except Exception as exc:
+            print(f"[telemetry-worker] attempt callback raised: {exc}",
+                  file=sys.stderr)
+
     def _pop_next(self) -> _QueueItem | None:
         """Pop the next item to send. Returns None if the queue is empty."""
         with self._lock:
@@ -229,7 +260,7 @@ class BufferedTelemetryClient:
     def _evict_oldest_heartbeat_locked(self) -> bool:
         """Remove the oldest heartbeat from the queue. Assumes lock is held.
         Returns True if a heartbeat was evicted, False if none exist."""
-        for i, (kind, _payload) in enumerate(self._queue):
+        for i, (kind, _payload, _callback) in enumerate(self._queue):
             if kind == "heartbeat":
                 del self._queue[i]
                 self.dropped_heartbeats += 1
