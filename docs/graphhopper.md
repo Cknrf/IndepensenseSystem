@@ -131,6 +131,93 @@ server:
       bind_host: 0.0.0.0
 ```
 
+## The foot model is ours, not GraphHopper's default
+
+`deploy/graphhopper/foot.json` is GraphHopper 11's bundled foot model
+(extractable with `unzip -p graphhopper-web-11.0.jar
+com/graphhopper/custom_models/foot.json`) with **one rule added**:
+
+```json
+{ "if": "road_class == SERVICE", "multiply_by": "0.6" }
+```
+
+### Why
+
+Short frontage-road stubs run parallel to Philippine national highways
+and connect at nearly every junction. Under the stock weighting the
+router took whichever of the two was a few metres shorter between each
+pair of junctions, so a 1.6 km walk weaved across the highway eight
+times:
+
+```
+    74 m  President Jose P. Laurel Highway
+    18 m  (unnamed)     Turn left     <- hop off
+    59 m  (unnamed)
+    19 m  (unnamed)     Turn right    <- hop back
+   247 m  President Jose P. Laurel Highway
+```
+
+Each weave is a road crossing, announced to someone who cannot see it,
+and it bought nothing: the walker was already on the highway for 70% of
+the distance. Seventeen spoken instructions for 1.6 km is its own
+failure — Google and OSRM say four.
+
+### What it is worth
+
+One route, against two independent references:
+
+| model | distance | instructions |
+|---|---|---|
+| `trunk` excluded at import | 3.5 km, start snapped 230 m off | — |
+| profile as GraphHopper ships it | 1.57 km | 17 |
+| **+ `service` x 0.6** | **1.44 km** | **5** |
+| Google Maps | 1.4 km | ~4 |
+| OSRM (fossgis_osrm_foot) | 1.4 km | ~4 |
+
+Ten destinations around Lipa, to check it was not tuned to one journey
+(`routing/tests/manual/model_compare.py`):
+
+```
+10 routes: distance -0.48 km total, instructions -57 total
+No route got meaningfully worse.
+```
+
+Distance fell slightly, so the straighter routes are not being bought
+with extra walking.
+
+### Installing it
+
+```bash
+mkdir -p ~/graphhopper/custom_models
+cp ~/Desktop/thesis/IndepensenseSystem/deploy/graphhopper/foot.json \
+   ~/graphhopper/custom_models/
+```
+
+and in `config.yml`, under `graphhopper:`:
+
+```yaml
+  custom_models.directory: custom_models
+```
+
+That makes `custom_model_files: [foot.json]` resolve to the local copy
+instead of the one inside the JAR. The local file holds the **whole**
+model, not just the added rule, so it does not track upstream changes —
+re-extract and re-diff after a GraphHopper upgrade.
+
+**This needs a graph rebuild.** The weighting is baked into the
+contraction-hierarchy preparation, so editing the model changes nothing
+until the cache is rebuilt. Follow the section below.
+
+### A trap worth knowing
+
+A custom model sent **in a request** is *merged* with the profile's
+model, not substituted for it. Sending what looks like a copy of the
+stock model therefore applies `foot_priority` twice, and sending a model
+with a rule *removed* does not remove it. Both produce plausible numbers
+and wrong conclusions — the finding above took two false starts for
+exactly that reason. For request-level experiments send only the delta,
+and use an empty model as the baseline.
+
 ## Changing `ignored_highways` means rebuilding the graph
 
 The exclusion list is applied **at import**, so editing it has no effect
