@@ -58,16 +58,47 @@ forever with a request that can never succeed, so it switches to
 so the fault is distinguishable from "no network". Items stay queued
 throughout: if the unit is un-revoked, the backlog delivers.
 
+**Alerts survive a restart; heartbeats do not.** With `alert_store_path`
+set, every undelivered alert is also kept in a JSON file, and a new
+client re-queues whatever it finds there. The queue used to live in RAM
+only, so the moments most likely to have an alert waiting — an offline
+unit whose battery dies, or an app crash that systemd restarts — were the
+moments it was lost. Heartbeats stay in memory: they are superseded every
+interval, and writing one to the SD card every few seconds would wear it
+for data nobody needs after a restart.
+
+The file holds the complete set of undelivered alerts and is rewritten
+whole each time it changes: when an alert is queued, merged or
+delivered. It is written to a temp file, fsynced and renamed, so a power
+cut leaves either the old set or the new one, never half of either.
+Alerts are rare — one per fall, press or battery threshold — so the cost
+is a few small writes per event, not a stream.
+
+The write happens inside `send_alert`, on the caller's thread, so an
+alert is on disk before `send_alert` returns. For a fall that thread is
+the 100 Hz main loop, and the write blocks it for a few milliseconds. That
+is accepted on purpose: the alternative, writing from the worker, leaves
+the alert in RAM only while the worker is stuck in a 5 s network timeout,
+which is exactly when the link is bad. One loop cycle is lost straight
+after a fall has already been detected; nothing is lost from the alert.
+
+Delivery is at least once, not exactly once. If the process dies after
+the backend has stored an alert but before the file is rewritten, the
+alert is sent again on restart and the guardian sees it twice. A second
+copy of an emergency is a much smaller failure than none.
+
 Shutdown semantics: `close()` signals the worker to stop after draining
-what it can within the timeout. Anything still queued when the timeout
-expires is lost (data on RAM only; not persisted to disk). For a wearable
-this is acceptable — real losses come from SD wear, not from planned
-shutdowns.
+what it can within the timeout. Alerts still queued when it expires stay
+in the file and are sent by the next client; heartbeats are dropped.
 """
 import dataclasses
+import json
+import os
 import sys
 import threading
 from collections import deque
+from datetime import datetime
+from pathlib import Path
 from typing import Callable, Union
 
 from indepensense.telemetry.base import (
@@ -101,6 +132,9 @@ class BufferedTelemetryClient:
         # "handled", not "delivered", so `on_first_attempt` must not
         # report it as success.
         reaches_backend: bool = True,
+        # Where undelivered alerts are kept across restarts. None keeps
+        # them in memory only, which is what the unit tests want.
+        alert_store_path: Path | None = None,
     ):
         if max_queue_size < 1:
             raise ValueError("max_queue_size must be >= 1")
@@ -112,6 +146,11 @@ class BufferedTelemetryClient:
 
         self._queue: deque[_QueueItem] = deque()
         self._lock = threading.Lock()
+        self._alert_store_path = alert_store_path
+        # The alert the worker is sending right now. It is out of the
+        # queue while the request runs, and the store must still list it:
+        # a crash mid-send would otherwise drop it from the file.
+        self._in_flight: AlertEvent | None = None
         self._wakeup = threading.Event()
         self._shutdown = False
 
@@ -127,6 +166,17 @@ class BufferedTelemetryClient:
         # the startup log distinguish them so nobody spends an afternoon
         # debugging the cellular link over a revoked key.
         self.credential_rejected = False
+
+        # Before the worker starts, so nothing races the reload.
+        restored = _load_alerts(alert_store_path) if alert_store_path else []
+        for event in restored:
+            self._queue.append(("alert", event, None))
+        if restored:
+            print(
+                f"[telemetry] {len(restored)} undelivered alert(s) from before "
+                f"the restart — sending again.",
+                flush=True,
+            )
 
         self._worker = threading.Thread(target=self._run, name="telemetry-worker", daemon=True)
         self._worker.start()
@@ -161,6 +211,7 @@ class BufferedTelemetryClient:
                 self._evict_oldest_heartbeat_locked()   # best-effort, may be a no-op
             # Alerts jump to the front.
             self._queue.appendleft(("alert", event, on_first_attempt))
+            self._persist_alerts_locked()
         self._wakeup.set()
         return True
 
@@ -249,6 +300,9 @@ class BufferedTelemetryClient:
                     self.credential_rejected = False
                 if kind == "alert":
                     self.delivered_alerts += 1
+                    with self._lock:
+                        self._in_flight = None
+                        self._persist_alerts_locked()
                 else:
                     self.delivered_heartbeats += 1
                 continue
@@ -263,6 +317,9 @@ class BufferedTelemetryClient:
                 if kind == "alert" and index < len(self._queue):
                     index += 1
                 self._queue.insert(index, item)
+                # Back in the queue, so the store's contents are unchanged
+                # and there is nothing to rewrite.
+                self._in_flight = None
 
             # If we're shutting down, don't wait for the full retry interval —
             # exit as soon as the caller's drain timeout hits.
@@ -287,7 +344,10 @@ class BufferedTelemetryClient:
         with self._lock:
             if not self._queue:
                 return None
-            return self._queue.popleft()
+            item = self._queue.popleft()
+            if item[0] == "alert":
+                self._in_flight = item[1]
+            return item
 
     def _merge_pending_emergency_locked(
         self, event: AlertEvent, on_first_attempt: _AttemptCallback | None,
@@ -317,6 +377,28 @@ class BufferedTelemetryClient:
                 return merged, both
         return event, on_first_attempt
 
+    def _persist_alerts_locked(self) -> None:
+        """Rewrite the store with every undelivered alert. Lock held.
+
+        Failure is logged, not raised: the alert is still queued in memory
+        and will still be sent while this process lives. Refusing it over a
+        full or read-only SD card would turn a durability problem into a
+        lost emergency.
+        """
+        if self._alert_store_path is None:
+            return
+        pending = [] if self._in_flight is None else [self._in_flight]
+        pending += [payload for kind, payload, _cb in self._queue if kind == "alert"]
+        try:
+            _write_alerts(self._alert_store_path, pending)
+        except OSError as exc:
+            print(
+                f"[telemetry] could not save undelivered alerts to "
+                f"{self._alert_store_path}: {exc}. They will still be sent, "
+                f"but not if the device restarts first.",
+                file=sys.stderr, flush=True,
+            )
+
     def _first_heartbeat_index_locked(self) -> int:
         """Index just past the queued alerts. Assumes lock is held."""
         for i, (kind, _payload, _callback) in enumerate(self._queue):
@@ -333,3 +415,97 @@ class BufferedTelemetryClient:
                 self.dropped_heartbeats += 1
                 return True
         return False
+
+
+# ------- alert store ------------------------------------------------------
+
+def _alert_to_json(event: AlertEvent) -> dict:
+    return {
+        "device_id": event.device_id,
+        "event_type": event.event_type.value,
+        "latitude": event.latitude,
+        "longitude": event.longitude,
+        "occurred_at": event.occurred_at.isoformat(),
+    }
+
+
+def _alert_from_json(raw: dict) -> AlertEvent:
+    return AlertEvent(
+        device_id=raw["device_id"],
+        event_type=EventType(raw["event_type"]),
+        latitude=float(raw["latitude"]),
+        longitude=float(raw["longitude"]),
+        occurred_at=datetime.fromisoformat(raw["occurred_at"]),
+    )
+
+
+def _write_alerts(path: Path, alerts: list[AlertEvent]) -> None:
+    """Replace the store with `alerts`, or remove it when there are none.
+
+    Removed rather than left as `[]`, so an empty store and no store mean
+    the same thing and a unit with nothing pending has nothing on disk.
+
+    Temp file, fsync, rename, then fsync the directory. The rename is what
+    makes the swap atomic; the two fsyncs are what make it survive a power
+    cut, since without them ext4 can keep both the new contents and the
+    rename in cache for several seconds after `os.replace` returns.
+    """
+    if not alerts:
+        path.unlink(missing_ok=True)
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(temp, "w") as f:
+            json.dump([_alert_to_json(a) for a in alerts], f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp, path)
+    except OSError:
+        temp.unlink(missing_ok=True)
+        raise
+
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def _load_alerts(path: Path) -> list[AlertEvent]:
+    """Every alert in the store, oldest first, or none.
+
+    Never raises: a store that cannot be read must not stop the device
+    starting — fall detection matters more than a backlog. An unreadable
+    file is moved aside rather than overwritten, because what is in it
+    may be a real emergency someone has to recover by hand.
+    """
+    try:
+        raw = json.loads(path.read_text())
+        if not isinstance(raw, list):
+            raise ValueError(f"expected a list, got {type(raw).__name__}")
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as exc:
+        aside = path.with_suffix(path.suffix + ".corrupt")
+        print(
+            f"[telemetry] could not read undelivered alerts from {path}: "
+            f"{exc}. Moved to {aside} for inspection.",
+            file=sys.stderr, flush=True,
+        )
+        try:
+            os.replace(path, aside)
+        except OSError:
+            pass
+        return []
+
+    alerts = []
+    for entry in raw:
+        try:
+            alerts.append(_alert_from_json(entry))
+        except (TypeError, KeyError, ValueError) as exc:
+            # One malformed entry must not cost the others.
+            print(f"[telemetry] skipping malformed stored alert {entry!r}: {exc}",
+                  file=sys.stderr, flush=True)
+    return alerts
