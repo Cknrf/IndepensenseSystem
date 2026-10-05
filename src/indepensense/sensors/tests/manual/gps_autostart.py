@@ -122,7 +122,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         print(f"\n  AT+CGPSAUTO=1 -> {_send(ser, 'AT+CGPSAUTO=1')!r}")
-        print(f"  AT+CGPS=1     -> {_send(ser, 'AT+CGPS=1')!r}   (on, now)")
+
+        # Only switch GNSS on if it is off. `AT+CGPS=1` against a running
+        # receiver answers ERROR, which is correct behaviour and reads as
+        # a failure — this script printed that ERROR next to the word
+        # "on" and briefly looked like the enable had not worked.
+        running = _send(ser, "AT+CGPS?")
+        if running.startswith("+CGPS: 1"):
+            print(f"  AT+CGPS=1     -> skipped, already running ({running.splitlines()[0]})")
+        else:
+            print(f"  AT+CGPS=1     -> {_send(ser, 'AT+CGPS=1')!r}")
+
         print(f"\n  auto-start setting: {_send(ser, 'AT+CGPSAUTO?')!r}")
         print(
             "\nExpect `+CGPSAUTO: 1`. If it still reads 0, this firmware "
