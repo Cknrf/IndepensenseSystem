@@ -187,7 +187,7 @@ One route, against two independent references:
 |---|---|---|
 | `trunk` excluded at import | 3.5 km, start snapped 230 m off | — |
 | profile as GraphHopper ships it | 1.57 km | 17 |
-| **+ `service` x 0.6** | **1.44 km** | **5** |
+| **+ `service` x 0.6** | **1.40 km** | **5** |
 | Google Maps | 1.4 km | ~4 |
 | OSRM (fossgis_osrm_foot) | 1.4 km | ~4 |
 
@@ -201,6 +201,13 @@ No route got meaningfully worse.
 
 Distance fell slightly, so the straighter routes are not being bought
 with extra walking.
+
+Verified in production afterwards — graph rebuilt, contraction
+hierarchies on, no request-level model — at **1.4 km / 17 min with the
+start snapped 7 m from the requested point**, against 1.4 km / 19 min
+from both Google and OSRM. The rebuild is also self-evidencing: the
+contraction hierarchy came out at 1,476,846 shortcuts against 1,499,066
+for the previous weighting, so the model demonstrably took effect.
 
 ### Installing it
 
