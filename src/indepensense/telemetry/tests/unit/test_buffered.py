@@ -497,3 +497,190 @@ def test_a_merged_alert_still_reports_to_both_callers():
         assert buffered.delivered_alerts == 1
     finally:
         buffered.close(drain_timeout_s=0.5)
+
+
+# --- surviving a restart -----------------------------------------------------
+#
+# The queue used to be RAM only, so an offline unit whose battery died, or
+# whose app crashed and was restarted by systemd, silently lost every alert
+# it was still holding. These pin the replacement: an accepted alert is on
+# disk until the backend has it, and a new client picks it up.
+
+class _GatedTelemetryClient(_ScriptedTelemetryClient):
+    """Holds every alert send open until `release` is set — a request
+    stuck on a dead link, observable from the test."""
+
+    def __init__(self):
+        super().__init__()
+        self.sending = threading.Event()
+        self.release = threading.Event()
+
+    def send_alert(self, event: AlertEvent) -> bool:
+        self.sending.set()
+        self.release.wait(timeout=5.0)
+        return super().send_alert(event)
+
+
+def _stored(path) -> list[dict]:
+    import json
+
+    return json.loads(path.read_text()) if path.exists() else []
+
+
+def test_an_accepted_alert_is_on_disk_before_send_alert_returns(tmp_path):
+    """The guarantee the store exists for. Checked while the worker is
+    still stuck sending, so the file cannot have been written by
+    anything but `send_alert` itself."""
+    store = tmp_path / "pending_alerts.json"
+    inner = _GatedTelemetryClient()
+    buffered = BufferedTelemetryClient(inner, alert_store_path=store)
+    try:
+        buffered.send_alert(_make_alert())
+        assert [a["event_type"] for a in _stored(store)] == ["Fall Detection"]
+    finally:
+        inner.release.set()
+        buffered.close(drain_timeout_s=1.0)
+
+
+def test_an_alert_stays_stored_while_it_is_being_sent(tmp_path):
+    """The worker takes the alert out of the queue to send it. A crash
+    during that request must not be the one moment it is nowhere."""
+    store = tmp_path / "pending_alerts.json"
+    inner = _GatedTelemetryClient()
+    buffered = BufferedTelemetryClient(inner, alert_store_path=store)
+    try:
+        buffered.send_alert(_make_alert())
+        assert inner.sending.wait(timeout=2.0)
+        buffered.send_alert(_make_alert(EventType.LOW_BATTERY))   # rewrites the store
+        assert sorted(a["event_type"] for a in _stored(store)) == [
+            "Fall Detection", "Low Battery",
+        ]
+    finally:
+        inner.release.set()
+        buffered.close(drain_timeout_s=1.0)
+
+
+def test_a_delivered_alert_leaves_nothing_on_disk(tmp_path):
+    store = tmp_path / "pending_alerts.json"
+    buffered = BufferedTelemetryClient(
+        _ScriptedTelemetryClient(), retry_interval_s=0.01, alert_store_path=store,
+    )
+    try:
+        buffered.send_alert(_make_alert())
+        assert _wait_until(lambda: buffered.delivered_alerts == 1)
+        assert _wait_until(lambda: not store.exists())
+    finally:
+        buffered.close(drain_timeout_s=1.0)
+
+
+def test_an_alert_queued_offline_is_sent_after_a_restart(tmp_path):
+    """The scenario end to end: pressed with no network, the device
+    restarts, and the alert reaches the backend once it is online —
+    stamped with when it was pressed, not when it finally arrived."""
+    store = tmp_path / "pending_alerts.json"
+    offline = _ScriptedTelemetryClient(script=[False] * 1000)
+    before = BufferedTelemetryClient(
+        offline, retry_interval_s=0.01, alert_store_path=store,
+    )
+    before.send_alert(_emergency(minute=7, lat=14.5))
+    assert _wait_until(lambda: len(offline.alerts) >= 1)
+    before.close(drain_timeout_s=0.2)
+
+    online = _ScriptedTelemetryClient()
+    after = BufferedTelemetryClient(
+        online, retry_interval_s=0.01, alert_store_path=store,
+    )
+    try:
+        assert _wait_until(lambda: after.delivered_alerts == 1)
+        delivered = online.alerts[0]
+        assert delivered.event_type is EventType.EMERGENCY_ALERT
+        assert delivered.occurred_at == _emergency(minute=7, lat=14.5).occurred_at
+        assert delivered.latitude == 14.5
+        assert _wait_until(lambda: not store.exists())
+    finally:
+        after.close(drain_timeout_s=1.0)
+
+
+def test_heartbeats_are_never_written_to_disk(tmp_path):
+    """Superseded every interval; persisting them would wear the SD card
+    for data nobody needs after a restart."""
+    store = tmp_path / "pending_alerts.json"
+    buffered = BufferedTelemetryClient(
+        _ScriptedTelemetryClient(script=[False] * 1000),
+        retry_interval_s=0.01, alert_store_path=store,
+    )
+    try:
+        buffered.send_heartbeat(_make_heartbeat())
+        time.sleep(0.05)
+        assert not store.exists()
+    finally:
+        buffered.close(drain_timeout_s=0.2)
+
+
+def test_repeated_presses_are_stored_as_one_alert(tmp_path):
+    """The merge has to reach the file too, or a restart would bring
+    back every press as its own alert."""
+    store = tmp_path / "pending_alerts.json"
+    inner = _GatedTelemetryClient()
+    buffered = BufferedTelemetryClient(inner, alert_store_path=store)
+    try:
+        buffered.send_alert(_make_alert())                   # occupies the worker
+        assert inner.sending.wait(timeout=2.0)
+        buffered.send_alert(_emergency(minute=1, lat=14.1))
+        buffered.send_alert(_emergency(minute=2, lat=14.2))
+        emergencies = [a for a in _stored(store) if a["event_type"] == "Emergency Alert"]
+        assert len(emergencies) == 1
+        assert emergencies[0]["latitude"] == 14.2
+    finally:
+        inner.release.set()
+        buffered.close(drain_timeout_s=1.0)
+
+
+def test_an_unreadable_store_is_moved_aside_not_lost(tmp_path):
+    """It may hold a real emergency, so it is kept for a human to
+    recover — and it must not stop the device starting."""
+    store = tmp_path / "pending_alerts.json"
+    store.write_text("{not json")
+    buffered = BufferedTelemetryClient(_ScriptedTelemetryClient(), alert_store_path=store)
+    try:
+        assert buffered.queue_depth() == 0
+        aside = tmp_path / "pending_alerts.json.corrupt"
+        assert aside.read_text() == "{not json"
+    finally:
+        buffered.close(drain_timeout_s=1.0)
+
+
+def test_one_malformed_stored_alert_does_not_cost_the_others(tmp_path):
+    import json
+
+    store = tmp_path / "pending_alerts.json"
+    good = {"device_id": "dev-test", "event_type": "Fall Detection",
+            "latitude": 1.0, "longitude": 2.0,
+            "occurred_at": _TIMESTAMP.isoformat()}
+    store.write_text(json.dumps([{"event_type": "Nonsense"}, good]))
+    online = _ScriptedTelemetryClient()
+    buffered = BufferedTelemetryClient(
+        online, retry_interval_s=0.01, alert_store_path=store,
+    )
+    try:
+        assert _wait_until(lambda: buffered.delivered_alerts == 1)
+        assert online.alerts[0].latitude == 1.0
+    finally:
+        buffered.close(drain_timeout_s=1.0)
+
+
+def test_a_store_that_cannot_be_written_does_not_stop_the_alert(tmp_path):
+    """A full or read-only SD card is a durability problem, not a reason
+    to refuse an emergency."""
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("")
+    inner = _ScriptedTelemetryClient()
+    buffered = BufferedTelemetryClient(
+        inner, retry_interval_s=0.01,
+        alert_store_path=blocker / "pending_alerts.json",
+    )
+    try:
+        assert buffered.send_alert(_make_alert()) is True
+        assert _wait_until(lambda: buffered.delivered_alerts == 1)
+    finally:
+        buffered.close(drain_timeout_s=1.0)

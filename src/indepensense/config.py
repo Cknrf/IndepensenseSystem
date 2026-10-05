@@ -1115,6 +1115,12 @@ DEVICE_KEY_PATH = Path("/etc/indepensense/device.key")
 SAVED_PLACES_PATH = PROJECT_ROOT / "var" / "places.json"
 
 GUARDIAN_CACHE_PATH = PROJECT_ROOT / "var" / "guardians.json"
+
+# Alerts not yet accepted by the backend, so an offline unit that restarts
+# — battery died, app crashed and systemd brought it back — still delivers
+# them once it is online. Removed whenever nothing is pending. See
+# `telemetry/buffered.py`.
+PENDING_ALERTS_PATH = PROJECT_ROOT / "var" / "pending_alerts.json"
 GUARDIAN_FETCH_TIMEOUT_S = 10.0
 
 # Emergency SMS via the SIM7600's cellular connection.

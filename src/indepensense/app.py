@@ -162,6 +162,7 @@ from indepensense.config import (
     GEOCODE_CANDIDATE_LIMIT,
     GRAPHHOPPER_URL,
     GUARDIAN_CACHE_PATH,
+    PENDING_ALERTS_PATH,
     GUARDIAN_FETCH_TIMEOUT_S,
     HEADING_CHECK_INTERVAL_S,
     HEARTBEAT_INTERVAL_S,
@@ -926,6 +927,7 @@ class App:
         self.buffered = BufferedTelemetryClient(
             telemetry_client,
             reaches_backend=not isinstance(telemetry_client, NullTelemetryClient),
+            alert_store_path=PENDING_ALERTS_PATH,
         )
 
         # Guardian numbers + emergency SMS. The notifier decorates the
