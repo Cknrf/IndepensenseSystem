@@ -671,3 +671,25 @@ def test_a_partly_delivered_alert_does_not_re_arm(pressable):
     pressable._on_emergency_press()
 
     assert pressable.executor.calls == 1
+
+
+def test_a_real_press_buzzes_and_releases_the_warning_lock(app, monkeypatch):
+    """The press handler end to end, with the real feedback and real lock.
+
+    Every test above stubs `_play_emergency_feedback`, and the lock tests
+    call it directly — so none of them noticed the press handler handing
+    it to `_spawn_haptic`, which already holds `_warning_lock`. The ack
+    thread deadlocked on the second acquire: no buzz, no pulse, and the
+    lock held for good, freezing every obstacle warning and PTT after it.
+    """
+    app.executor = _StubExecutor()
+    monkeypatch.setattr(app, "_announce", lambda text, critical=False: None)
+
+    app._on_emergency_press()
+
+    assert _wait_for(lambda: app.buzzer.events and app.front_motor.events), (
+        "the emergency press neither buzzed nor vibrated"
+    )
+    acquired = app._warning_lock.acquire(timeout=2.0)
+    assert acquired, "the emergency ack left _warning_lock held"
+    app._warning_lock.release()
