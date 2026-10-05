@@ -65,19 +65,32 @@ from indepensense.routing.ranking import rank_candidates
 # runs it — and the candidate is only the delta.
 BASELINE_MODEL: dict = {"priority": [], "speed": []}
 
-# One rule. Short frontage-road stubs run parallel to the national
-# highway and connect at every junction, so with the profile's weighting
-# the router took whichever was a few metres shorter between each pair of
-# junctions — weaving across the highway eight times in 1.6 km. Each
-# weave is a road crossing announced to someone who cannot see it, and
-# the walker was already on the highway for 70% of the distance anyway,
-# so the weaving bought nothing.
+# The delta currently under test, layered on whatever the profile
+# already has. Update this when evaluating a new change; the baseline
+# above always means "the device as it runs today".
 #
-# Measured on that route: 1.57 km / 17 instructions -> 1.44 km / 5,
-# against 1.4 km / ~4 from both Google and OSRM.
+# **Round 2: trunk x 1.5.** Round 1's service penalty stopped the router
+# weaving across the highway between short frontage stubs, but it did
+# not stop it abandoning the corridor altogether. Going 2 km east the
+# router took 174 m of highway, detoured 1334 m through side roads, and
+# came back — 3.85 km and 21 instructions where OSRM walks 2.5 km in 5.
+#
+# Cause is the same `foot_priority` that makes trunk expensive per
+# metre. Once the alternative is a *network* of ordinary roads rather
+# than short stubs, the long way round wins. Multiplying trunk back up
+# cancels that.
+#
+# 1.5 is the smallest value that works: 1.5, 2.0 and 3.0 all produce the
+# identical route on both test journeys, so the effect saturates and a
+# larger number would only risk over-attracting to highways somewhere
+# untested.
+#
+#   trunk x1.0 (control)  1.45 km  6i   |  3.85 km  21i
+#   trunk x1.5            1.44 km  5i   |  2.52 km   5i
+#   OSRM, same points     1.4 km  ~4i   |  2.5 km    5
 CANDIDATE_MODEL = {
     "priority": [
-        {"if": "road_class == SERVICE", "multiply_by": "0.6"},
+        {"if": "road_class == TRUNK", "multiply_by": "1.5"},
     ],
 }
 
