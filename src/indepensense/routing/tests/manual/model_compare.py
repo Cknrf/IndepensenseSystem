@@ -49,40 +49,36 @@ from indepensense.config import GRAPHHOPPER_URL, PHOTON_URL
 from indepensense.routing.base import Coordinate, haversine_m
 from indepensense.routing.ranking import rank_candidates
 
-# GraphHopper's bundled foot model, as shipped in graphhopper-web-11.0.jar
-# at com/graphhopper/custom_models/foot.json. The Germany-specific
-# bridleway rule is dropped — it cannot fire here and only adds noise.
-STOCK_MODEL = {
-    "priority": [
-        {"if": "!foot_access || hike_rating >= 2", "multiply_by": "0"},
-        {"else": "", "multiply_by": "foot_priority"},
-        {"if": "mtb_rating > 3", "multiply_by": "0.7"},
-        {"if": "foot_road_access == PRIVATE", "multiply_by": "0.1"},
-    ],
-    "speed": [{"if": "true", "limit_to": "foot_average_speed"}],
-}
+# **A request custom model is MERGED with the profile's own model, not
+# substituted for it.** Everything sent here is multiplied on top of the
+# jar's foot.json, which `config.yml` already loads.
+#
+# That cost an hour of wrong conclusions. Sending a copy of the stock
+# model as a "baseline" applied `foot_priority` twice and reported the
+# baseline as 3.16 km / 29 instructions on a route the device really
+# walks in 1.57 / 17 — making every candidate look better than it was.
+# Worse, an early test that *removed* `foot_priority` appeared to change
+# nothing, because the profile's copy was still applied regardless; that
+# null result sent the investigation off in the wrong direction twice.
+#
+# So the baseline is an empty model — the profile exactly as the device
+# runs it — and the candidate is only the delta.
+BASELINE_MODEL: dict = {"priority": [], "speed": []}
 
-# The candidate. Two deliberate differences from stock, both measured:
+# One rule. Short frontage-road stubs run parallel to the national
+# highway and connect at every junction, so with the profile's weighting
+# the router took whichever was a few metres shorter between each pair of
+# junctions — weaving across the highway eight times in 1.6 km. Each
+# weave is a road crossing announced to someone who cannot see it, and
+# the walker was already on the highway for 70% of the distance anyway,
+# so the weaving bought nothing.
 #
-#   `foot_priority` removed. It rates how pleasant a way is to walk on,
-#   and scores `trunk` low. Philippine national highways are trunk, so
-#   every metre of the corridor the user actually walks cost several
-#   times a metre of anything beside it — and the router left the
-#   corridor entirely once the alternatives were also penalised
-#   (3.13 km / 25 instructions with it, 1.44 / 5 without).
-#
-#   `service` penalised. Short frontage-road stubs run parallel to the
-#   highway and connect at every junction. With distance-only cost the
-#   router took whichever was a few metres shorter between each pair of
-#   junctions, weaving across the highway eight times in 1.6 km. Each
-#   weave is a road crossing announced to someone who cannot see it.
+# Measured on that route: 1.57 km / 17 instructions -> 1.44 km / 5,
+# against 1.4 km / ~4 from both Google and OSRM.
 CANDIDATE_MODEL = {
     "priority": [
-        {"if": "!foot_access || hike_rating >= 2", "multiply_by": "0"},
-        {"if": "foot_road_access == PRIVATE", "multiply_by": "0.1"},
         {"if": "road_class == SERVICE", "multiply_by": "0.6"},
     ],
-    "speed": [{"if": "true", "limit_to": "foot_average_speed"}],
 }
 
 # Destinations around Lipa, chosen to exercise different surroundings
@@ -159,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     queries = args.destinations or list(DEFAULT_DESTINATIONS)
 
     print(f"origin: {origin.lat:.6f}, {origin.lon:.6f}")
-    print(f"{'destination':24}  {'stock':>14}  {'candidate':>14}   verdict")
+    print(f"{'destination':24}  {'profile':>14}  {'candidate':>14}   verdict")
     print("-" * 78)
 
     deltas: list[tuple[str, float, int]] = []
@@ -171,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         target = rank_candidates(hits, origin=origin, query=query,
                                  prefer_nearest=True)[0]
 
-        stock = _route(origin, target.coordinate, STOCK_MODEL)
+        stock = _route(origin, target.coordinate, BASELINE_MODEL)
         candidate = _route(origin, target.coordinate, CANDIDATE_MODEL)
         if stock is None or candidate is None:
             continue
