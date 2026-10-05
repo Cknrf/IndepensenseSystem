@@ -7,9 +7,13 @@ Wraps any `TelemetryClient` (typically `NestJSTelemetryClient`) with:
   single alert never waits behind a backlog of stale heartbeats.
 - **Retry on failure.** If the inner client returns False for any send,
   the item is re-queued for retry after `retry_interval_s` seconds.
-  Runs forever — the cellular link could be down for hours and the
-  first alert to succeed after reconnection is guaranteed to be the
-  oldest alert, not the newest heartbeat.
+  Runs forever — the cellular link could be down for hours, and an alert
+  is always retried before any heartbeat.
+- **No head-of-line blocking.** A failed item goes back *behind every
+  queued alert*, not to the very front. Putting it at the front meant an
+  item the backend always refuses — a heartbeat answered 400, say — was
+  retried forever while an alert queued behind it was never attempted at
+  all. Several failing alerts now take turns instead.
 - **Bounded queue.** If the queue fills (long network outage), the
   OLDEST heartbeats are dropped first. Alerts are never dropped.
 
@@ -223,14 +227,11 @@ class BufferedTelemetryClient:
                     self.delivered_heartbeats += 1
                 continue
 
-            # Failure: put the item back and wait before retrying.
-            # Alerts go back to the head; heartbeats go back too (they were
-            # popped from the head, they belong at the head).
+            # Failure: put the item back behind every queued alert, then
+            # wait before retrying. For a heartbeat that is still the front
+            # of the heartbeats, so they keep their order.
             with self._lock:
-                if kind == "alert":
-                    self._queue.appendleft(item)
-                else:
-                    self._queue.appendleft(item)
+                self._queue.insert(self._first_heartbeat_index_locked(), item)
 
             # If we're shutting down, don't wait for the full retry interval —
             # exit as soon as the caller's drain timeout hits.
@@ -256,6 +257,13 @@ class BufferedTelemetryClient:
             if not self._queue:
                 return None
             return self._queue.popleft()
+
+    def _first_heartbeat_index_locked(self) -> int:
+        """Index just past the queued alerts. Assumes lock is held."""
+        for i, (kind, _payload, _callback) in enumerate(self._queue):
+            if kind == "heartbeat":
+                return i
+        return len(self._queue)
 
     def _evict_oldest_heartbeat_locked(self) -> bool:
         """Remove the oldest heartbeat from the queue. Assumes lock is held.
