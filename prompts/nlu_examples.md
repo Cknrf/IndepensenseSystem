@@ -276,6 +276,12 @@ What commands does this device understand
 Pwede mo bang sabihin ang mga kaya mong gawin
 Gusto kong malaman kung ano ang magagawa mo
 
+# Questions ABOUT the emergency feature are help, not an emergency. They
+# share every content word with the emergency class, so they need anchors.
+How does the emergency alert work
+How do I use the emergency button
+Paano gamitin ang emergency button
+
 ## system.shutdown
 
 Power off
@@ -346,6 +352,12 @@ Basahin mo yung karatula
 Anong sabi ng papel na ito
 Pakibasa ang resibo
 Basahin mo nga ang nasa harap
+
+# "help me" + reading is a reading request, not a cry for help. Without
+# these, "help me read ..." sat closest to "Help me please".
+Help me read the label
+Help me read this letter
+Tulungan mo akong basahin ito
 
 ## place.list
 
@@ -669,6 +681,10 @@ Tagalog ba ang nakasulat dito
 Anong wika ito
 Mahirap ang Ingles para sa akin
 
+I enjoy watching Tagalog movies
+My favourite songs are in English
+Mahilig ako sa mga kantang Ingles
+
 ## __escalate__:other_place
 
 How far is the mall from here
@@ -698,6 +714,20 @@ Anong petsa ngayon
 Ilang araw na lang bago mag-bagong taon
 Sandali lang
 Huwag ka munang magsalita
+
+# Look-alikes of answerable classes that mean something else: an alarm is
+# not an alert, shutting a door is not shutting down, and "stop talking"
+# is not "stop navigating". Each sat within the margin of the wrong class.
+Set a timer for five minutes
+Wake me up in the morning
+Gisingin mo ako mamaya
+Close the window
+Shut the gate please
+Isara mo ang bintana
+Stop speaking for a while
+Quit talking
+Can you recognize faces
+Are you able to see in the dark
 
 ## __escalate__:chitchat
 
@@ -736,3 +766,9 @@ Pagod na ako
 Maganda ang panahon ngayon
 Magkano ang bigas
 Tawagan mo si nanay
+
+# Statements about the user's own phone or home, not questions about
+# this device. They share the device.status vocabulary.
+The battery of my phone is almost empty
+My cellphone needs charging
+Mahina na ang baterya ng cellphone ko
