@@ -131,15 +131,32 @@ server:
       bind_host: 0.0.0.0
 ```
 
-## The foot model is ours, not GraphHopper's default
+## The foot model adds one rule to GraphHopper's default
 
-`deploy/graphhopper/foot.json` is GraphHopper 11's bundled foot model
-(extractable with `unzip -p graphhopper-web-11.0.jar
-com/graphhopper/custom_models/foot.json`) with **one rule added**:
+`deploy/graphhopper/service_roads.json` is the whole of it:
 
 ```json
-{ "if": "road_class == SERVICE", "multiply_by": "0.6" }
+{ "priority": [ { "if": "road_class == SERVICE", "multiply_by": "0.6" } ] }
 ```
+
+It is **layered on** the bundled foot model rather than replacing it.
+`custom_model_files` takes a list and merges them in order, which is the
+same pattern the bundled model's own header documents
+(`[foot.json, foot_elevation.json]`). So upstream improvements to
+`foot.json` still arrive on a GraphHopper upgrade, and the diff that is
+ours stays one line.
+
+Copying the stock model into a local `foot.json` was tried first and
+GraphHopper refuses it outright:
+
+```
+Custom model file name 'foot.json' is already used for built-in
+profiles. Use another name
+```
+
+A good refusal — it is the same shadowing ambiguity that makes
+request-level merging confusing (see the trap at the end of this
+section).
 
 ### Why
 
@@ -189,7 +206,7 @@ with extra walking.
 
 ```bash
 mkdir -p ~/graphhopper/custom_models
-cp ~/Desktop/thesis/IndepensenseSystem/deploy/graphhopper/foot.json \
+cp ~/Desktop/thesis/IndepensenseSystem/deploy/graphhopper/service_roads.json \
    ~/graphhopper/custom_models/
 ```
 
@@ -199,10 +216,16 @@ and in `config.yml`, under `graphhopper:`:
   custom_models.directory: custom_models
 ```
 
-That makes `custom_model_files: [foot.json]` resolve to the local copy
-instead of the one inside the JAR. The local file holds the **whole**
-model, not just the added rule, so it does not track upstream changes —
-re-extract and re-diff after a GraphHopper upgrade.
+with the profile listing both files, built-in first:
+
+```yaml
+  profiles:
+    - name: foot
+      custom_model_files: [foot.json, service_roads.json]
+```
+
+`foot.json` still resolves from inside the JAR; `service_roads.json`
+comes from the directory above and is merged on top.
 
 **This needs a graph rebuild.** The weighting is baked into the
 contraction-hierarchy preparation, so editing the model changes nothing
