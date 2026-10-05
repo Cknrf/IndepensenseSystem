@@ -1,8 +1,13 @@
 """NMEA-0183 parser and SIM7600G-H GPS driver.
 
 The SIM7600G-H streams NMEA sentences on its dedicated GPS serial port
-(`/dev/ttyUSB1` on a Pi 5) at 115200 baud, once GPS has been enabled with
-`AT+CGPS=1` via one of the AT command ports. This module handles two
+— USB interface 1, `ttyUSB1` on a quiet boot — at 115200 baud, once GPS
+has been enabled with `AT+CGPS=1` via one of the AT command ports.
+
+Address it through `/dev/serial/by-id/...-if01-port0`, not by number:
+the modem re-enumerates and `ttyUSBn` is assigned in enumeration order,
+so the number moves while the interface does not. `config.py` holds the
+full path and explains the failure that prompted it. This module handles two
 sentence types:
 
 - `$GxRMC` — Recommended Minimum data: fix status, position, speed, course
@@ -151,7 +156,7 @@ class SIM7600GPS:
     """GPS driver for the SIM7600G-H over its dedicated NMEA serial port.
 
     Assumes GPS has already been enabled on the modem with `AT+CGPS=1`
-    (typically issued once per boot on `/dev/ttyUSB2` or `/dev/ttyUSB3`).
+    (typically issued once per boot on the AT port, USB interface 2 or 3).
     The driver reads all pending lines on each `read()` call, updates the
     last-seen RMC and GGA state, and returns a merged `GPSFix` if a
     position is known — otherwise `None`.
@@ -159,7 +164,9 @@ class SIM7600GPS:
 
     def __init__(
         self,
-        port: str = "/dev/ttyUSB1",
+        port: str = (
+            "/dev/serial/by-id/usb-SimTech__Incorporated_SimTech__Incorporated_0123456789ABCDEF-if01-port0"
+        ),
         baudrate: int = 115200,
         timeout_s: float = 0.5,
     ):

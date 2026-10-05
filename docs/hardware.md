@@ -625,7 +625,9 @@ Resolution and model size are `CAMERA_WIDTH` / `CAMERA_HEIGHT` and
 
 Plugs into a USB port. The dongle form factor was chosen precisely because
 the 40-pin header is full — a HAT would cover it and block wire access to
-everything above. GPS NMEA arrives on `/dev/ttyUSB1`.
+everything above. GPS NMEA arrives on USB interface 1 — address it as
+`/dev/serial/by-id/...-if01-port0`, never `/dev/ttyUSB1`: the modem
+re-enumerates and the number moves with it.
 Full setup, APN and antenna notes: **`docs/sim7600.md`**.
 
 ## Headset — USB

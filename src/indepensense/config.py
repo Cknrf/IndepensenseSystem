@@ -510,9 +510,34 @@ CRITICAL_BATTERY_STATE_PATH = PROJECT_ROOT / "var" / "critical_battery_alerted"
 # demo.
 LOW_BATTERY_STATE_PATH = PROJECT_ROOT / "var" / "low_battery_alerted"
 
-# SIM7600G-H — GPS serial port. ModemManager labels this as (gps) in
-# `mmcli -m <id>`. Enable GPS with `AT+CGPS=1` on /dev/ttyUSB2 first.
-SIM7600_GPS_PORT = "/dev/ttyUSB1"
+# SIM7600G-H — GPS serial port, addressed by USB interface rather than by
+# `ttyUSBn`.
+#
+# This was `/dev/ttyUSB1` and that name is not stable. The kernel assigns
+# `ttyUSBn` in enumeration order, and this modem re-enumerates: a dmesg
+# two seconds apart shows it drop `ttyUSB2`-`ttyUSB5` and come back as
+# `ttyUSB0`-`ttyUSB4`. The app then failed to open a path that no longer
+# pointed anywhere, reported "GPS unavailable", and every location intent
+# degraded for the rest of the run. ModemManager's own index moves for
+# the same reason — `mmcli -m 0` answers "couldn't find modem" once it
+# has climbed to 8.
+#
+# The `by-id` symlink is built from the USB descriptors plus the
+# interface number, so it survives re-enumeration; only its target moves.
+# `if01` is the NMEA stream on this module's composition (if00 diag, if01
+# NMEA, if02/if03 AT, if04 audio).
+#
+# The serial in the name is SIMCom's generic `0123456789ABCDEF`, not a
+# per-unit value, so a second SIM7600 on the same Pi would collide here.
+# One modem, so it holds — but it is why this is not simply "the stable
+# name" in general.
+#
+# Enable GPS with `AT+CGPS=1` on the AT port first — and note that port
+# is `if02`/`if03` by the same argument, whatever number it currently has.
+SIM7600_GPS_PORT = (
+    "/dev/serial/by-id/"
+    "usb-SimTech__Incorporated_SimTech__Incorporated_0123456789ABCDEF-if01-port0"
+)
 SIM7600_GPS_BAUDRATE = 115200
 
 # Mock ultrasonic sensor — used for off-device development on macOS

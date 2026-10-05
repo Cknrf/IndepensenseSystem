@@ -4,12 +4,18 @@ Requires the external GNSS antenna to be connected to the dongle's `GPS` SMA
 port, and GPS to be enabled on the modem first. To enable GPS one time:
 
     sudo apt install -y minicom
-    sudo minicom -D /dev/ttyUSB2 -b 115200
+    # AT port = USB interface 2. Resolve the current number first — the
+    # modem re-enumerates and ttyUSBn moves with it:
+    ls -l /dev/serial/by-id/ | grep if02
+    sudo minicom -D /dev/serial/by-id/usb-SimTech*-if02-port0 -b 115200
     # then type:  AT+CGPS=1<enter>
     # confirm reply: OK
     # Ctrl-A then X to exit
 
-After that, NMEA sentences stream on /dev/ttyUSB1.
+After that, NMEA streams on interface 1. This test opens
+`config.SIM7600_GPS_PORT`, which is the `by-id` path for that interface —
+if it raises FileNotFoundError, the modem is absent or has re-enumerated
+into a composition without serial ports, not "the GPS is broken".
 
 Run from repo root with:
     python -m indepensense.sensors.tests.manual.single_gps_test
