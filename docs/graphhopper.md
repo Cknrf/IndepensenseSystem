@@ -183,21 +183,43 @@ failure — Google and OSRM say four.
 
 One route, against two independent references:
 
-| model | distance | instructions |
+Route A: origin `13.937387,121.118698` -> the Jollibee 1.3 km away.
+Route B: the same origin -> a Jollibee 2.0 km east.
+
+| model | A | B |
 |---|---|---|
 | `trunk` excluded at import | 3.5 km, start snapped 230 m off | — |
-| profile as GraphHopper ships it | 1.57 km | 17 |
-| **+ `service` x 0.6** | **1.40 km** | **5** |
-| Google Maps | 1.4 km | ~4 |
-| OSRM (fossgis_osrm_foot) | 1.4 km | ~4 |
+| profile as GraphHopper ships it | 1.57 km / 17 instr | 3.85 km / 21 instr |
+| + `service` x 0.6 | 1.44 km / 5 | 3.85 km / 21 |
+| **+ `trunk` x 1.5 (shipped)** | **1.44 km / 5** | **2.52 km / 5** |
+| Google Maps | 1.4 km / ~4 | — |
+| OSRM (fossgis_osrm_foot) | 1.4 km / ~4 | 2.5 km / 5 |
+
+**Why two rules, not one.** The service penalty stopped the router
+weaving between the highway and the frontage stubs beside it, which
+fixed route A. It did nothing for route B, where the router took 174 m
+of highway, detoured 1334 m through side streets and came back —
+abandoning the corridor rather than weaving along it. Same cause
+(`foot_priority` scores `trunk` low), different symptom, and it only
+appears once the alternative is a *network* of ordinary roads rather
+than short stubs. Multiplying `trunk` back up fixes that.
+
+`trunk` x 1.5, 2.0 and 3.0 produce identical routes on both journeys, so
+the effect saturates; 1.5 is the smallest value that works and a larger
+one would only risk over-attracting to highways somewhere untested.
 
 Ten destinations around Lipa, to check it was not tuned to one journey
 (`routing/tests/manual/model_compare.py`):
 
 ```
-10 routes: distance -0.48 km total, instructions -57 total
-No route got meaningfully worse.
+service x 0.6 :  10 routes, -0.48 km total, -57 instructions, none worse
+trunk   x 1.5 :  10 routes, -1.27 km total,  -3 instructions, none worse
 ```
+
+The second round moves little on average — eight of ten routes are
+unchanged — because it only bites where a long stretch of highway
+competes with a parallel network. That is exactly the case it was added
+for, and it is the case a wearer hits walking along a national road.
 
 Distance fell slightly, so the straighter routes are not being bought
 with extra walking.
