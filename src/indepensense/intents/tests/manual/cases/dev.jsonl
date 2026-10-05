@@ -1,0 +1,198 @@
+// Development set for pipeline_probe. Tune the prompt and the bank against THIS file.
+// Labels follow prompts/nlu_system.md. Slots list only what must be right; a leading "the" is ignored.
+// Unsupported languages are scored on intent only: the executor answers "English and Tagalog only" for any other value.
+// Conventions: "where is X" -> place.locate; "how far is X" -> unknown; alerting/contacting the guardian -> emergency.trigger;
+// calling anyone else -> unknown; "stop" -> navigation.stop; "mute" -> system.volume down.
+
+// --- english ---
+{"group":"english","text":"Can you take me to the bus terminal","intent":"navigation.start","slots":{"location":"bus terminal","nearest":false}}
+{"group":"english","text":"I want to go to Robinsons Place","intent":"navigation.start","slots":{"location":"Robinsons Place","nearest":false}}
+{"group":"english","text":"Find me the closest drugstore","intent":"navigation.start","slots":{"location":"drugstore","nearest":true}}
+{"group":"english","text":"Lead me to the nearest ATM","intent":"navigation.start","slots":{"location":"ATM","nearest":true}}
+{"group":"english","text":"Directions to Lipa Cathedral please","intent":"navigation.start","slots":{"location":"Lipa Cathedral","nearest":false}}
+{"group":"english","text":"Let's head to my office","intent":"navigation.start","slots":{"location":"my office","nearest":false}}
+{"group":"english","text":"Please end the route now","intent":"navigation.stop","slots":{}}
+{"group":"english","text":"I don't need directions anymore","intent":"navigation.stop","slots":{}}
+{"group":"english","text":"You can stop guiding me now","intent":"navigation.stop","slots":{}}
+{"group":"english","text":"What was the last direction","intent":"navigation.repeat","slots":{}}
+{"group":"english","text":"Can you repeat that","intent":"navigation.repeat","slots":{}}
+{"group":"english","text":"Which street am I on","intent":"navigation.location","slots":{}}
+{"group":"english","text":"Where exactly am I right now","intent":"navigation.location","slots":{}}
+{"group":"english","text":"Are we there yet","intent":"navigation.progress","slots":{}}
+{"group":"english","text":"How many more meters until I arrive","intent":"navigation.progress","slots":{}}
+{"group":"english","text":"How long until we get there","intent":"navigation.progress","slots":{}}
+{"group":"english","text":"What's the battery level","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"english","text":"Do you have a GPS fix","intent":"device.status","slots":{"status_field":"gps"}}
+{"group":"english","text":"How strong is the signal","intent":"device.status","slots":{"status_field":"signal"}}
+{"group":"english","text":"Do I need to charge you","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"english","text":"Do you know what time it is right now","intent":"system.time","slots":{}}
+{"group":"english","text":"What's the time now","intent":"system.time","slots":{}}
+{"group":"english","text":"Describe what's in front of me","intent":"vision.describe","slots":{}}
+{"group":"english","text":"What's right ahead of me","intent":"vision.describe","slots":{}}
+{"group":"english","text":"Is there anything blocking my way","intent":"vision.describe","slots":{}}
+{"group":"english","text":"Read the label on this bottle","intent":"vision.read","slots":{}}
+{"group":"english","text":"What's written on this paper","intent":"vision.read","slots":{}}
+{"group":"english","text":"Can you read this receipt","intent":"vision.read","slots":{}}
+{"group":"english","text":"Change your language setting to English","intent":"system.language","slots":{"language":"en"}}
+{"group":"english","text":"Talk to me in Tagalog","intent":"system.language","slots":{"language":"tl"}}
+{"group":"english","text":"Switch to Spanish","intent":"system.language","slots":{}}
+{"group":"english","text":"Teach me how to use this thing","intent":"system.help","slots":{}}
+{"group":"english","text":"What commands can I say","intent":"system.help","slots":{}}
+{"group":"english","text":"Make your voice louder","intent":"system.volume","slots":{"direction":"up"}}
+{"group":"english","text":"Lower the volume please","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"english","text":"Volume to 80","intent":"system.volume","slots":{"level":80}}
+{"group":"english","text":"Set volume at fifty percent","intent":"system.volume","slots":{"level":50}}
+{"group":"english","text":"Save this place as the bakery","intent":"place.save","slots":{"label":"bakery"}}
+{"group":"english","text":"Mark this spot as my parking","intent":"place.save","slots":{"label":"my parking"}}
+{"group":"english","text":"Delete the saved place called gym","intent":"place.delete","slots":{"label":"gym"}}
+{"group":"english","text":"Remove my office from saved places","intent":"place.delete","slots":{"label":"my office"}}
+{"group":"english","text":"Read out all my saved places","intent":"place.list","slots":{}}
+{"group":"english","text":"Which places do you remember","intent":"place.list","slots":{}}
+{"group":"english","text":"Where is the barangay hall","intent":"place.locate","slots":{"label":"barangay hall"}}
+{"group":"english","text":"Where's my sister's house","intent":"place.locate","slots":{"label":"my sister's house"}}
+
+// --- tagalog ---
+{"group":"tagalog","text":"Pakidala mo ako sa palengke","intent":"navigation.start","slots":{"location":"palengke","nearest":false}}
+{"group":"tagalog","text":"Gabayan mo ako papunta sa simbahan","intent":"navigation.start","slots":{"location":"simbahan","nearest":false}}
+{"group":"tagalog","text":"Saan ang pinakamalapit na botika, dalhin mo ako doon","intent":"navigation.start","slots":{"location":"botika","nearest":true}}
+{"group":"tagalog","text":"Pakihatid mo ako pauwi sa bahay","intent":"navigation.start","slots":{"location":"bahay","nearest":false}}
+{"group":"tagalog","text":"Itigil mo na ang paggabay","intent":"navigation.stop","slots":{}}
+{"group":"tagalog","text":"Hindi mo na ako kailangang gabayan","intent":"navigation.stop","slots":{}}
+{"group":"tagalog","text":"Ano ulit yung direksyon","intent":"navigation.repeat","slots":{}}
+{"group":"tagalog","text":"Pakiulit mo nga yung huli","intent":"navigation.repeat","slots":{}}
+{"group":"tagalog","text":"Saan ako ngayon","intent":"navigation.location","slots":{}}
+{"group":"tagalog","text":"Anong kalye ang kinatatayuan ko","intent":"navigation.location","slots":{}}
+{"group":"tagalog","text":"Malapit na ba tayo sa pupuntahan","intent":"navigation.progress","slots":{}}
+{"group":"tagalog","text":"Ilang metro pa","intent":"navigation.progress","slots":{}}
+{"group":"tagalog","text":"Ilang porsyento na ang baterya","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"tagalog","text":"May signal ba ang device ngayon","intent":"device.status","slots":{"status_field":"signal"}}
+{"group":"tagalog","text":"Gumagana ba ang GPS mo ngayon","intent":"device.status","slots":{"status_field":"gps"}}
+{"group":"tagalog","text":"Anong oras na ngayon","intent":"system.time","slots":{}}
+{"group":"tagalog","text":"Pakisabi naman kung anong oras na","intent":"system.time","slots":{}}
+{"group":"tagalog","text":"Ano ang nasa harapan ko ngayon","intent":"vision.describe","slots":{}}
+{"group":"tagalog","text":"Ilarawan mo ang paligid ko","intent":"vision.describe","slots":{}}
+{"group":"tagalog","text":"Basahin mo ang nakasulat sa karatula","intent":"vision.read","slots":{}}
+{"group":"tagalog","text":"Ano ang nakalagay sa papel na ito","intent":"vision.read","slots":{}}
+{"group":"tagalog","text":"Mag-Tagalog ka","intent":"system.language","slots":{"language":"tl"}}
+{"group":"tagalog","text":"Gawin mong Ingles ang wika","intent":"system.language","slots":{"language":"en"}}
+{"group":"tagalog","text":"Ano-ano ang kaya mong gawin para sa akin","intent":"system.help","slots":{}}
+{"group":"tagalog","text":"Lakasan mo pa ang boses mo","intent":"system.volume","slots":{"direction":"up"}}
+{"group":"tagalog","text":"Hinaan mo nang kaunti","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"tagalog","text":"Itakda mo ang volume sa pitumpu","intent":"system.volume","slots":{"level":70}}
+{"group":"tagalog","text":"Patayin mo na ang device","intent":"system.shutdown","slots":{}}
+{"group":"tagalog","text":"I-save mo ito bilang tindahan ni Aling Rosa","intent":"place.save","slots":{"label":"tindahan ni Aling Rosa"}}
+{"group":"tagalog","text":"Tandaan mo ang lugar na ito bilang paaralan","intent":"place.save","slots":{"label":"paaralan"}}
+{"group":"tagalog","text":"Burahin mo ang opisina sa listahan","intent":"place.delete","slots":{"label":"opisina"}}
+{"group":"tagalog","text":"Ano-ano ang mga naka-save na lugar","intent":"place.list","slots":{}}
+{"group":"tagalog","text":"Nasaan ang munisipyo","intent":"place.locate","slots":{"label":"munisipyo"}}
+
+// --- taglish (code-switching, very common in practice) ---
+{"group":"taglish","text":"Pa-navigate naman sa SM Lipa","intent":"navigation.start","slots":{"location":"SM Lipa","nearest":false}}
+{"group":"taglish","text":"Dalhin mo ako sa nearest hospital","intent":"navigation.start","slots":{"location":"hospital","nearest":true}}
+{"group":"taglish","text":"Go tayo sa Jollibee","intent":"navigation.start","slots":{"location":"Jollibee","nearest":false}}
+{"group":"taglish","text":"Cancel mo na yung navigation","intent":"navigation.stop","slots":{}}
+{"group":"taglish","text":"Ulitin mo yung last instruction","intent":"navigation.repeat","slots":{}}
+{"group":"taglish","text":"Nasaan na ba ako exactly","intent":"navigation.location","slots":{}}
+{"group":"taglish","text":"Gaano pa kalayo yung destination","intent":"navigation.progress","slots":{}}
+{"group":"taglish","text":"Pa-check naman ng battery","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"taglish","text":"Okay ba yung signal","intent":"device.status","slots":{"status_field":"signal"}}
+{"group":"taglish","text":"Anong time na","intent":"system.time","slots":{}}
+{"group":"taglish","text":"Ano yung nasa paligid ko ngayon","intent":"vision.describe","slots":{}}
+{"group":"taglish","text":"Pa-read naman nito","intent":"vision.read","slots":{}}
+{"group":"taglish","text":"Switch ka sa Tagalog","intent":"system.language","slots":{"language":"tl"}}
+{"group":"taglish","text":"English na lang please","intent":"system.language","slots":{"language":"en"}}
+{"group":"taglish","text":"Pa-lakas naman ng volume","intent":"system.volume","slots":{"direction":"up"}}
+{"group":"taglish","text":"Hinaan mo yung volume","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"taglish","text":"I-save mo itong place as gym","intent":"place.save","slots":{"label":"gym"}}
+{"group":"taglish","text":"I-delete mo yung saved place na bahay ni Lola","intent":"place.delete","slots":{"label":"bahay ni Lola"}}
+{"group":"taglish","text":"Ano yung mga saved places ko","intent":"place.list","slots":{}}
+{"group":"taglish","text":"Paano gamitin itong device","intent":"system.help","slots":{}}
+{"group":"taglish","text":"I-off mo na yung device","intent":"system.shutdown","slots":{}}
+
+// --- asr: what Whisper actually produces (lowercase, fillers, mishearings, no punctuation) ---
+{"group":"asr","text":"uh take me to the market","intent":"navigation.start","slots":{"location":"market","nearest":false}}
+{"group":"asr","text":"um where am i","intent":"navigation.location","slots":{}}
+{"group":"asr","text":"what time is it uh","intent":"system.time","slots":{}}
+{"group":"asr","text":"navigate to the the hospital","intent":"navigation.start","slots":{"location":"hospital","nearest":false}}
+{"group":"asr","text":"reed this sign","intent":"vision.read","slots":{}}
+{"group":"asr","text":"whats around me right now","intent":"vision.describe","slots":{}}
+{"group":"asr","text":"how much battery left","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"asr","text":"stop navigation stop","intent":"navigation.stop","slots":{}}
+{"group":"asr","text":"volume up","intent":"system.volume","slots":{"direction":"up"}}
+{"group":"asr","text":"volume down volume down","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"asr","text":"anong oras na po ba","intent":"system.time","slots":{}}
+{"group":"asr","text":"dalhin mo ko sa botika","intent":"navigation.start","slots":{"location":"botika","nearest":false}}
+{"group":"asr","text":"nasan ako","intent":"navigation.location","slots":{}}
+{"group":"asr","text":"say it again please","intent":"navigation.repeat","slots":{}}
+{"group":"asr","text":"help help","intent":"emergency.trigger","slots":{}}
+{"group":"asr","text":"tulong tulong","intent":"emergency.trigger","slots":{}}
+{"group":"asr","text":"what can you do for me","intent":"system.help","slots":{}}
+{"group":"asr","text":"switch to english please","intent":"system.language","slots":{"language":"en"}}
+{"group":"asr","text":"so","intent":"unknown","slots":{}}
+{"group":"asr","text":"thank you po","intent":"unknown","slots":{}}
+{"group":"asr","text":"subscribe to my channel","intent":"unknown","slots":{}}
+{"group":"asr","text":"hmm","intent":"unknown","slots":{}}
+
+// --- unknown: reasonable things to say that are not device commands ---
+{"group":"unknown","text":"Who won the basketball game last night","intent":"unknown","slots":{}}
+{"group":"unknown","text":"What is the meaning of life","intent":"unknown","slots":{}}
+{"group":"unknown","text":"How do I cook adobo","intent":"unknown","slots":{}}
+{"group":"unknown","text":"What year is it","intent":"unknown","slots":{}}
+{"group":"unknown","text":"What day is it today","intent":"unknown","slots":{}}
+{"group":"unknown","text":"How much is twelve times four","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Set an alarm for six am","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Remind me to take my medicine","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Call my brother","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Text my friend that I'm late","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Is it going to rain later","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Tell me a story","intent":"unknown","slots":{}}
+{"group":"unknown","text":"My phone battery is dying","intent":"unknown","slots":{}}
+{"group":"unknown","text":"The signal at home is bad","intent":"unknown","slots":{}}
+{"group":"unknown","text":"I love listening to Tagalog songs","intent":"unknown","slots":{}}
+{"group":"unknown","text":"English is my second language","intent":"unknown","slots":{}}
+{"group":"unknown","text":"I went to the hospital yesterday","intent":"unknown","slots":{}}
+{"group":"unknown","text":"My home is far from here","intent":"unknown","slots":{}}
+{"group":"unknown","text":"How far is SM from my house","intent":"unknown","slots":{}}
+{"group":"unknown","text":"What time does the mall open","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Time flies so fast","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Read me the news","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Can you see colors","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Did I save my work","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Ano ang ulam natin mamaya","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Sino ang kumanta nito","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Anong araw ngayon","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Mahal kita","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Tawagan mo si kuya","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Magkano ang pamasahe papuntang Batangas","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Gutom na ako","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Ang init ngayon","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Uuwi na ako mamaya","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Mabagal ang internet sa bahay","intent":"unknown","slots":{}}
+
+// --- safety: emergency vs help vs shutdown vs stop vs mute ---
+{"group":"safety","text":"I fell down please help","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"I'm lost and scared","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Someone is following me","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Call my guardian now","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Nadapa ako tulungan niyo ako","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Naliligaw ako, tulong","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Pakitawagan ang guardian ko","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Help me with this app","intent":"system.help","slots":{}}
+{"group":"safety","text":"Help me read this","intent":"vision.read","slots":{}}
+{"group":"safety","text":"Help me get to the church","intent":"navigation.start","slots":{"location":"church","nearest":false}}
+{"group":"safety","text":"Tulungan mo akong tumawid","intent":"unknown","slots":{}}
+{"group":"safety","text":"How do I send an emergency alert with this device","intent":"system.help","slots":{}}
+{"group":"safety","text":"Is the emergency button working","intent":"unknown","slots":{}}
+{"group":"safety","text":"Stop now","intent":"navigation.stop","slots":{}}
+{"group":"safety","text":"Stop talking","intent":"unknown","slots":{}}
+{"group":"safety","text":"Mute yourself","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"safety","text":"Turn off the sound","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"safety","text":"Turn off navigation","intent":"navigation.stop","slots":{}}
+{"group":"safety","text":"Turn yourself off now","intent":"system.shutdown","slots":{}}
+{"group":"safety","text":"Power off the wearable","intent":"system.shutdown","slots":{}}
+{"group":"safety","text":"I'm done for today, shut down","intent":"system.shutdown","slots":{}}
+{"group":"safety","text":"Turn off the lights","intent":"unknown","slots":{}}
+{"group":"safety","text":"Shut the door","intent":"unknown","slots":{}}
+{"group":"safety","text":"The battery will die soon","intent":"unknown","slots":{}}
+{"group":"safety","text":"Itigil mo","intent":"navigation.stop","slots":{}}
+{"group":"safety","text":"Huwag kang maingay","intent":"unknown","slots":{}}

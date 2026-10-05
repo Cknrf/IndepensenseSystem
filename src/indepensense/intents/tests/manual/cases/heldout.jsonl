@@ -1,0 +1,140 @@
+// HELD-OUT set for pipeline_probe. Do NOT read its failures while tuning — run it only to report a result.
+// Same labelling conventions as dev.jsonl.
+
+// --- english ---
+{"group":"english","text":"Please navigate me to Batangas City Hall","intent":"navigation.start","slots":{"location":"Batangas City Hall","nearest":false}}
+{"group":"english","text":"Get me to the closest gas station","intent":"navigation.start","slots":{"location":"gas station","nearest":true}}
+{"group":"english","text":"I need to get to the post office","intent":"navigation.start","slots":{"location":"post office","nearest":false}}
+{"group":"english","text":"Show me the way to my aunt's place","intent":"navigation.start","slots":{"location":"my aunt's place","nearest":false}}
+{"group":"english","text":"Quit navigating","intent":"navigation.stop","slots":{}}
+{"group":"english","text":"Never mind the directions for now","intent":"navigation.stop","slots":{}}
+{"group":"english","text":"What did you just say","intent":"navigation.repeat","slots":{}}
+{"group":"english","text":"Repeat the direction please","intent":"navigation.repeat","slots":{}}
+{"group":"english","text":"What's my location right now","intent":"navigation.location","slots":{}}
+{"group":"english","text":"What part of town am I in","intent":"navigation.location","slots":{}}
+{"group":"english","text":"How much longer is the walk","intent":"navigation.progress","slots":{}}
+{"group":"english","text":"How far to my destination","intent":"navigation.progress","slots":{}}
+{"group":"english","text":"Is your battery low","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"english","text":"Are you connected to satellites","intent":"device.status","slots":{"status_field":"gps"}}
+{"group":"english","text":"Do you have mobile data","intent":"device.status","slots":{"status_field":"signal"}}
+{"group":"english","text":"Give me the current time","intent":"system.time","slots":{}}
+{"group":"english","text":"Can you tell me what time it is","intent":"system.time","slots":{}}
+{"group":"english","text":"Look around and tell me what you see","intent":"vision.describe","slots":{}}
+{"group":"english","text":"Are there people near me","intent":"vision.describe","slots":{}}
+{"group":"english","text":"Read the text on this box","intent":"vision.read","slots":{}}
+{"group":"english","text":"What does the price tag say","intent":"vision.read","slots":{}}
+{"group":"english","text":"Use English from now on","intent":"system.language","slots":{"language":"en"}}
+{"group":"english","text":"Please speak Tagalog","intent":"system.language","slots":{"language":"tl"}}
+{"group":"english","text":"Change your language to Japanese","intent":"system.language","slots":{}}
+{"group":"english","text":"What features do you have","intent":"system.help","slots":{}}
+{"group":"english","text":"Turn the volume up a bit","intent":"system.volume","slots":{"direction":"up"}}
+{"group":"english","text":"You're too loud","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"english","text":"Put the volume at 40","intent":"system.volume","slots":{"level":40}}
+{"group":"english","text":"Call this location my clinic","intent":"place.save","slots":{"label":"my clinic"}}
+{"group":"english","text":"Remember this place as the pharmacy","intent":"place.save","slots":{"label":"pharmacy"}}
+{"group":"english","text":"Forget the bakery","intent":"place.delete","slots":{"label":"bakery"}}
+{"group":"english","text":"What locations have I stored","intent":"place.list","slots":{}}
+{"group":"english","text":"Where is the public market","intent":"place.locate","slots":{"label":"public market"}}
+
+// --- tagalog ---
+{"group":"tagalog","text":"Samahan mo ako sa ospital","intent":"navigation.start","slots":{"location":"ospital","nearest":false}}
+{"group":"tagalog","text":"Ituro mo ang daan papunta sa pinakamalapit na simbahan","intent":"navigation.start","slots":{"location":"simbahan","nearest":true}}
+{"group":"tagalog","text":"Tama na ang paggabay","intent":"navigation.stop","slots":{}}
+{"group":"tagalog","text":"Ulitin mo nga ang huling direksyon","intent":"navigation.repeat","slots":{}}
+{"group":"tagalog","text":"Nasaan na ako ngayon","intent":"navigation.location","slots":{}}
+{"group":"tagalog","text":"Matagal pa ba bago tayo dumating","intent":"navigation.progress","slots":{}}
+{"group":"tagalog","text":"Mahina na ba ang baterya mo","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"tagalog","text":"Malakas ba ang signal dito","intent":"device.status","slots":{"status_field":"signal"}}
+{"group":"tagalog","text":"Sabihin mo kung anong oras na","intent":"system.time","slots":{}}
+{"group":"tagalog","text":"Ano ang nakikita mo sa paligid","intent":"vision.describe","slots":{}}
+{"group":"tagalog","text":"Pakibasa ang nakasulat dito","intent":"vision.read","slots":{}}
+{"group":"tagalog","text":"Mag-Ingles ka na lang ngayon","intent":"system.language","slots":{"language":"en"}}
+{"group":"tagalog","text":"Paano ko ito gagamitin","intent":"system.help","slots":{}}
+{"group":"tagalog","text":"Pakilakasan ang tunog","intent":"system.volume","slots":{"direction":"up"}}
+{"group":"tagalog","text":"Masyadong malakas, hinaan mo","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"tagalog","text":"Isara mo na ang device","intent":"system.shutdown","slots":{}}
+{"group":"tagalog","text":"I-save mo ang lugar na ito bilang kapilya","intent":"place.save","slots":{"label":"kapilya"}}
+{"group":"tagalog","text":"Kalimutan mo na ang paaralan","intent":"place.delete","slots":{"label":"paaralan"}}
+{"group":"tagalog","text":"Anong mga lugar ang natatandaan mo para sa akin","intent":"place.list","slots":{}}
+{"group":"tagalog","text":"Nasaan ang istasyon ng pulis","intent":"place.locate","slots":{}}
+
+// --- taglish ---
+{"group":"taglish","text":"Pa-guide naman papunta sa terminal","intent":"navigation.start","slots":{"location":"terminal","nearest":false}}
+{"group":"taglish","text":"Hanapin mo yung nearest na 7-Eleven","intent":"navigation.start","slots":{"location":"7-Eleven","nearest":true}}
+{"group":"taglish","text":"Stop mo na yung directions","intent":"navigation.stop","slots":{}}
+{"group":"taglish","text":"Pa-repeat nga","intent":"navigation.repeat","slots":{}}
+{"group":"taglish","text":"Saan na ako located ngayon","intent":"navigation.location","slots":{}}
+{"group":"taglish","text":"Malapit na ba tayo sa destination","intent":"navigation.progress","slots":{}}
+{"group":"taglish","text":"Ilan na yung battery mo","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"taglish","text":"May GPS signal ka ba ngayon","intent":"device.status","slots":{"status_field":"gps"}}
+{"group":"taglish","text":"Pa-describe naman ng surroundings","intent":"vision.describe","slots":{}}
+{"group":"taglish","text":"Basahin mo nga itong menu","intent":"vision.read","slots":{}}
+{"group":"taglish","text":"Tagalog mode please","intent":"system.language","slots":{"language":"tl"}}
+{"group":"taglish","text":"Pa-hina ng konti yung volume","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"taglish","text":"Gawin mong 90 yung volume","intent":"system.volume","slots":{"level":90}}
+{"group":"taglish","text":"Save mo itong spot as tambayan","intent":"place.save","slots":{"label":"tambayan"}}
+{"group":"taglish","text":"Pa-list nga ng saved places","intent":"place.list","slots":{}}
+{"group":"taglish","text":"Shutdown mo na please","intent":"system.shutdown","slots":{}}
+
+// --- asr ---
+{"group":"asr","text":"take me too the church","intent":"navigation.start","slots":{"location":"church","nearest":false}}
+{"group":"asr","text":"uh where where am i","intent":"navigation.location","slots":{}}
+{"group":"asr","text":"what time is it now um","intent":"system.time","slots":{}}
+{"group":"asr","text":"read this for me","intent":"vision.read","slots":{}}
+{"group":"asr","text":"what's in front of me","intent":"vision.describe","slots":{}}
+{"group":"asr","text":"battery how much","intent":"device.status","slots":{"status_field":"battery"}}
+{"group":"asr","text":"cancel cancel","intent":"navigation.stop","slots":{}}
+{"group":"asr","text":"louder please","intent":"system.volume","slots":{"direction":"up"}}
+{"group":"asr","text":"anong oras","intent":"system.time","slots":{}}
+{"group":"asr","text":"saan ako","intent":"navigation.location","slots":{}}
+{"group":"asr","text":"help me help me","intent":"emergency.trigger","slots":{}}
+{"group":"asr","text":"saklolo saklolo","intent":"emergency.trigger","slots":{}}
+{"group":"asr","text":"bye bye","intent":"unknown","slots":{}}
+{"group":"asr","text":"music","intent":"unknown","slots":{}}
+{"group":"asr","text":"okay okay","intent":"unknown","slots":{}}
+{"group":"asr","text":"uh","intent":"unknown","slots":{}}
+
+// --- unknown ---
+{"group":"unknown","text":"What is the population of the Philippines","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Translate good morning to Tagalog","intent":"unknown","slots":{}}
+{"group":"unknown","text":"What month is it","intent":"unknown","slots":{}}
+{"group":"unknown","text":"What's fifteen plus twenty","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Wake me up at seven","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Order food for me","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Call my daughter","intent":"unknown","slots":{}}
+{"group":"unknown","text":"What's the weather like in Manila","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Sing me a song","intent":"unknown","slots":{}}
+{"group":"unknown","text":"My GPS app on my phone is broken","intent":"unknown","slots":{}}
+{"group":"unknown","text":"I was born in Tagalog region","intent":"unknown","slots":{}}
+{"group":"unknown","text":"The church is beautiful","intent":"unknown","slots":{}}
+{"group":"unknown","text":"How far is Manila from Lipa","intent":"unknown","slots":{}}
+{"group":"unknown","text":"When does the bank close","intent":"unknown","slots":{}}
+{"group":"unknown","text":"I don't have time for this","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Who are you","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Ano ang kabisera ng Japan","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Kumain ka na ba","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Anong petsa bukas","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Tawagan mo ang anak ko","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Ilang taon ka na","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Masarap ang kape","intent":"unknown","slots":{}}
+{"group":"unknown","text":"Pupunta ako sa palengke bukas","intent":"unknown","slots":{}}
+
+// --- safety ---
+{"group":"safety","text":"I hurt my leg and can't stand","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Please get help for me","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Notify my guardian","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Natumba ako","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Tulungan mo ako, may sumusunod sa akin","intent":"emergency.trigger","slots":{}}
+{"group":"safety","text":"Help me understand the buttons","intent":"system.help","slots":{}}
+{"group":"safety","text":"Help me read the menu","intent":"vision.read","slots":{}}
+{"group":"safety","text":"Help me go to the bakery","intent":"navigation.start","slots":{"location":"bakery","nearest":false}}
+{"group":"safety","text":"Help me tie my shoes","intent":"unknown","slots":{}}
+{"group":"safety","text":"Stop the directions","intent":"navigation.stop","slots":{}}
+{"group":"safety","text":"Be quiet","intent":"unknown","slots":{}}
+{"group":"safety","text":"Mute the speaker","intent":"system.volume","slots":{"direction":"down"}}
+{"group":"safety","text":"Switch off now please","intent":"system.shutdown","slots":{}}
+{"group":"safety","text":"Turn off the device completely","intent":"system.shutdown","slots":{}}
+{"group":"safety","text":"Turn off the fan","intent":"unknown","slots":{}}
+{"group":"safety","text":"My battery is about to die","intent":"unknown","slots":{}}
+{"group":"safety","text":"Tumigil ka na sa pag-navigate","intent":"navigation.stop","slots":{}}
+{"group":"safety","text":"Tahimik ka muna","intent":"unknown","slots":{}}
