@@ -85,7 +85,12 @@ graphhopper:
   # Measured, from 13.937387,121.118698 to the Jollibee 1.3 km away:
   #
   #   trunk excluded : 3.5 km, 41 min, start snapped 230 m off-position
+  #   trunk admitted : 1.6 km, 19 min, start snapped   7 m off-position
   #   reference (OSRM, same two points) : 1.4 km, 19 min
+  #
+  # The remaining 200 m against the reference is the engine, not a fault:
+  # OSRM and GraphHopper weight surfaces and crossings differently and
+  # run on different data vintages. The walking time matches exactly.
   #
   # 1200 m of that 1400 m reference route runs along President Jose P.
   # Laurel Highway — tagged `trunk`, therefore absent from the graph
@@ -137,7 +142,15 @@ sudo systemctl stop graphhopper
 cd ~/graphhopper
 rm -rf graph-cache/
 java -Xmx6g -Xms2g -jar graphhopper-web-11.0.jar server config.yml
-# wait for "Started GraphHopperApplication", then Ctrl-C
+# Wait for the LAST line: `Started Server@... @NNNNNms`.
+#
+# Not "Starting GraphHopperApplication" — GH 11 prints that at the very
+# beginning, and an earlier version of this document said to wait for
+# "Started GraphHopperApplication", which never appears at all. Ctrl-C on
+# the "Starting" line discards the build.
+#
+# The reliable marker is the server answering:
+#     curl -s localhost:8989/health
 sudo systemctl start graphhopper
 ```
 
@@ -162,9 +175,13 @@ cd ~/graphhopper
 java -Xmx6g -Xms2g -jar graphhopper-web-11.0.jar server config.yml
 ```
 
-Wait for `Started GraphHopperApplication`. **Do not Ctrl-C until that line
-appears** — a partial `graph-cache/` is corrupt. If interrupted, delete it
-(`rm -rf graph-cache`) before retrying.
+Wait for the **last** line, `Started Server@... @NNNNNms`. **Do not Ctrl-C
+before it appears** — a partial `graph-cache/` is corrupt. If interrupted,
+delete it (`rm -rf graph-cache`) before retrying.
+
+Do not wait for "Started GraphHopperApplication": GH 11 logs
+`Starting GraphHopperApplication` at the top of the run and never logs a
+matching "Started". Stopping on the "Starting" line throws the build away.
 
 ## Verify
 
