@@ -743,10 +743,11 @@ class App:
         # Owns all speech that originates on the main loop. See `Announcer`.
         self.announcer: Announcer | None = None
         self.buffered: BufferedTelemetryClient | None = None
-        # `alert_sink` is what every alert path posts to. It is either
-        # `buffered` or `buffered` wrapped in an `SMSAlertNotifier` — the
-        # wrapper adds guardian SMS to all three alert paths at once.
-        # Heartbeats deliberately keep using `buffered` directly.
+        # `alert_sink` is what every alert path posts to: `buffered`
+        # wrapped in an `SMSAlertNotifier`, always — even with no SMS
+        # sender, so the wearer still hears whether the backend was
+        # reached. The wrapper adds guardian SMS to all three alert paths
+        # at once. Heartbeats deliberately keep using `buffered` directly.
         self.alert_sink = None
         self.guardians: GuardianDirectory | None = None
         # Loaded in start(). None means this unit is not provisioned: the
@@ -3230,7 +3231,7 @@ class App:
         if self.credential is None:
             print(
                 "  No device credential — backend telemetry disabled. "
-                "SMS alerts still work.",
+                "Emergency SMS is the only alert channel.",
                 flush=True,
             )
             return NullTelemetryClient()

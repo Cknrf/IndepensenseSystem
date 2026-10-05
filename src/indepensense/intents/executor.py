@@ -294,11 +294,12 @@ class IntentExecutor:
         cloud_context_ttl_s: float = 120.0,
         geocode_candidate_limit: int = 10,
         # True when the telemetry client reports per-channel delivery
-        # afterwards (see `telemetry/sms_alerts.py`). The emergency
+        # afterwards (see `telemetry/sms_alerts.py`), which the runtime
+        # always wires — with or without an SMS sender. The emergency
         # response then only acknowledges the dispatch and lets that
-        # report state the outcome. False — no SMS layer wired, as in unit
-        # tests and on a unit with `SMS_ENABLED` off — keeps answering
-        # from the HTTP result, because nothing else is coming.
+        # report state the outcome. False — no notifier, as in unit tests
+        # — answers from `send_alert`'s own result, because nothing else
+        # is coming.
         reports_delivery: bool = False,
     ):
         self._router = router
