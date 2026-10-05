@@ -122,6 +122,7 @@ def _route_to(origin: Coordinate, chosen) -> None:
     print(f"\nOn foot      : {route.distance_m/1000:.1f} km, "
           f"{route.duration_s/60:.0f} min")
     print(f"Straight line: {straight/1000:.1f} km")
+    _report_snapping(origin, chosen)
     if straight > 0:
         ratio = route.distance_m / straight
         print(f"Detour factor: {ratio:.1f}x", end="  ")
@@ -131,6 +132,63 @@ def _route_to(origin: Coordinate, chosen) -> None:
         else:
             print("<- normal. If the device announced far more than this, "
                   "it was routing from a different origin.")
+
+
+def _report_snapping(origin: Coordinate, chosen) -> None:
+    """Where GraphHopper actually attached the route to its graph.
+
+    The driver deliberately does not expose this — the runtime has no use
+    for it — so this asks the API directly. Diagnostics are the one place
+    worth reaching past a driver's interface, and the field failure is
+    exactly the kind it answers: GraphHopper snaps each point to the
+    nearest *routable* way, and a way the import dropped is not routable.
+    `config.yml` excludes `trunk`, which in the Philippines is the tag on
+    many ordinary national roads people walk along — so a start beside
+    one can snap somewhere else entirely, and the route from there is
+    long for a reason that has nothing to do with the destination.
+
+    Also prints the same journey on a public foot router. That is a
+    second opinion from different data and a different engine: if the
+    reference is short and ours is long, the difference is in our graph,
+    not in the terrain.
+    """
+    import requests  # lazy
+
+    from indepensense.config import GRAPHHOPPER_URL
+
+    try:
+        response = requests.get(
+            f"{GRAPHHOPPER_URL}/route",
+            params={
+                "point": [f"{origin.lat},{origin.lon}",
+                          f"{chosen.coordinate.lat},{chosen.coordinate.lon}"],
+                "profile": "foot",
+                "points_encoded": "false",
+            },
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        snapped = response.json()["paths"][0]["snapped_waypoints"]["coordinates"]
+    except Exception as exc:
+        print(f"  (could not read snapped waypoints: {exc})")
+        return
+
+    # GeoJSON is lon,lat — the opposite order to everything else here.
+    for label, (lon, lat), asked in (
+        ("start", snapped[0], origin),
+        ("end", snapped[-1], chosen.coordinate),
+    ):
+        off = haversine_m(asked, Coordinate(lat=lat, lon=lon))
+        flag = "  <- snapped a long way; the graph has no walkable way nearby" \
+            if off > 150 else ""
+        print(f"  {label} snapped {off:>6.0f} m from where it was asked{flag}")
+
+    print(
+        f"\nCompare on a public foot router (different data, different engine):\n"
+        f"  https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot"
+        f"&route={origin.lat:.6f}%2C{origin.lon:.6f}%3B"
+        f"{chosen.coordinate.lat:.6f}%2C{chosen.coordinate.lon:.6f}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
