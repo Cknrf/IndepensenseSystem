@@ -58,6 +58,13 @@ class TieredIntentParser:
         self._matcher = matcher
         self._llm = llm
 
+    def warm_up(self, timeout_s: float) -> None:
+        """Prime the LLM stage. The fast path needs no warmup: its bank is
+        encoded at construction. A no-op for an LLM without one."""
+        warm = getattr(self._llm, "warm_up", None)
+        if warm is not None:
+            warm(timeout_s)
+
     def parse(self, transcript: str) -> IntentResult:
         match = self._try_match(transcript)
         if match is None:

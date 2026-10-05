@@ -31,13 +31,15 @@ Every defensive knob below was added deliberately after real failures
 observed during hardware integration. Kept together here so the reasoning
 survives beyond commit history:
 
-- **Startup warmup with full system prompt.** Cold-loading a model in this
-  size class on the Pi 5 takes ~25-40 s (measured on Qwen 2.5 1.5B; re-measure
-  for Qwen 3 1.7B). Doing this once at construction — with the
-  actual system prompt the parser will send later, not just a throwaway
-  "ok" — means the model *and* its prompt-prefix KV cache are hot before
-  the first real user query. Without this the first command of every
-  session would appear to time out.
+- **Startup warmup with full system prompt.** Cold-loading the model and
+  prefilling the ~2,500-token prompt takes 56-87 s for Qwen 3 1.7B on the
+  Pi 5 (measured; the spread is CPU temperature) and ~250 s for 4B. Doing
+  it once — with the actual system prompt the parser will send later, not
+  just a throwaway "ok" — means the model *and* its prompt-prefix KV cache
+  are hot before the first real user query. Without this the first
+  command of every session would appear to time out. `warmup=True` does
+  it at construction; the app passes `False` and calls `warm_up()` on a
+  background thread instead, so that wait never delays fall detection.
 - **Tiered timeouts.** Warmup uses `warmup_timeout_s` (~90 s default) to
   accommodate cold loads. Per-query uses `timeout_s` (~30 s default) which
   is tight enough to surface real failures quickly while giving warm
@@ -88,7 +90,7 @@ from indepensense.intents.base import Intent, IntentResult
 #
 # Not in `config.py` on purpose. This is dictated by the response schema the
 # driver itself defines, so it is the chip-datasheet case rather than the
-# tunable case; `_warmup`'s own 32 is here for the same reason. If a future
+# tunable case; `warm_up`'s own 32 is here for the same reason. If a future
 # intent needs a longer reply, this moves with the schema that changed it.
 _MAX_OUTPUT_TOKENS = 128
 
@@ -122,9 +124,9 @@ class OllamaIntentParser:
         self._timeout_s = timeout_s
 
         if warmup:
-            self._warmup(warmup_timeout_s)
+            self.warm_up(warmup_timeout_s)
 
-    def _warmup(self, timeout_s: float) -> None:
+    def warm_up(self, timeout_s: float) -> None:
         """Prime the model AND the system-prompt KV cache before real use.
 
         Uses the *same* system prompt real queries will use, so Ollama's

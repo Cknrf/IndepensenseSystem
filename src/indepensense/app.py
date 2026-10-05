@@ -47,6 +47,11 @@ well-scoped background threads for I/O concerns:
   - GPS cache thread: polls SIM7600 GPS at 1 Hz, exposes latest fix to
     all consumers (executor, heartbeat, fall alerts) without serial
     port contention.
+  - NLU warmup thread (one-shot, exits): loads the LLM and prefills its
+    system prompt, then speaks the "ready" greeting. 56-87 s for 1.7B on
+    the Pi. It used to run inline in `start()`, before the main loop and
+    before the buttons were opened — so for that long at every boot there
+    was no fall detection, no obstacle warning and no emergency button.
 
 Obstacle detection
 ------------------
@@ -904,7 +909,7 @@ class App:
         self.volume = self._open_volume()
         print(f"  Speaker volume {self.volume.current}%.", flush=True)
 
-        print("  Connecting to Ollama (with warmup)...", flush=True)
+        print("  Connecting to Ollama (warmup runs once the loop is up)...", flush=True)
         self.parser = self._open_parser()
 
         print("  Checking cloud LLM fallback...", flush=True)
@@ -1045,11 +1050,17 @@ class App:
         self.heartbeat_sender.start()
 
         print(
-            f"Ready (language: {self.language.current}). Running fall-detection "
-            f"loop. SIGINT/SIGTERM to stop.",
+            f"Safety features up (language: {self.language.current}). Running "
+            f"fall-detection loop; voice commands follow once the LLM is warm. "
+            f"SIGINT/SIGTERM to stop.",
             flush=True,
         )
-        self._speak_greeting()
+        # The greeting waits for the warmup: "I will tell you when I am
+        # ready" (system.starting) is a promise about voice commands, which
+        # are what the user is waiting to use. Safety needs no announcement.
+        threading.Thread(
+            target=self._warm_up_nlu, name="nlu-warmup", daemon=True,
+        ).start()
         # Now that TTS exists, make sure the next boot can speak at second
         # zero. Deliberately last: it costs a synthesis per language and
         # the user is already up and running by this point.
@@ -2956,6 +2967,24 @@ class App:
         self._announce(messages.get("shutdown.failed", self.language.current),
                        critical=True)
 
+    def _warm_up_nlu(self) -> None:
+        """Warm the LLM off the main thread, then say the device is ready.
+
+        Never raises: a warmup that fails or times out degrades the first
+        voice command, exactly as it did inline, and the greeting is still
+        spoken — a device that never says "ready" reads as one that never
+        woke up. Commands spoken meanwhile still work when the embedding
+        fast path answers them; ones that need the LLM queue behind the
+        warmup in Ollama and may time out into "I didn't catch that".
+        """
+        warm = getattr(self.parser, "warm_up", None)
+        if warm is not None:
+            try:
+                warm(NLU_WARMUP_TIMEOUT_S)
+            except Exception as exc:
+                print(f"[nlu-warmup] failed: {exc}", file=sys.stderr, flush=True)
+        self._speak_greeting()
+
     def _speak_greeting(self) -> None:
         """Announce readiness in the active language. Never raises.
 
@@ -3089,8 +3118,10 @@ class App:
                 ollama_url=OLLAMA_URL,
                 prompt_path=NLU_PROMPT_PATH,
                 timeout_s=NLU_TIMEOUT_S,
-                warmup=True,
-                warmup_timeout_s=NLU_WARMUP_TIMEOUT_S,
+                # Deferred to `_warm_up_nlu` on its own thread — see the
+                # module docstring. Constructing with `True` would block
+                # `start()`, and with it every safety feature, on the LLM.
+                warmup=False,
                 compact_prefill=NLU_COMPACT_PREFILL,
             ),
         )

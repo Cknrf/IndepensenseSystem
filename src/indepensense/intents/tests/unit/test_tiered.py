@@ -184,3 +184,23 @@ def test_describe_distinguishes_a_decline_from_a_failure(result, expected):
     once already — see `parser.parse_llm_response`.
     """
     assert describe(result) == expected
+
+
+# --- warmup ------------------------------------------------------------------
+
+def test_warm_up_reaches_the_llm():
+    """The app warms the parser it holds, which is this wrapper — so the
+    call has to pass through to the stage that actually needs warming."""
+    calls = []
+
+    class _WarmableLLM(StubLLM):
+        def warm_up(self, timeout_s):
+            calls.append(timeout_s)
+
+    TieredIntentParser(matcher=None, llm=_WarmableLLM()).warm_up(42.0)
+
+    assert calls == [42.0]
+
+
+def test_warm_up_is_a_no_op_for_an_llm_without_one():
+    TieredIntentParser(matcher=None, llm=StubLLM()).warm_up(42.0)   # must not raise
