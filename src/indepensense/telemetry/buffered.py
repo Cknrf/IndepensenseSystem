@@ -13,9 +13,20 @@ Wraps any `TelemetryClient` (typically `NestJSTelemetryClient`) with:
   queued alert*, not to the very front. Putting it at the front meant an
   item the backend always refuses — a heartbeat answered 400, say — was
   retried forever while an alert queued behind it was never attempted at
-  all. Several failing alerts now take turns instead.
+  all. Several failing alerts now take turns instead. A failed alert also
+  lets *one* heartbeat go before its retry, so an alert the backend keeps
+  refusing cannot starve the heartbeats either; during an outage that
+  costs one extra request per retry, and when the link returns at most
+  one heartbeat lands ahead of the alert.
 - **Bounded queue.** If the queue fills (long network outage), the
   OLDEST heartbeats are dropped first. Alerts are never dropped.
+- **One pending emergency-button alert.** A press while an earlier
+  emergency alert is still undelivered replaces it rather than queueing
+  a second. The button is re-armed when nobody was reached precisely so
+  the wearer can press again, and each press used to become its own
+  alert — guardians got one per press once the link came back. The
+  merged alert keeps the first press's time and the newest position.
+  Falls are never merged: two falls are two events.
 
 Semantics of the returned booleans:
 
@@ -53,6 +64,7 @@ expires is lost (data on RAM only; not persisted to disk). For a wearable
 this is acceptable — real losses come from SD wear, not from planned
 shutdowns.
 """
+import dataclasses
 import sys
 import threading
 from collections import deque
@@ -61,6 +73,7 @@ from typing import Callable, Union
 from indepensense.telemetry.base import (
     AlertEvent,
     DeviceCredentialRejected,
+    EventType,
     IntervalInformation,
     TelemetryClient,
 )
@@ -106,6 +119,8 @@ class BufferedTelemetryClient:
         self.dropped_heartbeats = 0
         self.delivered_heartbeats = 0
         self.delivered_alerts = 0
+        # Emergency-button alerts folded into an earlier undelivered one.
+        self.merged_emergency_alerts = 0
 
         # True once the backend has rejected our credential. A persistent
         # provisioning fault, not a connectivity one — `device.status` and
@@ -138,6 +153,10 @@ class BufferedTelemetryClient:
         so we never lose a safety event.
         """
         with self._lock:
+            if event.event_type is EventType.EMERGENCY_ALERT:
+                event, on_first_attempt = self._merge_pending_emergency_locked(
+                    event, on_first_attempt,
+                )
             if len(self._queue) >= self._max_queue_size:
                 self._evict_oldest_heartbeat_locked()   # best-effort, may be a no-op
             # Alerts jump to the front.
@@ -236,9 +255,14 @@ class BufferedTelemetryClient:
 
             # Failure: put the item back behind every queued alert, then
             # wait before retrying. For a heartbeat that is still the front
-            # of the heartbeats, so they keep their order.
+            # of the heartbeats, so they keep their order. A failed alert
+            # goes one further, behind the first heartbeat, so a refused
+            # alert cannot hold the heartbeats back forever.
             with self._lock:
-                self._queue.insert(self._first_heartbeat_index_locked(), item)
+                index = self._first_heartbeat_index_locked()
+                if kind == "alert" and index < len(self._queue):
+                    index += 1
+                self._queue.insert(index, item)
 
             # If we're shutting down, don't wait for the full retry interval —
             # exit as soon as the caller's drain timeout hits.
@@ -264,6 +288,34 @@ class BufferedTelemetryClient:
             if not self._queue:
                 return None
             return self._queue.popleft()
+
+    def _merge_pending_emergency_locked(
+        self, event: AlertEvent, on_first_attempt: _AttemptCallback | None,
+    ) -> tuple[AlertEvent, _AttemptCallback | None]:
+        """Fold a queued, undelivered emergency alert into `event`.
+
+        Returns the alert to queue in its place: the first press's time,
+        so the guardian sees when the emergency began, with this press's
+        position, which is the fresher one. A pending callback from the
+        earlier alert — never attempted yet — still fires, so its caller
+        is not left waiting for a report that would otherwise never come.
+        Assumes the lock is held.
+        """
+        for i, (kind, payload, callback) in enumerate(self._queue):
+            if kind == "alert" and payload.event_type is EventType.EMERGENCY_ALERT:
+                del self._queue[i]
+                self.merged_emergency_alerts += 1
+                merged = dataclasses.replace(event, occurred_at=payload.occurred_at)
+                if callback is None:
+                    return merged, on_first_attempt
+                if on_first_attempt is None:
+                    return merged, callback
+
+                def both(ok: bool, first=callback, second=on_first_attempt) -> None:
+                    self._report_attempt(first, ok)
+                    second(ok)
+                return merged, both
+        return event, on_first_attempt
 
     def _first_heartbeat_index_locked(self) -> int:
         """Index just past the queued alerts. Assumes lock is held."""

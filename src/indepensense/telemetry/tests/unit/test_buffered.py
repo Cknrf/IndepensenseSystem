@@ -397,3 +397,103 @@ def test_a_client_that_cannot_reach_the_backend_reports_failure_without_retrying
         assert len(inner.alerts) == 1, "an undeliverable alert was retried"
     finally:
         buffered.close(drain_timeout_s=0.5)
+
+
+class _RefusingAlerts(_ScriptedTelemetryClient):
+    """The backend refuses every alert but accepts heartbeats."""
+
+    def send_alert(self, event):
+        super().send_alert(event)
+        return False
+
+
+def test_an_alert_that_is_always_refused_does_not_starve_heartbeats():
+    inner = _RefusingAlerts()
+    buffered = BufferedTelemetryClient(inner, retry_interval_s=0.02)
+    try:
+        buffered.send_alert(_make_alert())
+        assert _wait_until(lambda: len(inner.alerts) >= 1)
+        buffered.send_heartbeat(_make_heartbeat(battery=1))
+        buffered.send_heartbeat(_make_heartbeat(battery=2))
+        assert _wait_until(lambda: buffered.delivered_heartbeats == 2, timeout_s=3.0), (
+            f"heartbeats starved; calls: {inner.call_order}"
+        )
+        assert [h.battery_health for h in inner.heartbeats] == [1, 2]
+    finally:
+        buffered.close(drain_timeout_s=0.5)
+
+
+# --- one pending emergency-button alert -------------------------------------
+#
+# The button re-arms when nobody was reached so the wearer can press again.
+# Each press used to become its own queued alert, and guardians got one
+# per press once the link came back.
+
+def _emergency(minute: int, lat: float) -> AlertEvent:
+    return AlertEvent(
+        device_id="dev-test", event_type=EventType.EMERGENCY_ALERT,
+        latitude=lat, longitude=121.0,
+        occurred_at=_TIMESTAMP.replace(minute=minute),
+    )
+
+
+def _offline_then_online(inner_script):
+    inner = _ScriptedTelemetryClient(script=inner_script)
+    return inner, BufferedTelemetryClient(inner, retry_interval_s=0.3)
+
+
+def test_repeated_emergency_presses_deliver_one_alert():
+    # First attempt of the first press fails; everything after succeeds.
+    inner, buffered = _offline_then_online([False])
+    try:
+        buffered.send_alert(_emergency(minute=1, lat=14.1))
+        assert _wait_until(lambda: len(inner.alerts) == 1)      # failed once
+        buffered.send_alert(_emergency(minute=2, lat=14.2))     # re-press
+        assert _wait_until(lambda: buffered.delivered_alerts == 1, timeout_s=3.0)
+        time.sleep(0.4)
+        assert buffered.delivered_alerts == 1
+        assert buffered.merged_emergency_alerts == 1
+        delivered = inner.alerts[-1]
+        # When it started, and where the wearer is now.
+        assert delivered.occurred_at.minute == 1
+        assert delivered.latitude == 14.2
+    finally:
+        buffered.close(drain_timeout_s=0.5)
+
+
+def test_falls_are_never_merged():
+    inner, buffered = _offline_then_online([False])
+    try:
+        buffered.send_alert(_make_alert(EventType.FALL_DETECTION))
+        assert _wait_until(lambda: len(inner.alerts) == 1)
+        buffered.send_alert(_make_alert(EventType.FALL_DETECTION))
+        assert _wait_until(lambda: buffered.delivered_alerts == 2, timeout_s=3.0)
+        assert buffered.merged_emergency_alerts == 0
+    finally:
+        buffered.close(drain_timeout_s=0.5)
+
+
+def test_a_merged_alert_still_reports_to_both_callers():
+    """Two presses queued before the worker reaches either: the first
+    caller must still hear an outcome, or its notifier waits out its 20 s
+    timeout and reports a failure that never happened."""
+    gate = threading.Event()
+
+    class _Gated(_ScriptedTelemetryClient):
+        def send_heartbeat(self, info):
+            gate.wait(timeout=2.0)                # hold the worker busy
+            return super().send_heartbeat(info)
+
+    inner = _Gated()
+    buffered = BufferedTelemetryClient(inner, retry_interval_s=0.02)
+    first, second = [], []
+    try:
+        buffered.send_heartbeat(_make_heartbeat())
+        time.sleep(0.05)                          # worker now blocked on it
+        buffered.send_alert(_emergency(minute=1, lat=14.1), on_first_attempt=first.append)
+        buffered.send_alert(_emergency(minute=2, lat=14.2), on_first_attempt=second.append)
+        gate.set()
+        assert _wait_until(lambda: first == [True] and second == [True])
+        assert buffered.delivered_alerts == 1
+    finally:
+        buffered.close(drain_timeout_s=0.5)
