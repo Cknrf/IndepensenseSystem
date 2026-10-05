@@ -307,3 +307,75 @@ def test_a_raising_attempt_callback_does_not_stop_the_worker():
         assert buffered.delivered_alerts == 1
     finally:
         buffered.close(drain_timeout_s=1.0)
+
+
+# --- head-of-line blocking ---------------------------------------------------
+#
+# A failed item used to go straight back to the front of the queue, so one
+# the backend always refuses was retried forever and an alert queued while
+# it was in flight was never attempted.
+
+class _RefusingHeartbeats(_ScriptedTelemetryClient):
+    """Heartbeats always fail, slowly enough for an alert to arrive mid-send."""
+
+    def send_heartbeat(self, info):
+        super().send_heartbeat(info)
+        time.sleep(0.05)
+        return False
+
+
+def test_a_heartbeat_that_always_fails_does_not_block_an_alert():
+    inner = _RefusingHeartbeats()
+    buffered = BufferedTelemetryClient(inner, retry_interval_s=0.02)
+    try:
+        buffered.send_heartbeat(_make_heartbeat())
+        assert _wait_until(lambda: len(inner.heartbeats) == 1)  # now in flight
+        buffered.send_alert(_make_alert())
+        assert _wait_until(lambda: buffered.delivered_alerts == 1), (
+            f"alert never delivered; calls: {inner.call_order}"
+        )
+    finally:
+        buffered.close(drain_timeout_s=0.5)
+
+
+class _RefusingOneAlert(_ScriptedTelemetryClient):
+    """Refuses every send of one particular alert, slowly."""
+
+    def __init__(self, refused):
+        super().__init__()
+        self.refused = refused
+
+    def send_alert(self, event):
+        super().send_alert(event)
+        if event is self.refused:
+            time.sleep(0.05)
+            return False
+        return True
+
+
+def test_an_alert_that_always_fails_does_not_block_a_newer_one():
+    stuck, newer = _make_alert(), _make_alert(EventType.EMERGENCY_ALERT)
+    inner = _RefusingOneAlert(refused=stuck)
+    buffered = BufferedTelemetryClient(inner, retry_interval_s=0.02)
+    try:
+        buffered.send_alert(stuck)
+        assert _wait_until(lambda: len(inner.alerts) == 1)        # in flight
+        buffered.send_alert(newer)
+        assert _wait_until(lambda: newer in inner.alerts), "newer alert never attempted"
+        assert _wait_until(lambda: buffered.delivered_alerts == 1)
+    finally:
+        buffered.close(drain_timeout_s=0.5)
+
+
+def test_a_failed_heartbeat_keeps_its_place_among_heartbeats():
+    inner = _ScriptedTelemetryClient(script=[False])
+    buffered = BufferedTelemetryClient(inner, retry_interval_s=0.02)
+    try:
+        first, second = _make_heartbeat(battery=1), _make_heartbeat(battery=2)
+        buffered.send_heartbeat(first)
+        buffered.send_heartbeat(second)
+        assert _wait_until(lambda: buffered.delivered_heartbeats == 2, timeout_s=3.0)
+        delivered = [h.battery_health for h in inner.heartbeats]
+        assert delivered == [1, 1, 2], delivered    # failed, retried, then the next
+    finally:
+        buffered.close(drain_timeout_s=0.5)
