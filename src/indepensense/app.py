@@ -365,8 +365,26 @@ def _obstacle_tier_for(distance_cm: float, current: str | None) -> str | None:
 GPS_CACHE_INTERVAL_S = 1.0       # 1 Hz — GPS itself only emits ~1 Hz NMEA anyway
 
 
+# How many consecutive read *errors* mean the handle is dead rather than
+# the receiver having a bad moment. Three at 1 Hz is three seconds —
+# long enough not to react to one glitch, short enough that a wearer who
+# falls ten seconds later still has a position.
+#
+# Only exceptions count. A `read()` returning None, or a fix with
+# `fix_quality == 0`, is the ordinary state indoors and during a cold
+# start; treating those as failures would make the device reopen its own
+# serial port every time its user walks inside.
+GPS_FAILURES_BEFORE_REOPEN = 3
+
+# Reopen attempts back off 1 -> 2 -> 4 ... -> 60 s. Without this a modem
+# that is physically absent costs one failed open and one log line every
+# second for as long as the device runs.
+GPS_REOPEN_BACKOFF_START_S = 1.0
+GPS_REOPEN_BACKOFF_MAX_S = 60.0
+
+
 class GPSCache:
-    """Background-polled GPS cache.
+    """Background-polled GPS cache that owns, and can reopen, the device.
 
     Only one thread touches the SIM7600 serial port (this class's
     worker). Consumers call `latest_fix()` to get the most recent
@@ -376,25 +394,69 @@ class GPSCache:
     all want current position. Sharing a single `SIM7600GPS` instance
     across them and calling `.read()` from multiple threads races on
     the serial port. This adapter isolates the serial reader.
+
+    **It takes a factory, not an open device, so it can reopen one.**
+    The port used to be opened once in `start()` and held forever. That
+    is fine until the modem re-enumerates — which this one does, a dmesg
+    two seconds apart showing it drop `ttyUSB2`-`ttyUSB5` and return as
+    `ttyUSB0`-`ttyUSB4`. After that the descriptor refers to a device
+    that no longer exists, every read raises, and the loop logged the
+    same error once a second for the rest of the run with nothing
+    recovering. Addressing the port by USB interface did not help: the
+    path is resolved at `open()`, and there was no second `open()`.
+
+    What that cost is specific. `latest_fix()` keeps returning the last
+    position from before the disconnect until it is never updated again,
+    so every emergency alert from that point carries a stale fix or
+    0.0/0.0 — and the device looks healthy throughout.
+
+    The factory is `App._try_open_gps`, the same one `start()` uses, so
+    a reopen goes through exactly the path the first open did and the
+    mock runtime inherits the behaviour untouched.
     """
 
-    def __init__(self, gps, poll_interval_s: float = 1.0):
-        self._gps = gps
+    def __init__(self, open_gps, poll_interval_s: float = 1.0):
+        self._open_gps = open_gps
+        self._gps = None
         self._poll_interval_s = poll_interval_s
         self._lock = threading.Lock()
         self._latest_fix = None
         self._stop = threading.Event()
+        self._failures = 0
+        self._backoff_s = GPS_REOPEN_BACKOFF_START_S
+        self._next_attempt_at = 0.0
         self._thread = threading.Thread(
             target=self._run, name="gps-cache", daemon=True,
         )
 
-    def start(self) -> None:
+    def start(self) -> bool:
+        """Open the device and start polling. True if it opened.
+
+        The worker starts either way. A dongle missing at boot used to
+        mean no GPS for the entire run; now the same backoff that
+        recovers a mid-run disconnect also picks it up whenever it
+        appears.
+        """
+        self._gps = self._open_gps()
         self._stop.clear()
         self._thread.start()
+        return self._gps is not None
 
     def stop(self, timeout_s: float = 2.0) -> None:
         self._stop.set()
         self._thread.join(timeout=timeout_s)
+        self._close()
+
+    def _close(self) -> None:
+        """Drop the current handle. Never raises — closing a device that
+        has already vanished is the normal case here, not an error."""
+        gps, self._gps = self._gps, None
+        if gps is None:
+            return
+        try:
+            gps.close()
+        except Exception:
+            pass
 
     def latest_fix(self):
         with self._lock:
@@ -402,14 +464,55 @@ class GPSCache:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            try:
-                fix = self._gps.read()
-                if fix is not None and fix.fix_quality > 0:
-                    with self._lock:
-                        self._latest_fix = fix
-            except Exception as exc:
-                print(f"[gps-cache] read error: {exc}", file=sys.stderr, flush=True)
+            if self._gps is None:
+                self._attempt_reopen()
+            else:
+                self._poll_once()
             self._stop.wait(timeout=self._poll_interval_s)
+
+    def _poll_once(self) -> None:
+        try:
+            fix = self._gps.read()
+        except Exception as exc:
+            self._failures += 1
+            # Logged once, at the point the handle is declared dead,
+            # rather than on every failing read. The old loop printed a
+            # line a second forever, which buried the one moment that
+            # actually explained what had happened.
+            if self._failures == GPS_FAILURES_BEFORE_REOPEN:
+                print(
+                    f"[gps-cache] {self._failures} consecutive read errors "
+                    f"({exc}) — closing and reopening",
+                    file=sys.stderr, flush=True,
+                )
+                self._close()
+                self._next_attempt_at = 0.0     # retry on the next tick
+            return
+
+        self._failures = 0
+        # A read with no fix is not a failure. Indoors, and for the first
+        # minute of a cold start, this is simply what a working receiver
+        # returns.
+        if fix is not None and fix.fix_quality > 0:
+            with self._lock:
+                self._latest_fix = fix
+
+    def _attempt_reopen(self) -> None:
+        if time.monotonic() < self._next_attempt_at:
+            return
+
+        gps = self._open_gps()
+        if gps is None:
+            self._backoff_s = min(
+                self._backoff_s * 2.0, GPS_REOPEN_BACKOFF_MAX_S,
+            )
+            self._next_attempt_at = time.monotonic() + self._backoff_s
+            return
+
+        self._gps = gps
+        self._failures = 0
+        self._backoff_s = GPS_REOPEN_BACKOFF_START_S
+        print("[gps-cache] GPS reopened.", flush=True)
 
 
 class Announcer:
@@ -628,7 +731,6 @@ class App:
         self._voice_thread: threading.Thread | None = None
 
         # Placeholders — filled in by start()
-        self.gps: SIM7600GPS | None = None
         self.gps_cache: GPSCache | None = None
         self.imu: MPU6050 | None = None
         self.detector: ThresholdFallDetector | None = None
@@ -774,12 +876,15 @@ class App:
         )
 
         print("  Opening GPS...", flush=True)
-        self.gps = self._try_open_gps()
-        cached_gps = None
-        if self.gps is not None:
-            self.gps_cache = GPSCache(self.gps, poll_interval_s=GPS_CACHE_INTERVAL_S)
-            self.gps_cache.start()
-            cached_gps = _CachedGPSAdapter(self.gps_cache)
+        # The cache owns the device, so it is wired to consumers whether
+        # or not the first open succeeds: its backoff picks the receiver
+        # up whenever it appears, and `latest_fix()` answers None until
+        # then — which every caller already handles.
+        self.gps_cache = GPSCache(
+            self._try_open_gps, poll_interval_s=GPS_CACHE_INTERVAL_S,
+        )
+        self.gps_cache.start()
+        cached_gps = _CachedGPSAdapter(self.gps_cache)
 
         print("  Loading Whisper models...", flush=True)
         self.stt = self._open_stt()
@@ -1033,7 +1138,6 @@ class App:
 
         # Best-effort close on everything else — never fail shutdown.
         for name, resource in (
-            ("GPS", self.gps),
             ("MPU6050", self.imu),
             ("TOP ultrasonic", self.top_sensor),
             ("BOTTOM ultrasonic", self.bottom_sensor),
