@@ -1865,8 +1865,9 @@ class App:
         presses neither delays the alert behind ~0.4 s of buzzing nor
         blocks gpiozero's callback thread. `_play_emergency_feedback`
         takes `_warning_lock` itself, which serialises the patterns, so
-        held-down presses queue into continuous sound instead of
-        overlapping into mush.
+        rapid repeated presses queue into continuous sound instead of
+        overlapping into mush. Holding the button is one press: only the
+        press edge is wired, so a hold plays one pattern.
 
         A plain thread, not `_spawn_haptic`: that helper runs its action
         *inside* `_warning_lock`, and the lock is not reentrant. Passing it

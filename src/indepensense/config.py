@@ -134,11 +134,16 @@ OBSTACLE_READING_MAX_AGE_S = 1.0
 # full buzzer-and-motor pattern and still cancels whatever voice work is
 # running. The buzzer especially: it is the only part of this device a
 # bystander can perceive, so someone who needs attention now must be able
-# to lean on the button and keep it sounding. See `_on_emergency_press`.
+# to keep pressing and keep it sounding. See `_on_emergency_press`.
+#
+# Holding the button down counts as one press. Only the press edge is
+# wired (`when_pressed`, no hold handler), so a hold gives one pattern and
+# one alert, however long it lasts.
 #
 # The window is measured from the last alert that actually went out, not
-# from the last press, so a held-down button does not postpone the next
-# send indefinitely — it sends again every `EMERGENCY_REARM_S`.
+# from the last press, so repeated pressing does not postpone the next
+# send indefinitely — the first press `EMERGENCY_REARM_S` or more after
+# that alert sends again.
 #
 # Short on purpose. This is a debounce for a panicking hand, not a rate
 # limit: a genuine second emergency ten seconds after the first is a real
