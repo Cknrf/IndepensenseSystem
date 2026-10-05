@@ -83,7 +83,8 @@ EXAMPLES (utterance -> output)
 "Is my home still saved" -> {"intent":"unknown","parameters":{}}
 "Play some music" / "thank you" / "okay" / "the weather is nice today" -> {"intent":"unknown","parameters":{}}
 "sometime tomorrow" / "in a bit" / "one at a time please" -> {"intent":"unknown","parameters":{}}
-"Where is the clinic" / "What is the exact location of CN's house" / "Nasaan ang bahay ni Nanay" -> {"intent":"place.locate","parameters":{"label":"the clinic"}}
+"Where is the clinic" -> {"intent":"place.locate","parameters":{"label":"the clinic"}}
+"Nasaan ang bahay ni Nanay" -> {"intent":"place.locate","parameters":{"label":"bahay ni Nanay"}}
 "How tall is Mount Apo" / "What is the capital of Japan" / "What is nine times eight" -> {"intent":"unknown","parameters":{}}
 "How many days until Christmas" / "Ilang araw bago mag-Pasko" -> {"intent":"unknown","parameters":{}}
 "Gaano katangkad ang Bundok Apo" -> {"intent":"unknown","parameters":{}}
