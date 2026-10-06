@@ -361,7 +361,7 @@ MAG_LEFT_AXIS = "-x"
 # verification reads heading while walking, where torso sway is worst, so
 # that is where it will show first. See docs/deferred.md on tilt
 # compensation.
-COMPASS_CALIBRATED = False
+COMPASS_CALIBRATED = True
 
 # Turn-to-face guidance: pointing the user the right way before they walk.
 #
