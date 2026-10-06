@@ -250,11 +250,11 @@ HEADING_CHECK_INTERVAL_S = 0.5
 # unknowns instead of nine, in the one plane that matters, and reached
 # 4.6° on the first attempt. Full account in docs/deferred.md.
 MAG_OFFSET_X = -39.147
-    MAG_OFFSET_Y = 0.000
-    MAG_OFFSET_Z = 4.560
-    MAG_SCALE_X = 0.9893
-    MAG_SCALE_Y = 1.0000
-    MAG_SCALE_Z = 1.0110
+MAG_OFFSET_Y = 0.000
+MAG_OFFSET_Z = 4.560
+MAG_SCALE_X = 0.9893
+MAG_SCALE_Y = 1.0000
+MAG_SCALE_Z = 1.0110
 
 # Mount orientation: which sensor axis ends up pointing where on the
 # assembled wearable. Heading is computed from the two axes that are
