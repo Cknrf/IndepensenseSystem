@@ -79,6 +79,38 @@ def parse_graphhopper_response(payload: dict[str, Any]) -> Route:
     )
 
 
+def _error_detail(response) -> str:
+    """GraphHopper's own explanation for a failed request.
+
+    `raise_for_status()` reports only "500 Server Error for url: ...",
+    which is the one thing the caller already knew. GraphHopper puts the
+    actual reason in the body — "Cannot find point 1", "Unknown profile",
+    the summary of a server-side exception — and throwing that away sent
+    a field test to `journalctl` for something that had already been
+    returned over the wire, and spoke "Sorry, something went wrong" to a
+    user who could have been told the destination was unreachable.
+
+    Falls back to raw text, then to nothing at all: this runs while
+    something is already broken, and it must not add a second failure on
+    top of the first.
+    """
+    try:
+        payload = response.json()
+    except Exception:
+        return (response.text or "").strip()[:300] or "no detail in response"
+    if isinstance(payload, dict):
+        message = payload.get("message")
+        if message:
+            hints = payload.get("hints") or []
+            extra = [
+                h["details"] for h in hints
+                if isinstance(h, dict) and h.get("details")
+                and h.get("details") != message
+            ]
+            return f"{message} ({'; '.join(extra)})" if extra else str(message)
+    return str(payload)[:300]
+
+
 class GraphHopperRouter:
     def __init__(self, base_url: str, timeout_s: float = _DEFAULT_TIMEOUT_S):
         self._base_url = base_url.rstrip("/")
@@ -119,5 +151,10 @@ class GraphHopperRouter:
             params=params,
             timeout=self._timeout_s,
         )
-        response.raise_for_status()
+        if not response.ok:
+            raise requests.HTTPError(
+                f"{response.status_code} from GraphHopper: "
+                f"{_error_detail(response)}",
+                response=response,
+            )
         return parse_graphhopper_response(response.json())

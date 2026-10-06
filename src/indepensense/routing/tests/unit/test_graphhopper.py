@@ -1,5 +1,6 @@
 import pytest
 
+from indepensense.routing import graphhopper
 from indepensense.routing.base import Coordinate
 from indepensense.routing.graphhopper import (
     GraphHopperRouter,
@@ -65,6 +66,11 @@ class _CapturingSession:
     def __init__(self, payload):
         self._payload = payload
         self.params = None
+        # A real requests.Response always carries these; the client reads
+        # `ok` so that a failed request can report GraphHopper's own
+        # message instead of a bare status line.
+        self.ok = True
+        self.status_code = 200
 
     def __call__(self, url, params=None, timeout=None):
         self.params = params
@@ -143,3 +149,80 @@ def test_a_heading_of_zero_is_sent_not_dropped(capture):
     )
 
     assert _params(capture)["heading"] == "0"
+
+
+# --- what a failed request reports -------------------------------------------
+#
+# `raise_for_status()` alone says "500 Server Error for url: ...", which
+# is the one thing the caller already knew. A field test lost time to
+# exactly that while GraphHopper's own explanation sat unread in the
+# response body.
+
+class _Response:
+    def __init__(self, status_code=500, payload=None, text=""):
+        self.status_code = status_code
+        self.ok = 200 <= status_code < 300
+        self._payload = payload
+        self.text = text
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not JSON")
+        return self._payload
+
+
+def test_the_servers_own_message_reaches_the_caller():
+    detail = graphhopper._error_detail(
+        _Response(payload={"message": "Cannot find point 1: 13.9,121.1"})
+    )
+
+    assert "Cannot find point 1" in detail
+
+
+def test_hints_are_appended_when_they_add_something():
+    detail = graphhopper._error_detail(_Response(payload={
+        "message": "Connection between locations not found",
+        "hints": [{"details": "ConnectionNotFoundException"}],
+    }))
+
+    assert "Connection between locations not found" in detail
+    assert "ConnectionNotFoundException" in detail
+
+
+def test_a_hint_that_repeats_the_message_is_not_doubled():
+    detail = graphhopper._error_detail(_Response(payload={
+        "message": "Unknown profile 'foot'",
+        "hints": [{"details": "Unknown profile 'foot'"}],
+    }))
+
+    assert detail == "Unknown profile 'foot'"
+
+
+def test_a_non_json_body_falls_back_to_text():
+    detail = graphhopper._error_detail(
+        _Response(text="<html>502 Bad Gateway</html>")
+    )
+
+    assert "502 Bad Gateway" in detail
+
+
+def test_an_empty_body_still_says_something():
+    """This runs while something is already broken; it must not become a
+    second failure on top of the first."""
+    assert graphhopper._error_detail(_Response(text="")) == "no detail in response"
+
+
+def test_the_route_call_raises_with_the_detail(monkeypatch):
+    import requests
+
+    def _get(url, params=None, timeout=None):
+        return _Response(payload={"message": "Cannot find point 2"})
+
+    monkeypatch.setattr(requests, "get", _get)
+    router = graphhopper.GraphHopperRouter(base_url="http://127.0.0.1:8989")
+
+    with pytest.raises(requests.HTTPError) as caught:
+        router.route(Coordinate(13.9, 121.1), Coordinate(13.94, 121.13))
+
+    assert "Cannot find point 2" in str(caught.value)
+    assert "500" in str(caught.value)
