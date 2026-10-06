@@ -317,7 +317,7 @@ MAG_SCALE_Z = 1.0564
 # Small on purpose, and that is the useful part: `magnetometer_axes` left
 # four candidate axis pairs that differ by whole 90° steps, and an offset
 # of 12° rather than ~100° confirms the pair below is the right one.
-MAG_HEADING_OFFSET_DEG = -12.4
+MAG_HEADING_OFFSET_DEG = 0.0
 
 MAG_FORWARD_AXIS = "-z"
 MAG_LEFT_AXIS = "-x"
@@ -361,7 +361,7 @@ MAG_LEFT_AXIS = "-x"
 # verification reads heading while walking, where torso sway is worst, so
 # that is where it will show first. See docs/deferred.md on tilt
 # compensation.
-COMPASS_CALIBRATED = True
+COMPASS_CALIBRATED = False
 
 # Turn-to-face guidance: pointing the user the right way before they walk.
 #
