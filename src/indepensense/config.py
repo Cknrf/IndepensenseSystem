@@ -317,7 +317,7 @@ MAG_SCALE_Z = 1.0110
 # Small on purpose, and that is the useful part: `magnetometer_axes` left
 # four candidate axis pairs that differ by whole 90° steps, and an offset
 # of 12° rather than ~100° confirms the pair below is the right one.
-MAG_HEADING_OFFSET_DEG = 0.0
+MAG_HEADING_OFFSET_DEG = -3.4
 
 MAG_FORWARD_AXIS = "-z"
 MAG_LEFT_AXIS = "-x"
