@@ -922,3 +922,154 @@ def test_without_delivery_reporting_there_is_nothing_to_say_in_advance():
     )
 
     assert executor.emergency_acknowledgement() is None
+
+
+# --- the same race, on the spoken path ---------------------------------------
+#
+# The button is not the only way to raise an alert: "help" reaches the same
+# executor through `_voice_pipeline`, which answers by synthesising and then
+# playing. Piper is 1-3 s on the Pi, so the window the button fix closed is
+# *wider* here, not narrower. Measured before this fix, on a unit with no
+# modem: the confirmation was queued at 0.16 s and the acknowledgement played
+# at 1.16 s — the wearer heard "sent to your guardian" a full second before
+# "sending your emergency alert".
+
+class _VoiceSTT:
+    def __init__(self, text="help"):
+        self.text = text
+
+    def transcribe(self, path, language="en", initial_prompt=None):
+        from indepensense.voice.base import Transcript, TranscriptSegment
+        return Transcript(
+            text=self.text, language=language,
+            segments=[TranscriptSegment(text=self.text, start_s=0, end_s=1)],
+        )
+
+
+class _VoiceParser:
+    def __init__(self, intent):
+        self.intent = intent
+
+    def parse(self, text):
+        from indepensense.intents.base import IntentResult
+        return IntentResult(intent=self.intent)
+
+
+class _RecordingTTS:
+    def __init__(self):
+        self.synthesised: list[str] = []
+
+    def synthesize(self, text, path, language="en"):
+        self.synthesised.append(text)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+
+
+@pytest.fixture
+def voice_app(app, monkeypatch, tmp_path):
+    """An app whose voice pipeline runs end to end with no audio or models."""
+    app.alert_sink = MockTelemetryClient()
+    app.gps_cache = _StubCache(_fix())
+    app.cloud = None
+    app.tts = _RecordingTTS()
+    monkeypatch.setattr(app_module, "record_until_button", lambda *a, **k: 3.0)
+    monkeypatch.setattr(app_module, "VOICE_TEST_DIR", tmp_path)
+    monkeypatch.setattr(app_module, "is_playing", lambda: False)
+    monkeypatch.setattr(app, "_play_press_feedback", lambda rising_chime: None)
+    return app
+
+
+def _say(app, intent):
+    app.stt = _VoiceSTT()
+    app.parser = _VoiceParser(intent)
+    app._voice_active.set()
+    app._voice_cancel.clear()
+    app._voice_pipeline()
+
+
+def test_a_spoken_emergency_queues_the_ack_before_dispatching(
+    voice_app, monkeypatch,
+):
+    """Ordering by construction, exactly as on the button."""
+    from indepensense.intents.base import Intent
+
+    voice_app.executor = _OrderRecordingExecutor()
+    announced: list[str] = []
+    monkeypatch.setattr(voice_app, "_announce",
+                        lambda text, critical=False: announced.append(text))
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+
+    _say(voice_app, Intent.EMERGENCY_TRIGGER)
+
+    assert voice_app.executor.order == ["ack", "dispatch"], \
+        "the alert was dispatched before the acknowledgement was queued"
+    assert announced == ["Sending your emergency alert."], \
+        f"announced once, before dispatch — got {announced!r}"
+
+
+def test_a_spoken_emergency_is_not_answered_twice(voice_app, monkeypatch):
+    """The announcer owns the sentence now, so the pipeline must not
+    synthesise and play it a second time a second later."""
+    from indepensense.intents.base import Intent
+
+    voice_app.executor = _OrderRecordingExecutor()
+    monkeypatch.setattr(voice_app, "_announce", lambda *a, **k: None)
+    played: list = []
+    monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
+
+    _say(voice_app, Intent.EMERGENCY_TRIGGER)
+
+    assert voice_app.tts.synthesised == [], \
+        f"the acknowledgement was synthesised again: {voice_app.tts.synthesised!r}"
+    assert played == [], "the acknowledgement was played a second time"
+
+
+def test_a_broken_ack_never_stops_a_spoken_alert(voice_app, monkeypatch):
+    """Announcing is a courtesy; dispatching is the point. Same contract
+    the button path carries, and the same failure it was written against."""
+    from indepensense.intents.base import Intent
+
+    class _AngryExecutor:
+        def __init__(self):
+            self.calls = 0
+
+        def emergency_acknowledgement(self):
+            raise RuntimeError("messages catalogue exploded")
+
+        def execute(self, result):
+            self.calls += 1
+            return "Sending your emergency alert."
+
+    voice_app.executor = _AngryExecutor()
+    monkeypatch.setattr(voice_app, "_announce", lambda *a, **k: None)
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+
+    _say(voice_app, Intent.EMERGENCY_TRIGGER)
+
+    assert voice_app.executor.calls == 1, \
+        "a speaking failure suppressed the alert"
+    assert voice_app.tts.synthesised == ["Sending your emergency alert."], \
+        "no acknowledgement was queued, so the answer had to be spoken normally"
+
+
+def test_an_ordinary_command_still_synthesises_and_plays(voice_app, monkeypatch):
+    """The early return is for the emergency intent alone. Every other
+    command must still take the synthesise-then-play path."""
+    from indepensense.intents.base import Intent
+
+    class _Executor:
+        def execute(self, result):
+            return "It is three o'clock."
+
+        def emergency_acknowledgement(self):
+            return "Sending your emergency alert."
+
+    voice_app.executor = _Executor()
+    monkeypatch.setattr(voice_app, "_announce", lambda *a, **k: None)
+    played: list = []
+    monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
+
+    _say(voice_app, Intent.SYSTEM_TIME)
+
+    assert voice_app.tts.synthesised == ["It is three o'clock."]
+    assert len(played) == 1, "an ordinary answer was not played"

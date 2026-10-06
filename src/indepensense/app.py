@@ -2444,6 +2444,13 @@ class App:
         press handler with its own "stop recording" handler. We restore
         our `_on_ptt_press` handler in the `finally` block so the next
         press starts a new cycle correctly.
+
+        **One intent does not take the TTS → play tail: the emergency
+        trigger.** Its answer is queued through `_announce` *before*
+        `execute()` dispatches the alert, and the cycle then returns. The
+        reason is ordering, not speed — see the comment at the dispatch.
+        Anything that needs the last response still has it: the executor
+        stores that text itself, so the repeat button is unaffected.
         """
         # Per-stage wall clock, reported as one line in the `finally`.
         #
@@ -2591,11 +2598,46 @@ class App:
                     if self._voice_cancel.is_set():
                         return
 
+                # Emergency is the one intent whose real work happens
+                # *inside* `execute()`: it dispatches the alert and starts
+                # the SMS fan-out. That thread can reach the announcer
+                # before this one has finished synthesising, and then the
+                # delivery report is spoken first. Measured on a unit with
+                # no modem, where the SMS leg resolves instantly: the
+                # confirmation was queued a full second before the
+                # acknowledgement played, so the wearer heard "sent to your
+                # guardian" and only then "sending your emergency alert".
+                # Announcing first puts both sentences in one queue, which
+                # makes the order a property of that queue rather than of
+                # how long Piper took — and Piper is 1-3 s on the Pi, so
+                # the window is wide, not theoretical.
+                #
+                # `_on_emergency_press` does the same for the button. In
+                # its own `try` for the same reason as there: announcing is
+                # a courtesy, dispatching is the point, and nothing on the
+                # speaking path may stop it.
+                acknowledgement = None
+                if intent_result.intent is Intent.EMERGENCY_TRIGGER:
+                    try:
+                        acknowledgement = self.executor.emergency_acknowledgement()
+                    except Exception as exc:
+                        print(f"[PTT] could not pre-announce: {exc}",
+                              file=sys.stderr, flush=True)
+                    if acknowledgement is not None:
+                        self._announce(acknowledgement, critical=True)
+
                 _t0 = time.monotonic()
                 response = self.executor.execute(intent_result)
                 stages.append(("exec", time.monotonic() - _t0))
                 print(f"[PTT] Response: {response}", flush=True)
                 if self._voice_cancel.is_set():
+                    return
+
+                if acknowledgement is not None:
+                    # Already spoken, and `execute()` returns that same
+                    # sentence — `emergency_acknowledgement` exists to
+                    # predict it. Synthesising it here would say it twice,
+                    # the second time a second behind itself.
                     return
 
                 _t0 = time.monotonic()
