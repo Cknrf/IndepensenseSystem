@@ -60,6 +60,11 @@ import threading
 from pathlib import Path
 
 
+# Half-written clips live here, one level down, so that a `*.wav` glob
+# over the clip directory can never pick one up.
+SCRATCH_DIR_NAME = ".partial"
+
+
 def digest(text: str, language: str) -> str:
     """Stable identity for one sentence spoken in one language.
 
@@ -104,24 +109,41 @@ def find(text: str, language: str, *directories: Path) -> Path | None:
 def render(tts, text: str, language: str, directory: Path) -> Path:
     """Synthesise into `directory` and return the finished clip.
 
-    Writes to a temporary name and renames into place. `os.replace` is
+    Writes to a temporary file and renames into place. `os.replace` is
     atomic on POSIX, which buys two things that matter on a device that
     can lose power at any moment:
 
-      * A crash, or a pull of the battery, mid-synthesis leaves a
-        `.part` file rather than a truncated `.wav`. A truncated WAV at
-        the right filename is permanent damage — it exists, so `find`
+      * A crash, or a pull of the battery, mid-synthesis leaves the
+        temporary behind rather than a truncated `.wav`. A truncated WAV
+        at the right filename is permanent damage — it exists, so `find`
         returns it, and the wearable clips that sentence short forever.
       * Two threads asked to speak the same sentence at the same moment
         — the announcer and the voice pipeline can both do this — write
         separate temporaries and rename them onto the same final name.
         One wins, both play a complete file. Interleaved writes to one
         path would corrupt it for both.
+
+    **The temporary keeps a `.wav` extension**, and that is not
+    cosmetic. `MmsTTS` writes through `soundfile`, which picks its
+    container from the filename; handed a `.part` it raised "No format
+    specified and unable to get format from file extension" and every
+    Tagalog clip on the device failed to render while English — written
+    by Piper through `wave.open`, which does not care — succeeded. The
+    `TTSEngine` protocol says "render text to a WAV file at the given
+    path", so a path that does not look like one is this function's bug,
+    not the engine's.
+
+    It therefore lives in a `.partial/` subdirectory rather than beside
+    the finished clips, so that a `*.wav` glob — the sweep, the
+    renderer's prune — never mistakes a half-written file for a usable
+    one. Same filesystem, so the rename is still atomic.
     """
     directory.mkdir(parents=True, exist_ok=True)
     final = directory / filename(text, language)
+    scratch_dir = directory / SCRATCH_DIR_NAME
+    scratch_dir.mkdir(parents=True, exist_ok=True)
     # pid and thread id so concurrent writers never share a temporary.
-    scratch = directory / f"{final.stem}.{os.getpid()}.{threading.get_ident()}.part"
+    scratch = scratch_dir / f"{final.stem}.{os.getpid()}.{threading.get_ident()}.wav"
     try:
         tts.synthesize(text, scratch, language=language)
         os.replace(scratch, final)
@@ -145,15 +167,15 @@ def sweep(directory: Path, max_bytes: int) -> int:
     reproducible from a template at the cost of one synthesis; nothing
     in `data/audio/messages/` is, within the boot that needs it.
 
-    Abandoned `.part` files are removed unconditionally — a temporary
-    that outlived its process is debris from a crash, and no running
-    writer owns a name containing a pid that is gone.
+    Abandoned temporaries are removed unconditionally — one that
+    outlived its process is debris from a crash, and no running writer
+    owns a name containing a pid that is gone.
     """
     if not directory.exists():
         return 0
 
     freed = 0
-    for scratch in directory.glob("*.part"):
+    for scratch in (directory / SCRATCH_DIR_NAME).glob("*.wav"):
         try:
             freed += scratch.stat().st_size
             scratch.unlink()

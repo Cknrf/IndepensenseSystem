@@ -107,7 +107,44 @@ def test_rendering_leaves_no_temporary_behind(dirs):
     _, cache = dirs
     clips.render(MockTTS(), "Alert sent.", "en", cache)
 
-    assert list(cache.glob("*.part")) == []
+    assert list((cache / clips.SCRATCH_DIR_NAME).glob("*")) == []
+
+
+def test_the_engine_is_handed_a_path_that_looks_like_a_wav(dirs):
+    """`MmsTTS` writes through soundfile, which picks its container from
+    the file extension. A temporary called `.part` made every Tagalog
+    clip fail to render while English, written by Piper through
+    `wave.open`, succeeded — so the suffix is load-bearing."""
+    _, cache = dirs
+    seen = []
+
+    class _ExtensionSensitiveTTS(MockTTS):
+        def synthesize(self, text, output_path, language=None):
+            seen.append(output_path.suffix)
+            if output_path.suffix != ".wav":
+                raise RuntimeError(
+                    "No format specified and unable to get format from "
+                    f"file extension: {output_path}"
+                )
+            super().synthesize(text, output_path, language=language)
+
+    clips.render(_ExtensionSensitiveTTS(), "Alert sent.", "tl", cache)
+
+    assert seen == [".wav"]
+
+
+def test_a_half_written_clip_is_invisible_to_a_wav_glob(dirs):
+    """What the subdirectory is for. A temporary sitting beside the
+    finished clips would be swept as if it were one, and worse, found
+    and played by a `*.wav` scan."""
+    _, cache = dirs
+
+    class _SlowTTS(MockTTS):
+        def synthesize(self, text, output_path, language=None):
+            super().synthesize(text, output_path, language=language)
+            assert list(cache.glob("*.wav")) == [], "temporary is visible"
+
+    clips.render(_SlowTTS(), "Alert sent.", "en", cache)
 
 
 def test_a_failed_render_leaves_nothing_at_all(dirs):
@@ -126,7 +163,7 @@ def test_a_failed_render_leaves_nothing_at_all(dirs):
         clips.render(_Broken(), "Alert sent.", "en", cache)
 
     assert clips.find("Alert sent.", "en", cache) is None
-    assert list(cache.glob("*.part")) == []
+    assert list((cache / clips.SCRATCH_DIR_NAME).glob("*")) == []
 
 
 def test_rendering_twice_is_idempotent(dirs):
@@ -186,7 +223,7 @@ def test_abandoned_temporaries_are_cleaned_up(dirs):
     """Debris from a power loss mid-synthesis. No live writer owns a name
     containing a pid that no longer exists."""
     _, cache = dirs
-    scratch = cache / "abcd.999.888.part"
+    scratch = cache / clips.SCRATCH_DIR_NAME / "abcd.999.888.wav"
     scratch.parent.mkdir(parents=True)
     scratch.write_bytes(b"half a sentence")
 

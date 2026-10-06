@@ -219,4 +219,4 @@ def test_a_failed_clip_leaves_no_truncated_file(target, monkeypatch):
     _run()
 
     assert _clips(target) == []
-    assert list(target.glob("*.part")) == []
+    assert list((target / clips.SCRATCH_DIR_NAME).glob("*")) == []

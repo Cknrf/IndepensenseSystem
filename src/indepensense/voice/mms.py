@@ -111,7 +111,15 @@ class MmsTTS:
         audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype="float32")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        sf.write(str(output_path), audio, self.sample_rate, subtype="PCM_16")
+        # `format` explicitly, because soundfile otherwise infers the
+        # container from the file extension — and the protocol this
+        # implements promises a WAV at whatever path it is handed, not
+        # "a WAV if the path happens to end in .wav". It was handed a
+        # `.part` once and raised "No format specified and unable to get
+        # format from file extension", which took down every Tagalog
+        # clip while Piper, writing through `wave.open`, carried on.
+        sf.write(str(output_path), audio, self.sample_rate,
+                 format="WAV", subtype="PCM_16")
 
     def _synthesize_one(self, sentence: str):
         """One sentence to a float32 waveform, or None if it tokenised empty.
