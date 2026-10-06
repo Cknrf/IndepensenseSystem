@@ -38,13 +38,18 @@ import argparse
 import sys
 import time
 
-from indepensense.config import MESSAGE_AUDIO_DIR, SUPPORTED_LANGUAGES
+from indepensense.config import (
+    MESSAGE_AUDIO_DIR,
+    MMS_VOICES,
+    PIPER_VOICES,
+    SUPPORTED_LANGUAGES,
+)
 from indepensense.intents import messages
 from indepensense.voice import clips
 from indepensense.voice.router import build_tts
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--language", action="append", metavar="CODE",
@@ -58,7 +63,7 @@ def main() -> int:
         "--dry-run", action="store_true",
         help="list what would be rendered without loading a TTS engine.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     languages = args.language or list(SUPPORTED_LANGUAGES)
     keys = messages.static_keys()
@@ -89,7 +94,12 @@ def main() -> int:
     failures = 0
     if todo:
         print("Loading TTS...", flush=True)
-        tts = build_tts()
+        # The same two maps `App._open_tts` passes. `build_tts` takes
+        # them as arguments rather than reading config itself, so that
+        # every caller renders with the engines the device will actually
+        # use — a clip built by an English-only router would be replayed
+        # for Tagalog forever.
+        tts = build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES)
         started = time.monotonic()
         for index, (key, language, text) in enumerate(todo, start=1):
             try:
