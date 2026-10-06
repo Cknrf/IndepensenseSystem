@@ -398,7 +398,7 @@ moment there is no time to synthesise them.
 Build the permanent set after editing `messages.py`:
 
 ```bash
-python -m indepensense.tools.render_messages          # ~2 min, ~35 MB
+python -m indepensense.tools.render_messages          # ~4 min, ~15 MB
 python -m indepensense.tools.render_messages --dry-run   # works on a Mac
 ```
 

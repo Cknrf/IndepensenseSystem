@@ -6,12 +6,14 @@
 Run it on the Pi after editing `intents/messages.py`, and once after a
 fresh install. It fills `config.MESSAGE_AUDIO_DIR` with one clip per
 static message per language — 61 messages x 2 languages at the time of
-writing, roughly 35 MB and a couple of minutes of Piper and MMS.
+writing. Measured on the Pi: 122 clips, 14.5 MB, 247 s. Tagalog
+dominates that time; MMS runs a torch model per sentence where Piper
+streams from ONNX.
 
 **Why a tool and not something `start()` does.** Boot is already 2-3
 minutes of model loading, and the user is standing there waiting through
-it. Rendering 122 clips would add another minute or two to the first
-boot after any text edit, for a saving the user could have had at deploy
+it. Rendering 122 clips would roughly triple that on the first boot
+after any text edit, for a saving the user could have had at deploy
 time instead. The two clips that genuinely must exist before the TTS
 engine loads are rendered at the end of `start()` by `_render_boot_clips`
 — see `app._BOOT_CLIPS`.

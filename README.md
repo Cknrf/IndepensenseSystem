@@ -341,7 +341,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 
 | Purpose | Command |
 |---|---|
-| Render every fixed message to audio — run after editing `intents/messages.py` | `python -m indepensense.tools.render_messages` — ~2 min, ~35 MB into `data/audio/messages/` |
+| Render every fixed message to audio — run after editing `intents/messages.py` | `python -m indepensense.tools.render_messages` — ~4 min, ~15 MB into `data/audio/messages/` (measured: 122 clips, 247 s) |
 | List what would be rendered, without loading a voice (works on a Mac) | `python -m indepensense.tools.render_messages --dry-run` |
 | Re-render everything, e.g. after changing a voice model | `python -m indepensense.tools.render_messages --force` |
 
