@@ -1,88 +1,94 @@
-"""Unit tests for the pre-rendered startup announcement in `app.py`.
+"""Unit tests for the clips `app.py` plays rather than synthesises.
 
-Startup takes 2-3 minutes, and until TTS finishes loading the wearable
-cannot synthesise anything — so the "I am starting up" message has to be
-replayed from a file rendered on a previous boot. To a user who cannot see
-a terminal, the alternative is two silent minutes that are indistinguishable
-from a device which failed to power on.
+Two reasons, and the distinction is what these tests guard.
 
-The interesting behaviour is not the playback, which is one `play()` call.
-It is the cache invalidation: a recording that outlives the sentence it was
-made from would have the wearable saying something no longer present
-anywhere in the source, and nothing would ever flag it.
+`system.starting` and `language.greeting` are rendered at the end of
+every boot by `_render_boot_clips`, because they are spoken *before* TTS
+is loaded — `_play_startup_notice` has no engine to fall back to, so a
+missing clip there means silence, and to a user who cannot see a
+terminal two silent minutes are indistinguishable from a device that
+failed to power on.
+
+Everything else goes through `_play_clip`, which looks the sentence up
+and synthesises on the spot if it is missing. Those tests are about the
+fallback working, not about the clip existing.
+
+The underlying store — naming, lookup order, eviction — is tested in
+`voice/tests/unit/test_clips.py`. What is tested here is the wiring.
 """
 import pytest
 
 from indepensense import app as app_module
 from indepensense.app_mock import MockApp
 from indepensense.intents import messages
+from indepensense.voice import clips
 from indepensense.voice.mock import MockTTS
 
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
-    """A MockApp whose startup clips land in a temp directory."""
-    monkeypatch.setattr(app_module, "STARTUP_AUDIO_DIR", tmp_path)
+    """A MockApp whose clips land in temp directories."""
+    monkeypatch.setattr(app_module, "MESSAGE_AUDIO_DIR", tmp_path / "messages")
+    monkeypatch.setattr(app_module, "CLIP_CACHE_DIR", tmp_path / "cache")
     instance = MockApp()
     instance.tts = MockTTS()
     return instance
 
 
-# --- cache invalidation -------------------------------------------------------
-
-def test_the_filename_changes_when_the_message_changes(app, monkeypatch):
-    """The whole point of hashing the text into the name. Without it, editing
-    `system.starting` leaves the wearable speaking the old sentence forever."""
-    before = app._prerendered_path("startup", "en")
-
-    monkeypatch.setitem(
-        messages.MESSAGES["system.starting"], "en", "Completely different wording.",
+def _clip(app, key, language=None):
+    """Where the clip for `key` would live, if it exists."""
+    language = language or app.language.current
+    return clips.find(
+        messages.get(key, language), language,
+        app_module.MESSAGE_AUDIO_DIR, app_module.CLIP_CACHE_DIR,
     )
-    after = app._prerendered_path("startup", "en")
-
-    assert before != after
 
 
-def test_each_language_gets_its_own_clip(app):
-    assert app._prerendered_path("startup", "en") != app._prerendered_path("startup", "tl")
-
-
-# --- rendering ----------------------------------------------------------------
+# --- the boot clips ----------------------------------------------------------
 
 def test_every_supported_language_is_rendered(app):
     """Not just the active one: the user can switch language by voice, and
     the next boot must greet them in their choice — at which point TTS is
     again unavailable."""
-    app._render_prerendered()
+    app._render_boot_clips()
 
-    for language in app.language.supported:
-        assert app._prerendered_path("startup", language).exists(), language
+    for key in app_module._BOOT_CLIPS:
+        for language in app.language.supported:
+            assert _clip(app, key, language) is not None, (key, language)
+
+
+def test_the_greeting_is_a_boot_clip(app):
+    """It was not, and was re-synthesised on every single boot — the miss
+    that prompted all of this."""
+    assert "language.greeting" in app_module._BOOT_CLIPS
 
 
 def test_rendering_again_does_not_resynthesise(app):
-    app._render_prerendered()
-    path = app._prerendered_path("startup", "en")
+    app._render_boot_clips()
+    path = _clip(app, "system.starting", "en")
     stamp = path.stat().st_mtime_ns
 
-    app._render_prerendered()
+    app._render_boot_clips()
 
     assert path.stat().st_mtime_ns == stamp, "re-rendered an unchanged clip"
 
 
-def test_a_changed_message_replaces_the_stale_clip(app, monkeypatch):
-    """One file per language, not a growing pile of recordings of sentences
-    nobody says any more — this runs on an SD card."""
-    app._render_prerendered()
-    stale = app._prerendered_path("startup", "en")
+def test_a_changed_message_leaves_the_stale_clip_unused(app, monkeypatch):
+    """The point of hashing the text into the name. The old file is still
+    on disk until `render_messages` prunes it, but nothing will ever ask
+    for it again — which is what stops the wearable speaking a sentence
+    that is no longer anywhere in the source."""
+    app._render_boot_clips()
+    stale = _clip(app, "system.starting", "en")
 
     monkeypatch.setitem(
         messages.MESSAGES["system.starting"], "en", "A newly worded greeting.",
     )
-    app._render_prerendered()
 
-    assert app._prerendered_path("startup", "en").exists()
-    assert not stale.exists(), "old clip survived the message change"
-    assert len(list(stale.parent.glob("startup_en_*.wav"))) == 1
+    assert _clip(app, "system.starting", "en") is None
+    app._render_boot_clips()
+    fresh = _clip(app, "system.starting", "en")
+    assert fresh is not None and fresh != stale
 
 
 def test_a_broken_tts_does_not_stop_the_wearable_booting(app):
@@ -92,14 +98,14 @@ def test_a_broken_tts_does_not_stop_the_wearable_booting(app):
             raise RuntimeError("voice model missing")
 
     app.tts = _BrokenTTS()
-    app._render_prerendered()        # must not raise
+    app._render_boot_clips()        # must not raise
 
 
-# --- playback -----------------------------------------------------------------
+# --- the startup notice ------------------------------------------------------
 
 def test_playing_is_skipped_when_no_clip_exists_yet(app, monkeypatch):
     """First boot after installation. Silence here is expected, not a crash —
-    `_render_prerendered` fixes it for every boot afterwards."""
+    `_render_boot_clips` fixes it for every boot afterwards."""
     played = []
     monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
 
@@ -108,14 +114,39 @@ def test_playing_is_skipped_when_no_clip_exists_yet(app, monkeypatch):
     assert played == []
 
 
-def test_the_clip_is_played_when_present(app, monkeypatch):
-    played = []
-    monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
-    app._render_prerendered()
+def test_the_notice_never_falls_back_to_synthesis(app, monkeypatch):
+    """The one caller that cannot: it runs before the TTS engine is
+    loaded, so reaching for it would raise on the first line of
+    `start()` rather than produce a sentence."""
+    synthesised = []
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+    monkeypatch.setattr(app.tts, "synthesize", lambda *a, **k: synthesised.append(a))
 
     app._play_startup_notice()
 
-    assert played == [app._prerendered_path("startup", app.language.current)]
+    assert synthesised == []
+
+
+def test_the_clip_is_played_when_present(app, monkeypatch):
+    played = []
+    monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
+    app._render_boot_clips()
+
+    app._play_startup_notice()
+
+    assert played == [_clip(app, "system.starting")]
+
+
+def test_the_notice_is_played_from_the_permanent_directory(app, monkeypatch):
+    """Not the cache, which gets swept. A clip evicted between boots
+    would mean a silent startup."""
+    played = []
+    monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
+    app._render_boot_clips()
+
+    app._play_startup_notice()
+
+    assert played[0].parent == app_module.MESSAGE_AUDIO_DIR
 
 
 def test_a_playback_failure_does_not_stop_the_wearable_booting(app, monkeypatch):
@@ -123,50 +154,38 @@ def test_a_playback_failure_does_not_stop_the_wearable_booting(app, monkeypatch)
         raise OSError("no audio device")
 
     monkeypatch.setattr(app_module, "play", _boom)
-    app._render_prerendered()
+    app._render_boot_clips()
 
     app._play_startup_notice()          # must not raise
 
 
-# --- the thinking clip -------------------------------------------------------
+# --- _play_clip --------------------------------------------------------------
 #
-# Same mechanism as the startup clip, different reason. TTS exists by the
-# time this plays, but the sentence sits in front of the slowest path the
-# device has: synthesising it on every cloud question added ~1 s to the
-# exact wait it exists to excuse.
-
-def test_the_thinking_clip_is_rendered_for_every_language(app):
-    app._render_prerendered()
-
-    for language in app.language.supported:
-        assert app._prerendered_path("thinking", language).exists(), language
-
-
-def test_startup_and_thinking_clips_do_not_collide(app):
-    """Both hash their own message into the filename; the name prefix is
-    what keeps two different sentences from sharing a path."""
-    assert (app._prerendered_path("startup", "en")
-            != app._prerendered_path("thinking", "en"))
-
+# The in-pipeline cues. TTS exists by the time these play, so a missing
+# clip costs latency rather than silence — but the latency is the whole
+# problem: `cloud.thinking` sits in front of the slowest path the device
+# has, and synthesising it added ~1 s to the exact wait it exists to
+# excuse.
 
 def test_speaking_thinking_plays_the_rendered_clip(app, monkeypatch):
     """The point of the change: no synthesis on the critical path."""
     played = []
     synthesised = []
     monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
-    app._render_prerendered()
-    monkeypatch.setattr(app.tts, "synthesize",
-                        lambda *a, **k: synthesised.append(a))
+    clips.render(app.tts, messages.get("cloud.thinking", app.language.current),
+                 app.language.current, app_module.MESSAGE_AUDIO_DIR)
+    monkeypatch.setattr(app.tts, "synthesize", lambda *a, **k: synthesised.append(a))
 
     app._speak_thinking()
 
-    assert played == [app._prerendered_path("thinking", app.language.current)]
+    assert played == [_clip(app, "cloud.thinking")]
     assert synthesised == [], "synthesised a clip that was already rendered"
 
 
 def test_speaking_thinking_falls_back_when_the_clip_is_missing(app, monkeypatch):
-    """First boot after the message text changes. Better a slow sentence
-    than a silent one in front of the longest wait on the device."""
+    """First boot after the message text changes, or before
+    `render_messages` has been run. Better a slow sentence than a silent
+    one in front of the longest wait on the device."""
     played = []
     monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
 
@@ -175,39 +194,41 @@ def test_speaking_thinking_falls_back_when_the_clip_is_missing(app, monkeypatch)
     assert played, "said nothing at all"
 
 
-# --- every pre-rendered clip ------------------------------------------------
+def test_the_fallback_caches_what_it_synthesised(app, monkeypatch):
+    """So the cost is paid once rather than on every cue."""
+    monkeypatch.setattr(app_module, "play", lambda path: None)
 
-def test_every_prerendered_clip_is_rendered_for_every_language(app):
-    """Derived from the table rather than listed, so adding an entry to
-    `_PRERENDERED` without a translation fails here rather than at the
-    moment the device needs to speak it."""
-    app._render_prerendered()
+    app._speak_thinking()
 
-    for name in app_module._PRERENDERED:
-        for language in app.language.supported:
-            assert app._prerendered_path(name, language).exists(), (name, language)
+    assert _clip(app, "cloud.thinking") is not None
 
 
-def test_every_prerendered_clip_has_its_own_path(app):
-    """Two clips sharing a filename would have one silently overwrite the
-    other — and the hash only distinguishes different *text*, not
-    different purposes."""
-    paths = [
-        app._prerendered_path(name, language)
-        for name in app_module._PRERENDERED
-        for language in app.language.supported
-    ]
-    assert len(set(paths)) == len(paths)
+def test_the_fallback_writes_to_the_cache_not_the_permanent_store(app, monkeypatch):
+    """`render_messages` owns the permanent directory and prunes anything
+    it did not put there. A clip written behind its back would be deleted
+    on the next run, which is harmless but confusing."""
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+
+    app._speak_thinking()
+
+    assert _clip(app, "cloud.thinking").parent == app_module.CLIP_CACHE_DIR
 
 
-def test_speaking_an_unheard_notice_plays_the_rendered_clip(app, monkeypatch):
+def test_speaking_an_unheard_notice_plays_its_clip(app, monkeypatch):
     played = []
     monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
-    app._render_prerendered()
+    app._play_clip("voice.nothing_heard")
 
-    app._speak_prerendered("not_heard")
+    assert played == [_clip(app, "voice.nothing_heard")]
 
-    assert played == [app._prerendered_path("not_heard", app.language.current)]
+
+def test_the_greeting_goes_through_the_same_path(app, monkeypatch):
+    played = []
+    monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
+
+    app._speak_greeting()
+
+    assert played == [_clip(app, "language.greeting")]
 
 
 def test_a_broken_speaker_does_not_break_the_pipeline(app, monkeypatch):
@@ -217,6 +238,15 @@ def test_a_broken_speaker_does_not_break_the_pipeline(app, monkeypatch):
         raise OSError("output device disappeared")
 
     monkeypatch.setattr(app_module, "play", _explode)
-    app._render_prerendered()
 
-    app._speak_prerendered("not_heard")      # must not raise
+    app._play_clip("voice.nothing_heard")      # must not raise
+
+
+def test_a_broken_tts_does_not_break_the_pipeline_either(app, monkeypatch):
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+    monkeypatch.setattr(
+        app.tts, "synthesize",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("voice gone")),
+    )
+
+    app._play_clip("voice.nothing_heard")      # must not raise

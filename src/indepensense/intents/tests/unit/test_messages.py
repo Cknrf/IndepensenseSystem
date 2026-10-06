@@ -403,3 +403,53 @@ def test_a_boolean_is_not_treated_as_a_number():
     """`bool` is an `int` in Python, so an unguarded isinstance check
     would turn True into "isa"."""
     assert "True" in messages.get("generic.error", "tl", error=True)
+
+
+# --- which messages can be rendered to audio ahead of time -------------------
+#
+# `static_keys()` decides what `tools/render_messages.py` builds. Getting
+# it wrong in one direction wastes a synthesis; in the other it caches a
+# sentence with a placeholder in it, and the wearable then speaks last
+# week's battery percentage forever.
+
+def test_a_message_with_no_placeholder_is_static():
+    assert "emergency.sent" in messages.static_keys()
+
+
+def test_a_templated_message_is_never_static():
+    """The failure that matters: a cached clip of "Battery at {percent}
+    percent" would be replayed with a stale number, or with the brace
+    spoken aloud."""
+    for key in messages.static_keys():
+        for text in messages.MESSAGES[key].values():
+            assert "{" not in text, f"{key} is templated but called static"
+
+
+def test_a_message_templated_in_only_one_language_is_not_static():
+    """Conservative on purpose — excluding it costs one synthesis,
+    including it would cache a half-filled sentence."""
+    partly = {"en": "ready", "tl": "handa {name}"}
+    original = messages.MESSAGES.get("test.partly_templated")
+    messages.MESSAGES["test.partly_templated"] = partly
+    try:
+        assert "test.partly_templated" not in messages.static_keys()
+    finally:
+        if original is None:
+            del messages.MESSAGES["test.partly_templated"]
+        else:
+            messages.MESSAGES["test.partly_templated"] = original
+
+
+def test_every_static_key_resolves_in_every_language():
+    """The renderer calls `get()` for each; an unknown key would return
+    the key itself and the device would say "emergency dot sent"."""
+    for key in messages.static_keys():
+        for language in messages.MESSAGES[key]:
+            assert messages.get(key, language) == messages.MESSAGES[key][language]
+
+
+def test_the_boot_clips_are_static():
+    """`_BOOT_CLIPS` are rendered at the end of `start()` with no
+    placeholder values available to fill in."""
+    from indepensense.app import _BOOT_CLIPS
+    assert set(_BOOT_CLIPS) <= set(messages.static_keys())

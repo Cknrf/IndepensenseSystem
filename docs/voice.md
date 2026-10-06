@@ -370,6 +370,45 @@ them. That is deliberate: Manila speech code-switches, so "Nakikita ko
 ang 2 tao at isang chair" sounds natural while forcing a Tagalog coinage
 for every COCO class would not.
 
+### Fixed sentences are rendered once, not on every utterance
+
+61 of the 110 messages have no placeholder — their text never changes.
+Synthesising those on demand cost 0.2–2.3 s *per utterance*, and the
+announcer wrote a new `<timestamp>_announce.wav` each time that nothing
+ever deleted: roughly 9 GB a year of write-once files on the SD card.
+
+Clips are now named after the sentence they contain
+(`sha256("<language>\0<text>")[:16].wav`), which makes reuse automatic,
+makes an edit to `messages.py` invalidate the old recording, and makes
+identical text collide onto one file instead of accumulating. See the
+module docstring in `voice/clips.py`.
+
+Two directories, searched in that order:
+
+| Directory | Holds | Swept |
+|---|---|---|
+| `data/audio/messages/` | the static messages | never |
+| `data/audio/cache/` | templated text — distances, percentages, place names | yes, past `CLIP_CACHE_MAX_BYTES` |
+
+They are separate because age-based eviction over one directory would
+delete the *least* spoken clips first, and those are
+`emergency.delivery.all_failed` and its neighbours — needed at the one
+moment there is no time to synthesise them.
+
+Build the permanent set after editing `messages.py`:
+
+```bash
+python -m indepensense.tools.render_messages          # ~2 min, ~35 MB
+python -m indepensense.tools.render_messages --dry-run   # works on a Mac
+```
+
+Skipping it is safe. Anything missing is synthesised on demand into the
+cache, exactly as before — the cost of forgetting is latency on a
+sentence's first use, not silence. The two exceptions are
+`system.starting` and `language.greeting`, which `start()` renders
+itself: they play *before* the TTS engine is loaded, so for those a
+missing clip really does mean silence.
+
 ## Semantic fast path
 
 Intent parsing runs in two stages. `TieredIntentParser` asks an embedding

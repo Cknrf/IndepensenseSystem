@@ -50,7 +50,7 @@ def started(monkeypatch):
         greetings = []
         monkeypatch.setattr(app, "_open_parser", lambda: parser)
         monkeypatch.setattr(app, "_speak_greeting", lambda: greetings.append(True))
-        monkeypatch.setattr(app, "_render_prerendered", lambda: None)
+        monkeypatch.setattr(app, "_render_boot_clips", lambda: None)
         app.start()
         return app, greetings
     apps = []

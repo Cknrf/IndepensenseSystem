@@ -711,23 +711,45 @@ WHISPER_INITIAL_PROMPTS: dict[str, str] = {
 
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 
-# Pre-rendered speech played before the models are loaded.
+# Rendered speech, named after the sentence it contains. See the module
+# docstring in `voice/clips.py` for the naming scheme and why there are
+# two directories rather than one.
 #
-# Startup takes 2-3 minutes — Whisper, two TTS engines, and the Ollama
-# warmup — and to a blind user silence is indistinguishable from a device
-# that failed to boot. The wearable has to say something immediately, but
-# it cannot *synthesise* anything yet: TTS is one of the things still
-# loading. So the greeting is rendered once, to a file, and replayed from
-# disk on every later boot. Playback needs only `soundfile` + PortAudio,
-# both available at the first line of `start()`.
+# Both are gitignored and regenerated on demand rather than committed — a
+# binary in git that must stay in step with a string in Python is a drift
+# waiting to happen.
+
+# Static messages: the 61 entries in `messages.MESSAGES` with no
+# placeholder. Built by `python -m indepensense.tools.render_messages`,
+# never swept.
 #
-# Filenames embed a hash of the message text, so editing
-# `messages.get("system.starting")` invalidates the old recording instead
-# of leaving the wearable saying something that is no longer in the source.
-# Gitignored and regenerated on demand rather than committed — a binary in
-# git that must stay in step with a string in Python is a drift waiting to
-# happen.
-STARTUP_AUDIO_DIR = PROJECT_ROOT / "data" / "audio"
+# This is also what makes the startup greeting possible at all. Boot takes
+# 2-3 minutes — Whisper, two TTS engines, the Ollama warmup — and to a
+# blind user silence is indistinguishable from a device that failed to
+# boot. The wearable has to speak immediately, but it cannot *synthesise*
+# anything yet: TTS is one of the things still loading. Playback needs
+# only `soundfile` + PortAudio, both available at the first line of
+# `start()`, so the greeting is replayed from a clip rendered on an
+# earlier boot.
+MESSAGE_AUDIO_DIR = PROJECT_ROOT / "data" / "audio" / "messages"
+
+# Everything else: sentences built from a template — distances, battery
+# percentages, place names. Fills itself as the wearable speaks, so a
+# repeated turn instruction costs one synthesis rather than one per
+# utterance.
+CLIP_CACHE_DIR = PROJECT_ROOT / "data" / "audio" / "cache"
+
+# Cache ceiling. At roughly 130 KB for a three-second sentence this holds
+# ~1000 distinct utterances, far more than a day of walking produces, and
+# is a rounding error against the SD card. The cap exists to bound the
+# worst case — a user who saves hundreds of places — not to be tight.
+CLIP_CACHE_MAX_BYTES = 128 * 1024 * 1024
+
+# Sweep after this many new clips, on top of the sweep at startup. The
+# startup sweep alone would be enough for a device that is switched off
+# nightly; this covers one left running for weeks. 100 clips is ~13 MB
+# between sweeps, so the cap is never overshot by much.
+CLIP_CACHE_SWEEP_EVERY = 100
 
 # How the wearable powers itself off for `system.shutdown`.
 #

@@ -117,7 +117,6 @@ failure aborts startup. `_try_open_*` means degraded operation is
 acceptable — it logs, returns None, and every caller handles None.
 """
 import faulthandler
-import hashlib
 import os
 import signal
 import subprocess
@@ -234,7 +233,10 @@ from indepensense.config import (
     OCR_LANGUAGES,
     OCR_MAX_CHARS,
     SHUTDOWN_COMMAND,
-    STARTUP_AUDIO_DIR,
+    MESSAGE_AUDIO_DIR,
+    CLIP_CACHE_DIR,
+    CLIP_CACHE_MAX_BYTES,
+    CLIP_CACHE_SWEEP_EVERY,
     VOICE_TEST_DIR,
     WAITING_CUE_DELAY_S,
     WAITING_CUE_INTERVAL_S,
@@ -305,6 +307,7 @@ from indepensense.voice.audio import (
     record_until_button,
     stop_playback,
 )
+from indepensense.voice import clips
 from indepensense.voice.base import TTSEngine
 from indepensense.voice.router import MultiEngineTTS, build_tts
 from indepensense.voice.volume import VolumeState
@@ -325,11 +328,12 @@ FALL_LOOP_INTERVAL_S = 0.01     # 100 Hz — matches ThresholdFallDetector's tun
 #
 # Name -> message key. The name is also the filename prefix, so adding an
 # entry here is the whole change.
-_PRERENDERED: dict[str, str] = {
-    "startup": "system.starting",
-    "thinking": "cloud.thinking",
-    "not_heard": "voice.nothing_heard",
-}
+# Clips rendered at the end of every boot, rather than by the
+# `render_messages` tool. These two are the only speech with no live
+# fallback: `_play_startup_notice` runs before the TTS engine is loaded,
+# so if the clip is not already on disk the device simply cannot say it.
+# Everything else in `messages.static_keys()` degrades to synthesis.
+_BOOT_CLIPS: tuple[str, ...] = ("system.starting", "language.greeting")
 
 # Obstacle tiers, ordered. `None` is "clear", so comparing ranks answers
 # "did this get worse?" without a chain of string equality checks.
@@ -566,9 +570,14 @@ class Announcer:
     # not the rate limiter.
     _MAX_PENDING = 8
 
-    def __init__(self, tts, output_dir: Path):
+    def __init__(self, tts, message_dir: Path, cache_dir: Path):
         self._tts = tts
-        self._output_dir = output_dir
+        # Searched in this order. See `voice/clips.py`: the first holds
+        # the static messages and is never swept, the second fills itself
+        # with templated text and is.
+        self._message_dir = message_dir
+        self._cache_dir = cache_dir
+        self._renders_since_sweep = 0
         self._pending: list[tuple[str, str, bool]] = []
         self._lock = threading.Lock()
         self._wakeup = threading.Event()
@@ -657,6 +666,31 @@ class Announcer:
         with self._lock:
             return self._preempt_epoch != epoch
 
+    def _after_render(self) -> None:
+        """Keep the cache under its cap. Never raises.
+
+        Counted rather than checked every time because a sweep stats
+        every file in the directory, and doing that per utterance would
+        trade the synthesis this cache just saved for a few hundred
+        syscalls. A device switched off nightly never reaches the count
+        and is bounded by the sweep in `start()` instead.
+
+        Swallows its errors: a full or read-only card must not stop the
+        wearable from speaking, which is the one thing it has to keep
+        doing.
+        """
+        self._renders_since_sweep += 1
+        if self._renders_since_sweep < CLIP_CACHE_SWEEP_EVERY:
+            return
+        self._renders_since_sweep = 0
+        try:
+            freed = clips.sweep(self._cache_dir, CLIP_CACHE_MAX_BYTES)
+            if freed:
+                print(f"[clips] swept {freed / 1e6:.1f} MB from the cache",
+                      flush=True)
+        except Exception as exc:
+            print(f"[clips] sweep failed: {exc}", file=sys.stderr, flush=True)
+
     def _run(self) -> None:
         while not self._stop.is_set():
             taken = self._take()
@@ -667,15 +701,24 @@ class Announcer:
 
             (text, language, critical), epoch = taken
             try:
-                timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S-%f")
-                path = self._output_dir / f"{timestamp}_announce.wav"
-                self._tts.synthesize(text, path, language=language)
+                # A hit here is the whole point: the 61 static messages
+                # and any template output said twice cost a file read
+                # instead of 0.2-2.3 s of synthesis.
+                path = clips.find(text, language, self._message_dir, self._cache_dir)
+                if path is None:
+                    path = clips.render(self._tts, text, language, self._cache_dir)
+                    self._after_render()
                 if self._stop.is_set():
                     return
                 # Synthesis takes about a second, which is long enough for a
                 # fall to happen inside it. Abandon what we just built rather
                 # than making the alert wait out an instruction the user no
                 # longer needs. Critical items are never abandoned.
+                #
+                # Still checked on a cache hit, where the window is
+                # microseconds rather than a second: a critical alert that
+                # lands in it has still preempted this item, and playing it
+                # anyway would put a nav cue in front of a fall alert.
                 if not critical and self._preempted_since(epoch):
                     print(
                         f"[announcer] preempted before speaking: {text!r}",
@@ -903,7 +946,7 @@ class App:
 
         # Started as soon as TTS exists so anything that wants to speak
         # from the loop has somewhere to put it, for the whole of startup.
-        self.announcer = Announcer(self.tts, VOICE_TEST_DIR)
+        self.announcer = Announcer(self.tts, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR)
         self.announcer.start()
 
         self.volume = self._open_volume()
@@ -1064,7 +1107,17 @@ class App:
         # Now that TTS exists, make sure the next boot can speak at second
         # zero. Deliberately last: it costs a synthesis per language and
         # the user is already up and running by this point.
-        self._render_prerendered()
+        self._render_boot_clips()
+        # Bound the clip cache once per boot. The announcer also sweeps
+        # every CLIP_CACHE_SWEEP_EVERY renders, which covers a device
+        # left running for weeks; this covers the ordinary case of one
+        # that is switched off at night and never reaches that count.
+        try:
+            freed = clips.sweep(CLIP_CACHE_DIR, CLIP_CACHE_MAX_BYTES)
+            if freed:
+                print(f"  Swept {freed / 1e6:.1f} MB of cached speech.", flush=True)
+        except Exception as exc:
+            print(f"[clips] startup sweep failed: {exc}", file=sys.stderr, flush=True)
 
     def run(self) -> None:
         """Main 100 Hz sensor loop. Blocks until shutdown.
@@ -2513,7 +2566,7 @@ class App:
                 # Say so: the user has had their press chime and would
                 # otherwise get nothing back at all.
                 print("[PTT] Too short — nothing to transcribe.", flush=True)
-                self._speak_prerendered("not_heard")
+                self._play_clip("voice.nothing_heard")
                 return
 
             # If the recording hit the max-duration cap, the user
@@ -2558,7 +2611,7 @@ class App:
                     # spoke and got silence back, which is the shape of a
                     # device that has died.
                     print("[PTT] Empty transcript — nothing to classify.", flush=True)
-                    self._speak_prerendered("not_heard")
+                    self._play_clip("voice.nothing_heard")
                     return
 
                 _t0 = time.monotonic()
@@ -2920,39 +2973,60 @@ class App:
         print("[nav] confirmation timed out — cancelling.", flush=True)
         return False
 
-    def _prerendered_path(self, name: str, language: str) -> Path:
-        """Where the pre-rendered clip `name` for `language` lives.
+    def _play_clip(self, key: str, **fields) -> None:
+        """Speak a message from its clip, synthesising only if missing.
 
-        The message text is hashed into the filename, so editing it in
-        `messages.py` points this at a file that does not exist yet and
-        the stale recording is simply never played again. Without that,
-        the wearable would keep speaking a sentence that is no longer
-        anywhere in the source — the kind of drift that costs an
-        afternoon to find.
+        The playing counterpart to `_announce`, for the places that must
+        speak *on the calling thread* rather than queue: the voice
+        pipeline's "thinking" and "nothing heard" cues, which exist to
+        fill a silence the user is sitting in right now and would be
+        pointless behind a queue.
+
+        Never raises. These are all best-effort cues, and the pipeline
+        around them has real work to finish.
         """
-        text = messages.get(_PRERENDERED[name], language)
-        digest = hashlib.sha256(text.encode()).hexdigest()[:8]
-        return STARTUP_AUDIO_DIR / f"{name}_{language}_{digest}.wav"
+        language = self.language.current
+        text = messages.get(key, language, **fields)
+        try:
+            path = clips.find(text, language, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR)
+            if path is None:
+                # Expected on a fresh install, or until `render_messages`
+                # is run after editing the text. Worth a line: it is the
+                # difference between a 3 ms cue and a 2 s one.
+                print(
+                    f"[clips] no clip for {key!r} ({language}) — synthesising. "
+                    f"Run: python -m indepensense.tools.render_messages",
+                    file=sys.stderr, flush=True,
+                )
+                path = clips.render(self.tts, text, language, CLIP_CACHE_DIR)
+            play(path)
+        except Exception as exc:
+            print(f"[clips] could not speak {key!r}: {exc}",
+                  file=sys.stderr, flush=True)
 
     def _play_startup_notice(self) -> None:
-        """Play the pre-rendered startup message. Never raises.
+        """Play the startup message. Never raises.
 
         Runs as the first thing in `start()`, before any model is loaded —
         which is the whole point, and also the constraint: TTS is not
-        available yet, so this can only replay something rendered on a
-        previous boot. The very first boot after installation (or after
-        the message text changes) is therefore silent here, and
-        `_render_prerendered` fixes that for every boot after.
+        available yet, so this can only replay a clip rendered earlier.
+        It cannot fall back to synthesis the way `_play_clip` does, and
+        it is the one caller for which that is true.
+
+        The very first boot after installation is therefore silent here,
+        and `_render_boot_clips` fixes that for every boot after.
 
         Playback is blocking, and deliberately so: it is a few seconds at
         the head of a 2-3 minute startup, and letting model loading talk
         over the greeting would defeat it.
         """
-        path = self._prerendered_path("startup", self.language.current)
-        if not path.exists():
+        language = self.language.current
+        text = messages.get("system.starting", language)
+        path = clips.find(text, language, MESSAGE_AUDIO_DIR)
+        if path is None:
             print(
-                f"  (no startup clip yet at {path.name} — it will be "
-                f"rendered at the end of this boot)",
+                "  (no startup clip yet — it will be rendered at the end "
+                "of this boot)",
                 flush=True,
             )
             return
@@ -2961,39 +3035,33 @@ class App:
         except Exception as exc:
             print(f"[startup] could not play notice: {exc}", file=sys.stderr, flush=True)
 
-    def _render_prerendered(self) -> None:
-        """Render every pre-rendered clip in every language. Never raises.
+    def _render_boot_clips(self) -> None:
+        """Render the clips that must exist before TTS loads. Never raises.
+
+        Only these two, not all 61 static messages. Everything else can
+        fall back to live synthesis at the moment it is needed, so
+        rendering it here would add a minute or two to a boot that is
+        already 2-3 minutes for no gain the user can hear — that is what
+        `tools/render_messages.py` is for, run once at deploy time.
+        These two have no fallback: `_play_startup_notice` runs before
+        there is an engine to synthesise with.
 
         Every language, not just the active one, because the user can
-        switch with a voice command: the next boot must greet them in
-        whatever they chose, by which point TTS is again unavailable, and
-        a cloud question asked in Tagalog must not pay for synthesis the
-        English boot already did.
-
-        Stale clips for the same name and language are removed, so an
-        edited message leaves one file rather than a growing pile of
-        recordings of sentences nobody says any more.
+        switch with a voice command and the next boot must greet them in
+        whatever they chose — by which point TTS is again unavailable.
         """
-        for name in _PRERENDERED:
+        for key in _BOOT_CLIPS:
             for language in self.language.supported:
-                path = self._prerendered_path(name, language)
-                if path.exists():
+                text = messages.get(key, language)
+                if clips.find(text, language, MESSAGE_AUDIO_DIR) is not None:
                     continue
                 try:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    self.tts.synthesize(
-                        messages.get(_PRERENDERED[name], language),
-                        path,
-                        language=language,
-                    )
-                    for stale in path.parent.glob(f"{name}_{language}_*.wav"):
-                        if stale != path:
-                            stale.unlink()
-                    print(f"  Rendered '{name}' clip for '{language}'.", flush=True)
+                    clips.render(self.tts, text, language, MESSAGE_AUDIO_DIR)
+                    print(f"  Rendered '{key}' for '{language}'.", flush=True)
                 except Exception as exc:
                     print(
-                        f"[prerender] could not render '{name}' for "
-                        f"'{language}': {exc}",
+                        f"[clips] could not render {key!r} for "
+                        f"{language!r}: {exc}",
                         file=sys.stderr, flush=True,
                     )
 
@@ -3064,17 +3132,7 @@ class App:
         command must be spoken in Tagalog. Best-effort: a device that
         boots without working audio must still boot.
         """
-        try:
-            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
-            greeting_path = VOICE_TEST_DIR / f"{timestamp}_greeting.wav"
-            self.tts.synthesize(
-                messages.get("language.greeting", self.language.current),
-                greeting_path,
-                language=self.language.current,
-            )
-            play(greeting_path)
-        except Exception as exc:
-            print(f"[greeting] could not speak: {exc}", file=sys.stderr, flush=True)
+        self._play_clip("language.greeting")
 
     def _speak_thinking(self) -> None:
         """Tell the user we're working before a slow cloud call. Never raises.
@@ -3085,41 +3143,12 @@ class App:
         thread — that costs a second, but overlapping it with the answer
         would mean two voices talking at once.
 
-        Pre-rendered at startup. It used to be synthesised on every cloud
+        Played from a clip. It used to be synthesised on every cloud
         question, which put ~1 s of TTS in front of the slowest path the
         device has — adding to the exact wait this sentence exists to
         excuse.
         """
-        self._speak_prerendered("thinking")
-
-    def _speak_prerendered(self, name: str) -> None:
-        """Play a pre-rendered clip in the active language. Never raises.
-
-        Falls back to live synthesis when the file is missing, which is
-        the first boot after that message's text changes. Slower, but a
-        sentence arriving late beats a sentence that never arrives — every
-        caller here is covering a silence the user would otherwise read as
-        a dead device.
-        """
-        language = self.language.current
-        try:
-            path = self._prerendered_path(name, language)
-            if not path.exists():
-                print(
-                    f"[{name}] no pre-rendered clip at {path.name} — "
-                    f"synthesising.",
-                    file=sys.stderr, flush=True,
-                )
-                timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
-                path = VOICE_TEST_DIR / f"{timestamp}_{name}.wav"
-                self.tts.synthesize(
-                    messages.get(_PRERENDERED[name], language),
-                    path,
-                    language=language,
-                )
-            play(path)
-        except Exception as exc:
-            print(f"[{name}] could not speak: {exc}", file=sys.stderr, flush=True)
+        self._play_clip("cloud.thinking")
 
     def _speak_error(self, message: str) -> None:
         """Best-effort audible error message. Never raises."""

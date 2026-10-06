@@ -39,7 +39,7 @@ class _StubSTT:
 def pipeline(monkeypatch, tmp_path):
     """A MockApp whose pipeline can be run without audio hardware.
 
-    Returns `(app, state)` where `state["spoken"]` lists the pre-rendered
+    Returns `(app, state)` where `state["spoken"]` lists the message keys
     clips played and `state["duration"]` is what the recorder reports.
     """
     app = MockApp()
@@ -53,7 +53,8 @@ def pipeline(monkeypatch, tmp_path):
                         lambda *a, **k: state["duration"])
     monkeypatch.setattr(app_module, "play", lambda path: state["played"].append(path))
     monkeypatch.setattr(app, "_play_press_feedback", lambda rising_chime: None)
-    monkeypatch.setattr(app, "_speak_prerendered", lambda name: state["spoken"].append(name))
+    monkeypatch.setattr(app, "_play_clip",
+                        lambda key, **fields: state["spoken"].append(key))
     monkeypatch.setattr(app_module, "VOICE_TEST_DIR", tmp_path)
     return app, state
 
@@ -68,7 +69,7 @@ def test_a_recording_too_short_to_hold_speech_says_so(pipeline):
 
     app._voice_pipeline()
 
-    assert state["spoken"] == ["not_heard"]
+    assert state["spoken"] == ["voice.nothing_heard"]
 
 
 def test_an_empty_transcript_says_so(pipeline):
@@ -78,7 +79,7 @@ def test_an_empty_transcript_says_so(pipeline):
 
     app._voice_pipeline()
 
-    assert state["spoken"] == ["not_heard"]
+    assert state["spoken"] == ["voice.nothing_heard"]
 
 
 def test_a_whitespace_only_transcript_counts_as_empty(pipeline):
@@ -87,7 +88,7 @@ def test_a_whitespace_only_transcript_counts_as_empty(pipeline):
 
     app._voice_pipeline()
 
-    assert state["spoken"] == ["not_heard"]
+    assert state["spoken"] == ["voice.nothing_heard"]
 
 
 def test_nothing_heard_does_not_reach_the_parser(pipeline):
@@ -135,7 +136,7 @@ def test_a_real_transcript_is_not_reported_as_unheard(pipeline):
 
     app._voice_pipeline()
 
-    assert "not_heard" not in state["spoken"]
+    assert "voice.nothing_heard" not in state["spoken"]
 
 
 def test_the_voice_active_latch_is_always_released(pipeline):

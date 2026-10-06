@@ -72,7 +72,7 @@ def announcer(tmp_path, audio):
     created: list[Announcer] = []
 
     def _make(tts):
-        instance = Announcer(tts, tmp_path)
+        instance = Announcer(tts, tmp_path / "messages", tmp_path / "cache")
         instance.start()
         created.append(instance)
         return instance
@@ -111,7 +111,7 @@ def test_the_main_loop_cue_path_does_not_block(tmp_path, audio):
     speaks AND pulses every motor must still return promptly."""
     instance = MockApp()
     instance.tts = _FakeTTS(delay_s=1.0)
-    instance.announcer = Announcer(instance.tts, tmp_path)
+    instance.announcer = Announcer(instance.tts, tmp_path / "messages", tmp_path / "cache")
     instance.announcer.start()
     instance.front_motor = MockVibrationMotor()
     instance.left_motor = MockVibrationMotor()
@@ -162,7 +162,7 @@ def test_the_language_is_captured_per_item(announcer):
 def test_the_queue_is_bounded_and_drops_the_oldest(tmp_path, audio):
     """A backstop, not the rate limiter — but an unbounded queue would let
     a misbehaving producer grow it without limit."""
-    a = Announcer(_FakeTTS(), tmp_path)     # never started: nothing drains it
+    a = Announcer(_FakeTTS(), tmp_path / "messages", tmp_path / "cache")     # never started: nothing drains it
     for i in range(Announcer._MAX_PENDING + 5):
         a.say(f"item {i}", "en")
 
@@ -172,7 +172,7 @@ def test_the_queue_is_bounded_and_drops_the_oldest(tmp_path, audio):
 
 
 def test_clear_drops_everything_pending(tmp_path, audio):
-    a = Announcer(_FakeTTS(), tmp_path)
+    a = Announcer(_FakeTTS(), tmp_path / "messages", tmp_path / "cache")
     a.say("one", "en")
     a.say("two", "en")
 
@@ -182,7 +182,7 @@ def test_clear_drops_everything_pending(tmp_path, audio):
 
 
 def test_empty_text_is_ignored(tmp_path, audio):
-    a = Announcer(_FakeTTS(), tmp_path)
+    a = Announcer(_FakeTTS(), tmp_path / "messages", tmp_path / "cache")
     a.say("", "en")
     assert a.pending_count() == 0
 
@@ -192,7 +192,7 @@ def test_empty_text_is_ignored(tmp_path, audio):
 def test_a_critical_alert_aborts_whatever_is_playing(tmp_path, audio):
     """Draining the queue only skips speech that has not started. A fall
     part-way through a turn instruction has to cut it off."""
-    a = Announcer(_FakeTTS(), tmp_path)
+    a = Announcer(_FakeTTS(), tmp_path / "messages", tmp_path / "cache")
 
     a.say("Fall detected. Alerting your guardian.", "en", critical=True)
 
@@ -200,7 +200,7 @@ def test_a_critical_alert_aborts_whatever_is_playing(tmp_path, audio):
 
 
 def test_a_critical_alert_drops_pending_non_critical_work(tmp_path, audio):
-    a = Announcer(_FakeTTS(), tmp_path)
+    a = Announcer(_FakeTTS(), tmp_path / "messages", tmp_path / "cache")
     a.say("in ninety meters turn left", "en")
     a.say("battery low", "en")
 
@@ -214,7 +214,7 @@ def test_a_critical_alert_does_not_discard_another_critical_one(tmp_path, audio)
     """Two safety events in quick succession must both be heard — dropping
     one because a newer one arrived would lose the very messages this
     mechanism exists to prioritise."""
-    a = Announcer(_FakeTTS(), tmp_path)
+    a = Announcer(_FakeTTS(), tmp_path / "messages", tmp_path / "cache")
     a.say("Fall detected.", "en", critical=True)
 
     a.say("Battery critically low.", "en", critical=True)
@@ -226,7 +226,7 @@ def test_a_critical_alert_does_not_discard_another_critical_one(tmp_path, audio)
 
 
 def test_a_critical_alert_goes_to_the_front(tmp_path, audio):
-    a = Announcer(_FakeTTS(), tmp_path)
+    a = Announcer(_FakeTTS(), tmp_path / "messages", tmp_path / "cache")
     a.say("Fall detected.", "en", critical=True)
     a.say("Battery critically low.", "en", critical=True)
 
@@ -281,7 +281,7 @@ def test_a_failing_announcement_does_not_kill_the_worker(announcer, audio):
 def test_stop_is_bounded_even_mid_playback(tmp_path, audio):
     """A worker blocked inside a long `play()` would otherwise hold up
     shutdown for the remaining length of the audio."""
-    a = Announcer(_FakeTTS(delay_s=5.0), tmp_path)
+    a = Announcer(_FakeTTS(delay_s=5.0), tmp_path / "messages", tmp_path / "cache")
     a.start()
     a.say("a very long announcement", "en")
     time.sleep(0.05)

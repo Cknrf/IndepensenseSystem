@@ -337,6 +337,18 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | **Voice-pipeline latency** (STT → NLU → TTS) | `python -m indepensense.voice.tests.manual.latency_bench --repeat 10 --csv` — replays recorded WAVs, so **no microphone needed**. This is the evidence for the low-latency objective |
 | Latency without Ollama running | `python -m indepensense.voice.tests.manual.latency_bench --no-nlu` |
 
+### Speech Clips
+
+| Purpose | Command |
+|---|---|
+| Render every fixed message to audio — run after editing `intents/messages.py` | `python -m indepensense.tools.render_messages` — ~2 min, ~35 MB into `data/audio/messages/` |
+| List what would be rendered, without loading a voice (works on a Mac) | `python -m indepensense.tools.render_messages --dry-run` |
+| Re-render everything, e.g. after changing a voice model | `python -m indepensense.tools.render_messages --force` |
+
+Optional: anything missing is synthesised on demand instead, so skipping
+this costs latency on a sentence's first use, never silence. See
+[docs/voice.md](docs/voice.md#fixed-sentences-are-rendered-once-not-on-every-utterance).
+
 ## First-Boot Verification Checklist
 
 After the wearable is assembled, run these steps **in order**. If a step fails, stop and check `docs/hardware.md` for that component's wiring before continuing.

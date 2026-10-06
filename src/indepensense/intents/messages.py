@@ -47,6 +47,7 @@ linker's form depends on the number, so "{value} metro" is "siyamnapung
 metro" but "apat na raang metro".
 """
 import math
+import re
 import sys
 
 # Languages this catalogue covers. Keep in step with `config.PIPER_VOICES`
@@ -1199,6 +1200,33 @@ def join_items(items: list[str], language: str) -> str:
     if len(items) == 2:
         return f"{items[0]} {conjunction} {items[1]}"
     return ", ".join(items[:-1]) + f", {conjunction} " + items[-1]
+
+
+_PLACEHOLDER = re.compile(r"\{\w+\}")
+
+
+def static_keys() -> list[str]:
+    """Keys whose text is fixed in every language.
+
+    "Fixed" means no `{placeholder}`, so `get()` returns the same string
+    on every call and the audio for it can be rendered once and replayed
+    forever — see `voice/clips.py` and the `render_messages` tool.
+
+    A key is static only if *no* language templates it. That is the
+    conservative direction: a message templated in Tagalog and fixed in
+    English is excluded, which costs one synthesis and cannot cause the
+    wearable to replay a clip with last week's number in it.
+
+    Derived from `MESSAGES` rather than listed by hand, because a
+    hand-kept list is a list that silently stops matching. The three
+    messages this replaced were a hardcoded dict of nicknames, and
+    `language.greeting` — static, spoken on every boot — had never been
+    added to it.
+    """
+    return sorted(
+        key for key, entry in MESSAGES.items()
+        if not any(_PLACEHOLDER.search(text) for text in entry.values())
+    )
 
 
 def get(key: str, language: str, **fields) -> str:
