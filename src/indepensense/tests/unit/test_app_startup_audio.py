@@ -203,15 +203,34 @@ def test_the_fallback_caches_what_it_synthesised(app, monkeypatch):
     assert _clip(app, "cloud.thinking") is not None
 
 
-def test_the_fallback_writes_to_the_cache_not_the_permanent_store(app, monkeypatch):
-    """`render_messages` owns the permanent directory and prunes anything
-    it did not put there. A clip written behind its back would be deleted
-    on the next run, which is harmless but confusing."""
+def test_a_static_message_synthesised_live_is_kept_permanently(app, monkeypatch):
+    """Otherwise the never-evicted guarantee depends on someone having
+    run `render_messages`. Forget it, and the rarely-spoken static
+    messages — the emergency-delivery failures — live only in the cache,
+    where the sweep takes the oldest first."""
     monkeypatch.setattr(app_module, "play", lambda path: None)
 
     app._speak_thinking()
 
-    assert _clip(app, "cloud.thinking").parent == app_module.CLIP_CACHE_DIR
+    assert _clip(app, "cloud.thinking").parent == app_module.MESSAGE_AUDIO_DIR
+
+
+def test_the_permanent_copy_is_not_pruned_by_the_renderer(app, monkeypatch):
+    """`render_messages` deletes anything in that directory whose text is
+    not in `messages.py`. A static message's is, so a clip the app wrote
+    itself survives the next run rather than being treated as debris."""
+    from indepensense.intents import messages as messages_module
+    monkeypatch.setattr(app_module, "play", lambda path: None)
+    app._speak_thinking()
+    written = _clip(app, "cloud.thinking").name
+
+    wanted = {
+        clips.filename(messages_module.get(key, language), language)
+        for key in messages_module.static_keys()
+        for language in app.language.supported
+    }
+
+    assert written in wanted
 
 
 def test_speaking_an_unheard_notice_plays_its_clip(app, monkeypatch):

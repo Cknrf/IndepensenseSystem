@@ -345,8 +345,10 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | List what would be rendered, without loading a voice (works on a Mac) | `python -m indepensense.tools.render_messages --dry-run` |
 | Re-render everything, e.g. after changing a voice model | `python -m indepensense.tools.render_messages --force` |
 
-Optional: anything missing is synthesised on demand instead, so skipping
-this costs latency on a sentence's first use, never silence. See
+Optional: anything missing is synthesised on demand, and a fixed message
+synthesised that way is kept permanently — so skipping this costs latency
+on a sentence's first use, never silence, and the set fills in by itself
+as the device is used. See
 [docs/voice.md](docs/voice.md#fixed-sentences-are-rendered-once-not-on-every-utterance).
 
 ## First-Boot Verification Checklist

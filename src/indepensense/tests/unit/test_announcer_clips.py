@@ -161,3 +161,86 @@ def test_a_failing_sweep_does_not_stop_the_wearable_speaking(
     _speak(announcer, "Emergency alert sent.")
 
     assert len(played) == 1
+
+
+# --- where a miss is written -------------------------------------------------
+#
+# The announcer holds finished text, so it cannot tell a fixed sentence
+# from a filled-in template. It is told, as a set of filenames built from
+# `messages.static_keys()`. Without this, the two-directory split only
+# protects messages that `render_messages` had already built, and the
+# whole point was to protect them whether or not anyone ran it.
+
+@pytest.fixture
+def routing(tmp_path, played):
+    """An announcer that knows one sentence is static."""
+    from indepensense.voice import clips
+    tts = _CountingTTS()
+    instance = Announcer(
+        tts, tmp_path / "messages", tmp_path / "cache",
+        frozenset({clips.filename("Emergency alert sent.", "en")}),
+    )
+    instance.tts = tts
+    instance.played = played
+    instance.start()
+    yield instance
+    instance.stop()
+
+
+def test_a_static_message_is_written_to_the_permanent_directory(routing, tmp_path):
+    _speak(routing, "Emergency alert sent.")
+
+    assert routing.played[0].parent == tmp_path / "messages"
+
+
+def test_a_templated_sentence_is_written_to_the_cache(routing, tmp_path):
+    """The reason the announcer is not simply told to keep everything:
+    every distance and place name the device ever speaks would land
+    somewhere the sweep can never reclaim."""
+    _speak(routing, "Battery at 47 percent.")
+
+    assert routing.played[0].parent == tmp_path / "cache"
+
+
+def test_a_static_message_does_not_count_toward_the_sweep(routing, monkeypatch):
+    """It was not written to the cache, so it has not grown it."""
+    monkeypatch.setattr(app_module, "CLIP_CACHE_SWEEP_EVERY", 1)
+    swept = []
+    monkeypatch.setattr(app_module.clips, "sweep",
+                        lambda *a, **k: swept.append(a) or 0)
+
+    _speak(routing, "Emergency alert sent.")
+
+    assert swept == []
+
+
+def test_an_unknown_sentence_defaults_to_the_cache(routing, tmp_path):
+    """Nothing is permanent unless the catalogue says so — a typo in a
+    key must not quietly fill the unswept directory."""
+    _speak(routing, "Something nobody put in messages.py.")
+
+    assert routing.played[0].parent == tmp_path / "cache"
+
+
+def test_the_static_set_is_derived_from_the_message_catalogue():
+    """Listed by hand, it would stop matching the moment a message was
+    added. This is the check that it is not."""
+    from indepensense.app import _static_clip_names
+    from indepensense.intents import messages
+    from indepensense.voice import clips
+
+    names = _static_clip_names(("en", "tl"))
+
+    assert len(names) == len(messages.static_keys()) * 2
+    assert clips.filename(messages.get("emergency.sent", "tl"), "tl") in names
+
+
+def test_a_templated_message_is_absent_from_the_static_set():
+    from indepensense.app import _static_clip_names
+    from indepensense.intents import messages
+    from indepensense.voice import clips
+
+    names = _static_clip_names(("en",))
+    battery = messages.get("battery.level", "en", percent=47)
+
+    assert clips.filename(battery, "en") not in names

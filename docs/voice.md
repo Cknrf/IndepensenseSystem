@@ -402,12 +402,30 @@ python -m indepensense.tools.render_messages          # ~2 min, ~35 MB
 python -m indepensense.tools.render_messages --dry-run   # works on a Mac
 ```
 
-Skipping it is safe. Anything missing is synthesised on demand into the
-cache, exactly as before — the cost of forgetting is latency on a
-sentence's first use, not silence. The two exceptions are
-`system.starting` and `language.greeting`, which `start()` renders
-itself: they play *before* the TTS engine is loaded, so for those a
-missing clip really does mean silence.
+Skipping it is safe, and costs only latency. Anything missing is
+synthesised on demand — and **a static message synthesised that way is
+kept in the permanent directory**, not the cache, so the permanent set
+converges on its own as the device is used. The tool front-loads that;
+it is not what makes the guarantee hold.
+
+That mattered more than it first looked. Without it,
+`emergency.delivery.all_failed` on a device where nobody ran the tool
+would live in the cache, and the sweep takes the oldest first — so the
+clip most likely to be evicted is one of the handful that must already
+be on disk when it is needed.
+
+The announcer cannot make that call on its own: by the time a sentence
+reaches it, `"Emergency alert sent."` and `"Battery at 47 percent."` are
+both just text. It is given the filenames the static messages hash to
+(`app._static_clip_names`, derived from `messages.static_keys()`), and
+writes a miss to the permanent directory only if it recognises one.
+Everything unrecognised goes to the cache, so a typo can never quietly
+fill the directory that is never swept.
+
+Two messages are still rendered by `start()` rather than left to the
+fallback — `system.starting` and `language.greeting`. They play *before*
+the TTS engine is loaded, so for those there is nothing to fall back to
+and a missing clip really does mean silence.
 
 ## Semantic fast path
 

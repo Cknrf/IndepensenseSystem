@@ -328,6 +328,26 @@ FALL_LOOP_INTERVAL_S = 0.01     # 100 Hz — matches ThresholdFallDetector's tun
 #
 # Name -> message key. The name is also the filename prefix, so adding an
 # entry here is the whole change.
+def _static_clip_names(languages) -> frozenset[str]:
+    """Filenames every static message hashes to, across all languages.
+
+    The announcer's only way to tell a fixed sentence from a filled-in
+    template: it holds finished text, and by then the two look the same.
+    Membership in this set is the answer, and a filename is the one key
+    both sides already agree on.
+
+    Derived from `messages.static_keys()` at construction rather than
+    listed, so a message added to the catalogue is covered without
+    anyone remembering this exists. ~122 hashes, a fraction of a
+    millisecond, computed once per boot.
+    """
+    return frozenset(
+        clips.filename(messages.get(key, language), language)
+        for key in messages.static_keys()
+        for language in languages
+    )
+
+
 # Clips rendered at the end of every boot, rather than by the
 # `render_messages` tool. These two are the only speech with no live
 # fallback: `_play_startup_notice` runs before the TTS engine is loaded,
@@ -570,13 +590,35 @@ class Announcer:
     # not the rate limiter.
     _MAX_PENDING = 8
 
-    def __init__(self, tts, message_dir: Path, cache_dir: Path):
+    def __init__(
+        self,
+        tts,
+        message_dir: Path,
+        cache_dir: Path,
+        static_names: frozenset[str] = frozenset(),
+    ):
         self._tts = tts
         # Searched in this order. See `voice/clips.py`: the first holds
         # the static messages and is never swept, the second fills itself
         # with templated text and is.
         self._message_dir = message_dir
         self._cache_dir = cache_dir
+        # Which of the two a *miss* is written to.
+        #
+        # By the time a sentence reaches this thread it is finished text,
+        # and "Emergency alert sent." is indistinguishable from "Battery
+        # at 47 percent." — so the worker cannot decide on its own, and
+        # defaulting everything to the permanent directory would put
+        # every distance and place name the device ever speaks somewhere
+        # the sweep can never reclaim.
+        #
+        # It is therefore told, in the only currency it has: the
+        # filenames the static messages hash to. See
+        # `_static_clip_names`. This is what keeps the never-evicted
+        # guarantee from depending on someone having remembered to run
+        # `render_messages` — without it, `emergency.delivery.all_failed`
+        # lives in the cache, and the sweep takes the oldest first.
+        self._static_names = static_names
         self._renders_since_sweep = 0
         self._pending: list[tuple[str, str, bool]] = []
         self._lock = threading.Lock()
@@ -706,8 +748,14 @@ class Announcer:
                 # instead of 0.2-2.3 s of synthesis.
                 path = clips.find(text, language, self._message_dir, self._cache_dir)
                 if path is None:
-                    path = clips.render(self._tts, text, language, self._cache_dir)
-                    self._after_render()
+                    name = clips.filename(text, language)
+                    static = name in self._static_names
+                    path = clips.render(
+                        self._tts, text, language,
+                        self._message_dir if static else self._cache_dir,
+                    )
+                    if not static:
+                        self._after_render()
                 if self._stop.is_set():
                     return
                 # Synthesis takes about a second, which is long enough for a
@@ -946,7 +994,10 @@ class App:
 
         # Started as soon as TTS exists so anything that wants to speak
         # from the loop has somewhere to put it, for the whole of startup.
-        self.announcer = Announcer(self.tts, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR)
+        self.announcer = Announcer(
+            self.tts, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR,
+            _static_clip_names(self.language.supported),
+        )
         self.announcer.start()
 
         self.volume = self._open_volume()
@@ -2998,7 +3049,14 @@ class App:
                     f"Run: python -m indepensense.tools.render_messages",
                     file=sys.stderr, flush=True,
                 )
-                path = clips.render(self.tts, text, language, CLIP_CACHE_DIR)
+                # Keeps what it just paid for. The key is in hand here,
+                # so unlike the announcer this can ask the catalogue
+                # directly rather than matching a filename.
+                static = key in messages.static_keys()
+                path = clips.render(
+                    self.tts, text, language,
+                    MESSAGE_AUDIO_DIR if static else CLIP_CACHE_DIR,
+                )
             play(path)
         except Exception as exc:
             print(f"[clips] could not speak {key!r}: {exc}",
