@@ -585,28 +585,33 @@ MESSAGES: dict[str, dict[str, str]] = {
     # SMS) reuse `emergency.sent` — the sentence was always correct, it was
     # just being said too early, before anything had been delivered.
     "emergency.delivery.sms_failed": {
-        "en": "Your guardian was notified online, but the text message "
-              "did not go through.",
-        "tl": "Naabisuhan online ang iyong tagapag-alaga, pero hindi "
-              "naipadala ang text message.",
+        "en": "Your guardian was notified on the website, but the text "
+              "message did not go through. The system will keep retrying "
+              "the text.",
+        "tl": "Naabisuhan online sa website ang iyong tagapag-alaga, pero "
+              "hindi maipadala ang text message. Patuloy na susubukan ng "
+              "sistema ang text.",
     },
     "emergency.delivery.no_number": {
-        "en": "Your guardian was notified online, but no phone number is "
-              "saved for a text message.",
-        "tl": "Naabisuhan online ang iyong tagapag-alaga, pero walang "
-              "naka-save na numero para sa text message.",
+        "en": "Your guardian was notified on the website, but no phone "
+              "number is saved for a text message. The system will keep "
+              "retrying.",
+        "tl": "Naabisuhan online sa website ang iyong tagapag-alaga, pero "
+              "walang naka-save na numero. Patuloy na susubukan ng sistema.",
     },
     "emergency.delivery.backend_failed": {
-        "en": "I sent a text message to your guardian, but I could not "
-              "reach the guardian dashboard.",
-        "tl": "Nakapagpadala ako ng text sa iyong tagapag-alaga, pero "
-              "hindi ko maabot ang guardian dashboard.",
+        "en": "I sent a text message to your guardian, but could not reach "
+              "the website. The system will keep retrying.",
+        "tl": "Nakapagpadala ako ng text sa iyong tagapag-alaga, pero hindi "
+              "ko maabot ang website. Patuloy na susubukan ng sistema.",
     },
     "emergency.delivery.all_failed": {
-        "en": "I could not reach your guardian at all. Please call for "
-              "help another way.",
-        "tl": "Hindi ko talaga maabot ang iyong tagapag-alaga. Pakihingi "
-              "po ng tulong sa ibang paraan.",
+        "en": "The system could not reach your guardian right now. It will "
+              "keep retrying for the next minute. Please also call for help "
+              "if possible.",
+        "tl": "Hindi agad maabot ng sistema ang iyong tagapag-alaga. Patuloy "
+              "itong susubukan sa susunod na minuto. Kung posible, tumawag "
+              "din para sa tulong.",
     },
 
     # --- battery ------------------------------------------------------------
