@@ -1412,13 +1412,22 @@ class App:
 
         Two tiers, and they notify different people:
 
-          - `LOW_BATTERY_PERCENT` (15%) — guardians get the HTTP alert and
+          - `LOW_BATTERY_PERCENT` (30%) — guardians get the HTTP alert and
             an SMS, and the wearer is told to charge soon. Until this
             existed only the guardians knew; the person actually carrying
             the device found out when it died.
-          - `CRITICAL_BATTERY_PERCENT` (5%) — spoken only, and critical so
-            it interrupts. No second guardian alert: they were told at 15%
-            over two channels and a repeat says nothing they can act on.
+          - `CRITICAL_BATTERY_PERCENT` (20%) — spoken only, and critical
+            so it interrupts. No second guardian alert: they were told at
+            30% over two channels and a repeat says nothing they can act on.
+
+        Both comparisons are strict, so the threshold means *below*: at a
+        reported 30% nothing fires and 29% is the first value that does.
+        Against the rescaled gauge that is a raw reading of 69.8% rather
+        than 69.9%, narrow enough that a bench test stopping at 30% reads
+        as a broken warning. It is not — see `BATTERY_EMPTY_RAW_PERCENT`.
+
+        Firing also requires `is_discharging`: a device on mains is not
+        going flat, whatever the gauge says.
 
         Each tier owns an independent latch so neither can clear the other.
         """
@@ -1460,8 +1469,15 @@ class App:
 
         # Hysteresis: only fire if we haven't already alerted, and we're
         # below the fire threshold. Clear the latch once we recover
-        # above the recovery threshold (typically higher — e.g. 20% —
-        # so quick sags near 15% don't retrigger).
+        # above the recovery threshold (higher — 35% against a 30% fire —
+        # so quick sags near the threshold don't retrigger).
+        #
+        # The latch is persisted to disk, so one that fired in an earlier
+        # run is still set at startup and suppresses the warning until the
+        # pack recovers past 35%. That is deliberate — a reboot is not a
+        # reason to re-warn about the same discharge — but it does mean a
+        # latch set while the device had no working audio stays silent
+        # afterwards. `var/low_battery_alerted` is the file to delete.
         if self._low_battery_alerted:
             if pct >= LOW_BATTERY_RECOVERY_PERCENT:
                 print(

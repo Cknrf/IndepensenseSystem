@@ -18,6 +18,16 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
+# Below this, current is unambiguously leaving the pack.
+#
+# Not zero: the gauge reads a few mA either way when nothing much is
+# happening, and treating that as discharge would have an idle bench
+# unit warning about its battery. The Pi alone draws several hundred mA,
+# so anything the wearable actually does sits far below this — the
+# reading that exposed the bug was -377 mA.
+DISCHARGE_CURRENT_MA = -50
+
+
 @dataclass(frozen=True)
 class BatteryReading:
     voltage_mv: int
@@ -75,7 +85,30 @@ class BatteryReading:
 
     @property
     def is_discharging(self) -> bool:
-        return self.charging_state == "discharging"
+        """Whether the pack is actually being drained.
+
+        Two signals, because one of them is unreliable on the hardware
+        we have. `_parse_status` returns `"idle"` as a *fall-through* —
+        "none of the bits I recognise were set" — and the assembled HAT
+        never sets its discharging bit, so the state read `"idle"` on a
+        pack losing 377 mA. The low-battery warning is gated on this, so
+        it could not fire at any percentage; the first bench test to
+        reach 27% found nothing but silence.
+
+        The current sign is unambiguous where the status bit is absent:
+        negative means current leaving the pack. `DISCHARGE_CURRENT_MA`
+        keeps a genuinely idle pack from counting — the driver's own
+        note warns that current "can flicker near zero during idle
+        transitions", and that is a real caution, just not one that
+        applies to a reading of -377 mA.
+
+        Either signal is enough. A gauge that *does* set the bit still
+        works, and one that does not is no longer silently believed.
+        """
+        return (
+            self.charging_state == "discharging"
+            or self.current_ma <= DISCHARGE_CURRENT_MA
+        )
 
     @property
     def is_critical_low(self) -> bool:
