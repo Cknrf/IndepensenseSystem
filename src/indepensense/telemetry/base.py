@@ -35,11 +35,25 @@ class EventType(Enum):
     The `.value` of each member is the exact string the backend expects
     in the `eventType` field of the alert payload. Don't rename these
     without also updating the backend's whitelist.
+
+    **Queue Tiers (for offline retry strategy):**
+
+    **Tier 1 — Critical:** Retry aggressively (10s → 60s backoff, 1h limit).
+    - EMERGENCY_ALERT: User pressed emergency button.
+    - FALL_DETECTION: Fall detected by IMU.
+    - LOW_BATTERY: Battery below warning threshold.
+
+    **Tier 2 — Important:** Retry moderately (30s, 10m limit).
+    - CONNECTIVITY: Handshake with backend.
+
+    **Tier 3 — Nice-to-have:** Fire-and-forget (no retry).
+    - USER_STATUS_OK: User confirms they are safe (opposite of emergency).
     """
     EMERGENCY_ALERT = "Emergency Alert"
     FALL_DETECTION = "Fall Detection"
     LOW_BATTERY = "Low Battery"
     CONNECTIVITY = "Connectivity"
+    USER_STATUS_OK = "User Status OK"
 
 
 @dataclass(frozen=True)

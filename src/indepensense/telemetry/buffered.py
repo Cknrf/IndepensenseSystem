@@ -46,9 +46,11 @@ which returns "did the server accept this exact request." Here it means
 "did we accept this for eventual delivery." Callers that need to know
 about actual delivery need to inspect their own backend, not the return.
 
-Retry schedule: uniform `retry_interval_s` (default 10 s). Simple and
-easy to reason about. A production build would use exponential backoff;
-that's a defensible thesis "future work" bullet.
+Retry schedule: uniform `retry_interval_s` (default 10 s). Applies to
+Tier 1 (Critical) and Tier 2 (Important) alerts; all are queued and
+retried. Tier 3 (Nice-to-have) events like USER_STATUS_OK queue but
+fail silently if unreachable. A production build would use exponential
+backoff; that's a defensible thesis "future work" bullet.
 
 **One exception.** A `DeviceCredentialRejected` (backend 401) cannot be
 fixed by retrying — the credential is wrong or revoked and a human has to
