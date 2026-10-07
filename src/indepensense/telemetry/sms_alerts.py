@@ -274,27 +274,61 @@ class SMSAlertNotifier:
             print(f"[sms] delivery report failed: {exc}", file=sys.stderr)
 
     def _text_everyone(self, event: AlertEvent, numbers: list[str]) -> str:
-        """Text every guardian. `SMS_SENT` if any one of them accepted."""
+        """Text every guardian with up to 3 attempts per number. `SMS_SENT` if any accepted.
+
+        Each number is retried up to 3 times with delays (100ms, 500ms, 1s)
+        on failure, giving the modem time to recover from transient glitches.
+        One guardian's failure does not prevent others being notified.
+        """
+        import time
         text = compose_alert_sms(event)
         any_sent = False
         for number in numbers:
-            # One guardian's number being wrong must not stop the rest
-            # being told, so failures are logged and the loop continues.
-            try:
-                result = self._sms.send(number, text)
-            except Exception as exc:
-                # The protocol says senders don't raise, but a driver bug
-                # must not take the remaining recipients down with it.
-                self.sms_failed_count += 1
-                print(f"[sms] sender raised for {number}: {exc}", file=sys.stderr)
-                continue
+            # Retry delays in seconds: 100ms, 500ms, 1s
+            delays = [0.1, 0.5, 1.0]
+            result = None
 
-            if result.sent:
-                any_sent = True
-                self.sms_sent_count += 1
-                print(f"[sms] sent to {number}", flush=True)
-            else:
-                self.sms_failed_count += 1
-                print(f"[sms] failed for {number}: {result.detail}", file=sys.stderr)
+            for attempt in range(1 + len(delays)):
+                try:
+                    result = self._sms.send(number, text)
+                except Exception as exc:
+                    # The protocol says senders don't raise, but a driver bug
+                    # must not take the remaining recipients down with it.
+                    if attempt < len(delays):
+                        delay = delays[attempt]
+                        print(
+                            f"[sms] send to {number} attempt {attempt + 1} raised, "
+                            f"retrying in {delay}s: {exc}",
+                            file=sys.stderr,
+                        )
+                        time.sleep(delay)
+                        continue
+                    self.sms_failed_count += 1
+                    print(
+                        f"[sms] failed to send to {number} after {attempt + 1} attempts: {exc}",
+                        file=sys.stderr,
+                    )
+                    break
+
+                if result.sent:
+                    any_sent = True
+                    self.sms_sent_count += 1
+                    print(f"[sms] sent to {number} on attempt {attempt + 1}", flush=True)
+                    break
+                elif attempt < len(delays):
+                    delay = delays[attempt]
+                    print(
+                        f"[sms] send to {number} attempt {attempt + 1} failed, "
+                        f"retrying in {delay}s: {result.detail}",
+                        file=sys.stderr,
+                    )
+                    time.sleep(delay)
+                else:
+                    self.sms_failed_count += 1
+                    print(
+                        f"[sms] failed to send to {number} after {attempt + 1} attempts: "
+                        f"{result.detail}",
+                        file=sys.stderr,
+                    )
 
         return SMS_SENT if any_sent else SMS_FAILED
