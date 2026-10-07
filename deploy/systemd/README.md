@@ -6,7 +6,18 @@ Pi so the wearable's backend comes up automatically on boot — no more
 
 The `indepensense.service` unit is the wearable's own long-running
 runtime (main loop, fall detection, voice pipeline, telemetry, etc.).
-It depends on the other three so systemd starts them in the right order.
+It pulls in the other three and is ordered after them — but with
+`Wants=`, not `Requires=`, so a service that fails to start cannot keep
+the wearable off. Under `Requires=` an unhappy routing engine took fall
+detection, obstacle warnings and the emergency button with it, which is
+the wrong trade for a safety device: those are the reason it exists,
+routing is a feature.
+
+Nothing is touched during startup to make that risky. `_open_router`
+and `_open_geocoder` only store a URL, and `_open_parser` builds the
+Ollama client with `warmup=False` precisely so `start()` never blocks on
+the LLM. The first *request* to a dead service fails, and every caller
+already handles that.
 
 Ollama itself ships with its own systemd service (installed by the
 official Ollama installer). The `ollama-warmup.service` here pre-loads

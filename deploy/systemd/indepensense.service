@@ -27,7 +27,26 @@ Wants=network-online.target
 # `Type=simple`, so systemd calls them started the moment java is exec'd
 # and never waits for the graph or the index to load.
 After=network-online.target ollama.service graphhopper.service photon.service
-Requires=ollama.service graphhopper.service photon.service
+# `Wants=`, not `Requires=`. Ordering only — a failure in any of these
+# must not keep the wearable off.
+#
+# Under `Requires=`, a GraphHopper that failed to start took the whole
+# device with it: no fall detection, no obstacle warnings, no emergency
+# button, because the routing engine was unhappy. That is the wrong
+# trade for a safety device. Routing, geocoding and voice are features;
+# noticing that the wearer has fallen over is the reason it exists.
+#
+# Safe because nothing here is touched during startup. `_open_router`
+# and `_open_geocoder` only store a URL, and `_open_parser` constructs
+# the Ollama client with `warmup=False` precisely so that `start()` does
+# not block on the LLM. The first *request* to a dead service fails, and
+# every caller already handles that — it is why the GraphHopper client
+# reports the server's own error text.
+#
+# `Requires=` also propagated stops: `systemctl stop graphhopper` used to
+# stop the wearable too. Nothing depends on that any more —
+# `deploy/graphhopper/rebuild.sh` names `indepensense` explicitly.
+Wants=ollama.service graphhopper.service photon.service
 
 [Service]
 Type=simple
