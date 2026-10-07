@@ -787,9 +787,37 @@ VOLUME_STATE_PATH = PROJECT_ROOT / "var" / "volume"
 
 
 # Physical buttons (KY-004 style breakouts with on-board 10kΩ pull-down)
+#
+# Three facts describe one button and all three have to agree: where it
+# sits on the enclosure (`button.*_position` in `intents/messages.py`,
+# because the wearable says it out loud), which header pin it is wired to
+# (`docs/hardware.md`), and which GPIO the runtime listens on (here).
+# `test_button_pins.py` locks the last two together.
+#
+# As worn, user facing forward: PTT is on the RIGHT, emergency on the
+# FRONT, repeat/stop on the LEFT.
+#
+# **The front button is on GPIO 25 and the left on GPIO 24, which is the
+# reverse of what the enclosure drawing would suggest.** That is wiring,
+# not a typo, and it has caught us once already in each direction:
+#
+#   * Commit 88aa4d5, "temporary change the button number", set these to
+#     the values below after the assembled unit turned out to be wired
+#     this way. It was a real correction, but the label "temporary" and
+#     the stale pin comments made it read like a bench hack.
+#   * On 2026-10-07 that reading won: the pair was "restored" to match
+#     `docs/hardware.md`, which would have put the emergency alert on the
+#     left-hand button and the repeat on the front. Caught before it
+#     shipped, by the person who knew the hardware.
+#
+# So the pin comments below are load-bearing, not decoration — they were
+# false for five days and that is what made the swap look like a mistake.
+# GPIO 24 is physical pin 18; GPIO 25 is physical pin 22. The test
+# asserts both against the Pi 5 header so they cannot quietly disagree
+# again.
 PTT_BUTTON_GPIO = 23         # physical pin 16 — push-to-talk (click to start, click to stop)
-EMERGENCY_BUTTON_GPIO = 25   # physical pin 18 — single click fires emergency.trigger
-REPEAT_BUTTON_GPIO = 24      # physical pin 22 — single click repeats last instruction
+EMERGENCY_BUTTON_GPIO = 25   # physical pin 22, FRONT button — fires emergency.trigger
+REPEAT_BUTTON_GPIO = 24      # physical pin 18, LEFT button — repeats, or stops speech
 
 # Active buzzer — direct GPIO drive (see feedback/gpio_buzzer.py for the
 # current-draw caveat if the Pi shows undervoltage warnings).

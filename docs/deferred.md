@@ -20,10 +20,11 @@ rather than from memory.
 several `parked` entries name them as their revisit trigger:
 
 - **The assembled prototype.** Compass calibration gates three shipped
-  features (`COMPASS_CALIBRATED` in `config.py`), and two button positions
-  are unrecorded. The buzzer no longer waits on this: "too loud" was
-  rediagnosed as "would not stop" and answered by reserving it for
-  emergencies rather than by attenuating it — see *Quieting the buzzer*.
+  features (`COMPASS_CALIBRATED` in `config.py`). Two entries that used to
+  name this blocker no longer do: the button positions are recorded and
+  spoken, and the buzzer's "too loud" was rediagnosed as "would not stop"
+  and answered by reserving it for emergencies rather than by attenuating
+  it — see *Quieting the buzzer*.
 - **A microphone.** The latency work — Whisper decode flags, the static-TTS
   cache, and a deterministic fast path in front of the LLM — is not deferred,
   it is simply unmeasured. Nothing there should be changed before
@@ -355,20 +356,44 @@ and the backend developer has capacity.
 ## Hardware documentation
 
 ### Emergency and repeat button positions
-**Status:** blocked · **Raised:** 2026-09-13
+**Status:** shipped · **Raised:** 2026-09-13
 
-`docs/hardware.md` records PTT as the **left** button but leaves the other
-two as *unrecorded*. That gap is load-bearing in one place: the spoken help
-response deliberately does not tell the user which button summons help,
-because naming a button we cannot locate is worse than not mentioning it.
+All three positions are recorded in `docs/hardware.md` and all three are
+spoken: PTT is **right**, repeat/stop is **left**, emergency is **front**,
+and `help.capabilities` now names the SOS button so a user who asks what
+the device does is told where it is. The gap this entry described — the
+help response staying silent about help itself, because naming a button we
+could not locate was worse than not mentioning it — is closed.
 
-The `help.capabilities` message carries a comment saying to add that
-sentence once the layout is confirmed. `button.ptt_position` in
-`intents/messages.py` is the pattern to follow — the position is its own key in both
-languages, so a rebuilt enclosure is one edit.
+**The sequel is worth recording, because it is the failure this entry did
+not anticipate.** Getting the positions *written down* was the easy half.
+A layout is three facts in three files — the wiring table, the GPIO
+constants, and the spoken positions — and recording one of them does not
+keep the other two honest.
 
-**Blocked on:** somebody looking at the assembled prototype and writing the
-two positions into the table.
+On 2026-10-02, commit 88aa4d5 corrected `EMERGENCY_BUTTON_GPIO` and
+`REPEAT_BUTTON_GPIO` to the way the assembled unit is actually wired. It
+was right, and it did two things that made it look wrong: it called
+itself "temporary", and it left the pin comments next to it unchanged, so
+`config.py` ended up asserting that GPIO 25 is physical pin 18. On
+2026-10-07 an audit found that contradiction, found `docs/hardware.md`
+siding with the stale comments, and concluded the swap was a bench hack
+to revert — which would have moved the guardian alert onto the left-hand
+button. It was caught only because the person who built the enclosure
+said so.
+
+Two things to carry into the write-up. First, **the documentation was the
+wrong file, not the code** — the reverse of the assumption `hardware.md`
+states about itself, and an assumption worth holding more loosely when
+the code has been run on the device and the doc has not. Second, **a
+partial correction is more dangerous than none**: the single stale
+comment left behind in 2026-10-02 is the entire reason the correct value
+was nearly reverted five days later.
+
+`src/indepensense/tests/unit/test_button_pins.py` now fails the suite on
+any disagreement between the constants, their pin comments, and the
+wiring table — and says to settle it on the hardware rather than by
+reading.
 
 ---
 

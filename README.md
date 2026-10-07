@@ -471,9 +471,17 @@ than magic words — the full rules and the Tagalog equivalents live in
 | `emergency.trigger` | "Help" · "Tulong" | Also the emergency button. A bare cry for help is always an emergency, never a request for the help intent. Re-pressing within 10 s does not re-send — the press is still felt and still interrupts whatever is speaking, it just does not notify the guardian twice about one event. The window clears early if the first alert reached nobody, so pressing again after a failure retries |
 | *(anything else)* | — | Forwarded to the cloud LLM when online, otherwise "I didn't catch that" |
 
-**Buttons.** Push-to-talk (left) starts and stops recording, and doubles as
-the confirm press. Emergency fires an alert immediately. Repeat replays the
-last response — or, while the wearable is talking, stops it.
+**Buttons**, body-relative as worn. Push-to-talk (**right**) starts and
+stops recording, and doubles as the confirm press. Emergency (**front**)
+fires an alert immediately and sounds the buzzer. Repeat (**left**)
+replays the last response — or, while the wearable is talking, stops it —
+and serves as "no" at a confirmation prompt.
+
+These three positions are spoken aloud to the user, so they are load-bearing
+rather than documentation. They live in one place each: the wiring in
+[`docs/hardware.md`](docs/hardware.md), the GPIO numbers in `config.py`,
+and the spoken words in `intents/messages.py`. `test_button_pins.py` fails
+the suite if the first two disagree.
 
 ## System Workflow
 

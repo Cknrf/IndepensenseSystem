@@ -30,9 +30,9 @@ Pin 13 (GPIO 27)          Vibration motor      RIGHT
 Pin 15 (GPIO 22)          Vibration motor      LEFT
 Pin 16 (GPIO 23)          Button               PTT
 Pin 17 (3V3)              DYP-A22 BOTTOM       VCC
-Pin 18 (GPIO 24)          Button               EMERGENCY
+Pin 18 (GPIO 24)          Button               REPEAT / STOP
 Pin 21 (GPIO 9 / SCL4)    QMC5883P compass     SCK   — I2C4, its own bus
-Pin 22 (GPIO 25)          Button               REPEAT / STOP
+Pin 22 (GPIO 25)          Button               EMERGENCY
 Pin 24 (GPIO 8 / SDA4)    QMC5883P compass     SDA   — I2C4, its own bus
 Pin 30 (GND)              DYP-A22 BOTTOM       GND
 Pin 32 (GPIO 12 / TX)     DYP-A22 BOTTOM       RX
@@ -173,12 +173,35 @@ Push-to-talk (PTT)          RIGHT on the enclosure
 Emergency                   FRONT on the enclosure
     3.3 V rail  (VCC)
     GND rail    (GND)
-    Pin 18      (OUT)       GPIO 24
+    Pin 22      (OUT)       GPIO 25
 
 Repeat / stop speech        LEFT on the enclosure
     3.3 V rail  (VCC)
     GND rail    (GND)
-    Pin 22      (OUT)       GPIO 25
+    Pin 18      (OUT)       GPIO 24
+```
+
+**Emergency and repeat do not run in enclosure order** — the front button
+is on the *later* pin. Nothing is wrong with that; it is simply how the
+harness was routed, and it is worth stating because it looks like a
+transcription error every time somebody reads this table fresh.
+
+This entry was wrong until 2026-10-07, listing emergency on pin 18 and
+repeat on pin 22. Commit 88aa4d5 had already corrected `config.py` to the
+real wiring but was labelled "temporary" and left its pin comments stale,
+so for five days the code was right and the documentation was not — which
+is the reverse of the assumption in "if the doc disagrees with reality,
+reality is wrong". An audit then read the doc as authoritative and nearly
+"restored" `config.py` to it, which would have put the guardian alert on
+the left-hand button and the repeat on the front.
+
+If this table and `config.py` ever disagree again, **confirm against the
+assembled unit before changing either**, because both have now been wrong
+once:
+
+```bash
+python -m indepensense.feedback.tests.manual.button_test 25   # expect the FRONT button
+python -m indepensense.feedback.tests.manual.button_test 24   # expect the LEFT button
 ```
 
 **The positions are spoken aloud, so they are not cosmetic.** `messages.py`
@@ -218,19 +241,44 @@ resolve an ambiguous one.
 The PTT position is not merely documentation. The wearable reads it out
 when it asks the user to confirm a destination:
 
-> "Jollibee Lipa City, 400 meters away. Press the **left** button to
-> confirm, or wait to cancel."
+> "Jollibee Lipa City, 400 meters away. Press the **right** button to
+> confirm, or the **left** button to cancel."
 
-That word comes from the `button.ptt_position` key in
-`src/indepensense/intents/messages.py`, in both English and Tagalog. **If
-the enclosure is rebuilt and PTT moves, change that key** — otherwise the
-device confidently sends a blind user to press the emergency button. The
-key exists separately from the sentences that use it precisely so this is
-one edit rather than a hunt.
+Those words come from `button.ptt_position` and `button.cancel_position`
+in `src/indepensense/intents/messages.py`, in both English and Tagalog.
+**If the enclosure is rebuilt and a button moves, change those keys** —
+otherwise the device confidently sends a blind user to press the
+emergency button. The keys exist separately from the sentences that use
+them precisely so this is one edit rather than a hunt.
 
-Emergency and Repeat positions are left blank rather than guessed: nothing
-currently speaks them, and a wrong value here is worse than a missing one.
-Fill them in from the physical prototype when convenient.
+All three positions are now recorded, and all three are spoken:
+`button.emergency_position` ("front") is named in `help.capabilities`, so
+a user who asks what the device can do is told where the SOS button is.
+No prompt ever asks them to *press* it — that one summons a guardian, so
+the wearer has to be the only one who decides to reach for it.
+
+### Three places, one layout
+
+A button is described in three files and they have to agree:
+
+| File | Says |
+|---|---|
+| this table | which GPIO and header pin it is wired to |
+| `config.py` | which GPIO the runtime listens on |
+| `intents/messages.py` | where the wearer is told to reach |
+
+`src/indepensense/tests/unit/test_button_pins.py` fails the suite if the
+first two drift. It exists because they did, for five days, in the
+direction nobody checks: `config.py` matched the hardware and *this
+table* did not. The code was right and the documentation was wrong, which
+inverts the usual assumption and is why it took an audit plus a
+correction plus the person who built the enclosure to settle.
+
+The lesson is narrower than "keep the docs updated". It is that a partial
+correction is more dangerous than no correction: 88aa4d5 fixed the GPIOs
+and left the pin comments stale, and that one leftover inconsistency is
+what made a correct value look like a mistake five days later. Change a
+pin, change everything that names it.
 
 Manual test:
 
