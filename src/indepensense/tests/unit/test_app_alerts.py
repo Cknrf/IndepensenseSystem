@@ -144,6 +144,51 @@ def test_a_fall_with_no_sink_does_not_raise(app):
     app._on_fall_detected(_fall())
 
 
+# --- a fall sounds the same alarm as the button ------------------------------
+
+def test_a_fall_sounds_the_buzzer(app):
+    """A detected fall is an emergency and gets the emergency alarm.
+
+    It matters more here than on the button, not less: the button is
+    pressed by someone who can still reach it, while a fall is the case
+    where the wearer may be unable to summon anyone themselves. The
+    buzzer is the only channel that reaches people physically nearby.
+    """
+    app.gps_cache = _StubCache(_fix())
+    app._on_fall_detected(_fall())
+
+    assert _wait_for(lambda: any(e[0] == "beep" for e in app.buzzer.events))
+    for motor in (app.front_motor, app.left_motor, app.right_motor):
+        assert _wait_for(lambda m=motor: bool(m.events))
+
+
+def test_the_fall_alarm_does_not_block_the_loop(app):
+    """`_on_fall_detected` runs on the 100 Hz loop and the alarm sleeps for
+    roughly 0.7 s, so it has to be spawned rather than played inline.
+
+    Asserted as "the alert was dispatched before the buzzer finished":
+    if the pattern ran inline, every beep would already be recorded by
+    the time `send_alert` was reached, and the alert — the thing that
+    summons help — would have waited behind it.
+    """
+    app.gps_cache = _StubCache(_fix())
+    app._on_fall_detected(_fall())
+
+    assert len(app.alert_sink.alerts) == 1, (
+        "the alert must be dispatched without waiting out the alarm"
+    )
+
+
+def test_a_fall_alarm_with_no_buzzer_does_not_raise(app):
+    """Degraded hardware must not stop the alert. A unit whose buzzer
+    failed to open still has to reach the guardian."""
+    app.buzzer = None
+    app.gps_cache = _StubCache(_fix())
+    app._on_fall_detected(_fall())
+
+    assert len(app.alert_sink.alerts) == 1
+
+
 # --- fall detection reaches SMS ---------------------------------------------
 
 def test_a_fall_texts_the_guardians(tmp_path, app):

@@ -20,9 +20,10 @@ rather than from memory.
 several `parked` entries name them as their revisit trigger:
 
 - **The assembled prototype.** Compass calibration gates three shipped
-  features (`COMPASS_CALIBRATED` in `config.py`), the buzzer cannot be judged
-  too loud until it can be heard in context, and two button positions are
-  unrecorded.
+  features (`COMPASS_CALIBRATED` in `config.py`), and two button positions
+  are unrecorded. The buzzer no longer waits on this: "too loud" was
+  rediagnosed as "would not stop" and answered by reserving it for
+  emergencies rather than by attenuating it — see *Quieting the buzzer*.
 - **A microphone.** The latency work — Whisper decode flags, the static-TTS
   cache, and a deterministic fast path in front of the LLM — is not deferred,
   it is simply unmeasured. Nothing there should be changed before
@@ -209,7 +210,39 @@ it detects and what it can do about it, and makes this the most valuable
 navigation item left.
 
 ### Quieting the buzzer
-**Status:** parked · **Raised:** 2026-09-13
+**Status:** resolved by design 2026-10-07 · **Raised:** 2026-09-13
+
+**Outcome: nothing was attenuated. The buzzer was taken off the obstacle
+path entirely and reserved for emergencies** — the SOS button and a
+detected fall. Obstacle warnings are now haptic-only on both sensors and
+both tiers, and the `OBSTACLE_BUZZER_ENABLED` bench-mute flag is deleted
+rather than parked at `False`.
+
+The misdiagnosis flagged below turned out to be the whole problem, and
+the fix it implied was larger than "drop the warning tier". The governing
+argument is not loudness but **exclusivity of meaning**: the buzzer is
+the only output a bystander can perceive, so it should carry exactly one
+message. A sound that fires on both an awning and a medical emergency
+tells a bystander nothing by its presence and trains the wearer to ignore
+it. Obstacles are the most frequent event the device has, which makes
+them the worst possible thing to spend that channel on.
+
+What it costs, recorded honestly: the TOP danger tier at 50 cm — the
+head-level obstacle a cane cannot sweep, which is the wearable's unique
+value — is now vibration-only. The mitigation if field testing shows an
+all-motor pulse is too subtle at walking pace is a **more distinctive
+TOP pattern**, not the beep back; `_play_warning_pattern` keeps its
+branch on `sensor_name` as the extension point for exactly that.
+
+Deleting the mute flag was part of the point. It was live at `False` with
+no startup warning, so the audible channel was dead while the device
+looked healthy — a demo-day trap that this change removes rather than
+fixes.
+
+Everything below is the analysis that led here, kept because the options
+were real and the reasoning is what the write-up cites.
+
+---
 
 The buzzer was judged too loud in prototype testing. It is an **active**
 buzzer — it contains its own oscillator, so applying voltage is the only
@@ -234,8 +267,9 @@ buzzer from the warning tier — which already fires a front-motor pulse —
 and keep it for danger (50 cm) and the emergency button, matching the
 reasoning already applied to the silent BOTTOM sensor.
 
-**Revisit when:** the prototype is back and it can be judged with the
-warning tier silenced first, before anything is attenuated or rewired.
+*(This was the correct diagnosis and it went further than its own
+proposal — the danger tier lost the beep too. See the outcome at the top
+of this entry.)*
 
 ### Left / right obstacle sensing
 **Status:** blocked · **Raised:** 2026-09-12

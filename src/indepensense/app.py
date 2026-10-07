@@ -60,11 +60,20 @@ Two DYP-A22 sensors mounted on the cane, both forward-facing:
 
   - TOP sensor: head-level obstacles (branches, low signage). This is
     the wearable's unique value — the user's cane can't sweep the air
-    above them. Warning + danger tiers both include a buzzer beep so
-    the alert is audible + haptic.
-  - BOTTOM sensor: foot-level obstacles (curbs, low walls). Silent
-    vibration only — the user's cane already detects most of these by
-    touch, so we notify without nagging.
+    above them.
+  - BOTTOM sensor: foot-level obstacles (curbs, low walls). The user's
+    cane already detects most of these by touch, so we notify without
+    nagging.
+
+**Obstacle feedback is haptic only — the buzzer never fires here.** Both
+TOP tiers used to beep, behind a bench-mute flag. The flag is gone and so
+is the beep, because the buzzer is the one output a *bystander* can
+perceive and it therefore carries exactly one meaning: this person needs
+help. Obstacles are the most frequent event the device has, and spending
+that channel on them tells a bystander nothing by its presence and trains
+the wearer to tune it out. The danger tier already pulses all three
+motors, which is the most distinctive haptic available; adding a beep
+bought intensity, not information. See `_play_warning_pattern`.
 
 Two thresholds: 100 cm (warning) and 50 cm (danger). Alerts fire on an
 obstacle getting *closer*, not on one being present: entering a tier
@@ -78,10 +87,6 @@ half minutes against a wall that never moved. Hysteresis rather than a
 "did the distance change" test because the cane is held in a hand: the
 reading is never still, so only a band wide enough to swallow that sway
 distinguishes an approach from a wobble.
-
-`config.OBSTACLE_BUZZER_ENABLED` mutes the TOP sensor's beep for indoor
-bench testing — vibration, tiering and latching are untouched. It must
-be True on the deployed device.
 
 Shutdown
 --------
@@ -199,7 +204,6 @@ from indepensense.config import (
     NLU_PROMPT_PATH,
     NLU_TIMEOUT_S,
     NLU_WARMUP_TIMEOUT_S,
-    OBSTACLE_BUZZER_ENABLED,
     OBSTACLE_DANGER_CM,
     OBSTACLE_DANGER_REPEAT_S,
     OBSTACLE_READING_MAX_AGE_S,
@@ -1292,11 +1296,38 @@ class App:
     # ---------------------------------------------------------------- fall
 
     def _on_fall_detected(self, event) -> None:
+        """Sound the alarm, tell the wearer, and alert the guardian.
+
+        A detected fall IS an emergency — the same event the button
+        raises, arriving by a different route — so it gets the same
+        feedback. That matters more here than on the button, not less:
+        the button is pressed by someone who can still reach it, while a
+        fall is the case where the wearer may be unable to summon anyone
+        themselves. The buzzer is the only channel that reaches the people
+        physically standing nearby, and this is exactly when it is needed.
+
+        Spawned, never inline. This runs on the 100 Hz loop and the
+        pattern sleeps for roughly 0.7 s, which would stop fall detection
+        and obstacle polling for its duration.
+
+        A plain thread rather than `_spawn_haptic`, for the reason spelled
+        out in `_on_emergency_press`: that helper runs its action *inside*
+        `_warning_lock`, `_play_emergency_feedback` takes the same
+        non-reentrant lock itself, and passing it through deadlocks the
+        acknowledgement on its own lock — holding it for good and freezing
+        every later warning pattern with it.
+        """
         print(
             f"[FALL DETECTED] impact={event.impact_magnitude_g:.2f} g "
             f"freefall={event.freefall_duration_s * 1000:.0f} ms",
             flush=True,
         )
+
+        threading.Thread(
+            target=self._play_emergency_feedback,
+            name="fall-ack",
+            daemon=True,
+        ).start()
 
         # Tell the wearer, not only the guardian. Until this existed, the
         # person who had just fallen over was the one party not informed —
@@ -1865,29 +1896,33 @@ class App:
         """Play the feedback pattern for a given sensor+tier.
 
         Held under `_warning_lock` so overlapping calls play in sequence
-        instead of racing on the buzzer or motor state.
+        instead of racing on the motor state.
 
         Feedback matrix (see docstring at top of module):
 
-          TOP + warning  → front motor pulse + one short beep
-          TOP + danger   → all 3 motors + two rapid beeps
-          BOTTOM + warn  → front motor pulse (silent — cane covers this)
-          BOTTOM + danger→ all 3 motors (silent)
+          TOP + warning  → front motor pulse
+          TOP + danger   → all 3 motors
+          BOTTOM + warn  → front motor pulse
+          BOTTOM + danger→ all 3 motors
 
-        Both TOP beeps are suppressed when `OBSTACLE_BUZZER_ENABLED` is
-        False (bench mute); the vibration half of each pattern still plays.
+        **Haptic only.** Both TOP tiers used to add a buzzer beep; the
+        buzzer is now reserved for emergencies, which is argued at the top
+        of this module.
+
+        That leaves the two sensors with identical patterns, and the
+        branch on `sensor_name` is kept deliberately rather than collapsed
+        to a tier-only check. It is the extension point for the one
+        escalation this change leaves open: if an all-motor pulse turns
+        out to be too subtle at head height while walking, the answer is a
+        more distinctive pattern for TOP specifically — not the beep back.
         """
         with self._warning_lock:
             try:
                 if sensor_name == "top" and tier == "warning":
                     if self.front_motor is not None:
                         self.front_motor.pulse(times=1, duration_s=0.25)
-                    if OBSTACLE_BUZZER_ENABLED and self.buzzer is not None:
-                        self.buzzer.beep(times=1, duration_s=0.1)
                 elif sensor_name == "top" and tier == "danger":
                     self._pulse_all_motors(duration_s=0.4)
-                    if OBSTACLE_BUZZER_ENABLED and self.buzzer is not None:
-                        self.buzzer.beep(times=2, duration_s=0.08, gap_s=0.05)
                 elif sensor_name == "bottom" and tier == "warning":
                     if self.front_motor is not None:
                         self.front_motor.pulse(times=1, duration_s=0.25)
@@ -2516,11 +2551,25 @@ class App:
             print(f"[feedback] chime error: {exc}", file=sys.stderr, flush=True)
 
     def _play_emergency_feedback(self) -> None:
-        """Emergency-press feedback: 3 fast buzzer beeps + all-motor pulse.
+        """Emergency feedback: 3 fast buzzer beeps + all-motor pulse.
 
-        The buzzer is used here (unlike PTT) because emergencies SHOULD
-        be loud — a bystander who hears the buzzer will know something
-        is happening even if the guardian hasn't answered the alert yet.
+        **The only thing in the runtime that sounds the buzzer**, and
+        both ways an emergency can arise go through it — the button, via
+        `_on_emergency_press`, and a detected fall, via
+        `_on_fall_detected`. The same event by two routes gets the same
+        alarm; a fall that buzzed less than a button press would be
+        backwards, since a fallen wearer is the one least able to summon
+        anyone themselves.
+
+        The buzzer is used here and nowhere else — not on PTT, not on
+        obstacles — because that exclusivity is what gives it meaning. It
+        is the only output a *bystander* can perceive, so one sound means
+        one thing: this person needs help. Spending it on routine events
+        would leave a bystander unable to tell an awning from an
+        emergency.
+
+        Blocking for roughly 0.7 s, so every caller spawns it rather than
+        calling it inline.
         """
         with self._warning_lock:
             # Fire motors + buzzer roughly simultaneously so the user

@@ -282,7 +282,7 @@ Manual test:
 python -m indepensense.feedback.tests.manual.vibration_test
 ```
 
-# 5. Active Buzzer — STATUS: working (judged too loud — see `docs/deferred.md`)
+# 5. Active Buzzer — STATUS: working
 
 ```
 Pin 12   (+)      GPIO 18 — PWM-capable, useful later if swapped for a passive buzzer
@@ -292,6 +292,21 @@ GND rail (−)      pins 20, 25, 34 or 39
 Standard hobby active buzzer, driven directly from a GPIO pin. GPIO HIGH
 sounds the tone; LOW is silent. Active buzzers contain their own
 oscillator so no PWM is needed.
+
+**It sounds for emergencies and nothing else** — the SOS button and a
+detected fall, both through `App._play_emergency_feedback`. Obstacle
+warnings are haptic-only.
+
+That is a deliberate signal-design decision, not a volume workaround. The
+buzzer is the only output a *bystander* can perceive, so it carries
+exactly one meaning: this person needs help. It was previously wired to
+head-level obstacle warnings as well, where it fired on anything within
+100 cm — under an awning or past a row of signage that is a beep every
+couple of seconds indefinitely. It was judged "too loud" in prototype
+testing, but the real complaint was that it would not *stop*, and a sound
+that fires on both an awning and a medical emergency tells a bystander
+nothing by its presence. Reserving it is what makes it legible. See
+`docs/deferred.md` for the attenuation options this replaced.
 
 Pin configurable via `BUZZER_GPIO` in `indepensense.config`.
 

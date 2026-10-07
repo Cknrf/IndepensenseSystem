@@ -57,22 +57,15 @@ class _FixedUltrasonic:
         pass
 
 
-@pytest.fixture(autouse=True)
-def buzzer_unmuted(monkeypatch):
-    """Assert the deployed feedback matrix, not whatever the bench mute
-    happens to be set to.
-
-    `config.OBSTACLE_BUZZER_ENABLED` is a convenience flag that gets flipped
-    off during indoor testing. Without this fixture the meaning of every
-    beep assertion below would silently change with it. The one test that
-    cares about the muted case turns it off itself.
-    """
-    monkeypatch.setattr(app_module, "OBSTACLE_BUZZER_ENABLED", True)
-
-
 @pytest.fixture
 def app():
-    """A MockApp with feedback devices attached but nothing started."""
+    """A MockApp with feedback devices attached but nothing started.
+
+    The buzzer is attached even though the obstacle path must never ring
+    it — that is precisely what makes the silence assertions meaningful.
+    A test that asserted no beep against an absent buzzer would pass for
+    the wrong reason and keep passing if the beep came back.
+    """
     instance = MockApp()
     instance.buzzer = MockBuzzer()
     instance.front_motor = MockVibrationMotor()
@@ -305,57 +298,60 @@ def test_latches_are_independent_per_sensor(app, monkeypatch):
 
 # --- feedback patterns -------------------------------------------------------
 
-def test_top_warning_beeps_and_pulses_front(app):
+@pytest.mark.parametrize("sensor_name", ["top", "bottom"])
+@pytest.mark.parametrize("tier", ["warning", "danger"])
+def test_no_obstacle_pattern_ever_sounds_the_buzzer(app, sensor_name, tier):
+    """The invariant the whole feedback matrix now rests on.
+
+    The buzzer is reserved for emergencies, because it is the only output
+    a bystander can perceive and that exclusivity is what gives it
+    meaning. Obstacles are the most frequent event the device has, so a
+    beep leaking back into this path would be the one regression that
+    quietly undoes the decision — the device would still work, still
+    vibrate, still pass every other test here, and a bystander would lose
+    the ability to tell an awning from someone in trouble.
+
+    Parametrised over the full matrix rather than asserted per pattern:
+    the rule is about the path, not about any one sensor or tier, and a
+    new tier added later should fail here by default.
+    """
+    app._play_warning_pattern(sensor_name, tier)
+
+    assert app.buzzer.events == []
+
+
+def test_top_warning_pulses_the_front_motor(app):
     """TOP is the wearable's unique value — the cane cannot sweep head
-    height — so its warnings are audible as well as haptic."""
+    height — so a warning there still has to be felt."""
     app._play_warning_pattern("top", "warning")
 
-    assert any(e[0] == "beep" for e in app.buzzer.events)
     assert any(e[0] == "pulse" for e in app.front_motor.events)
 
 
-def test_top_danger_uses_all_motors_and_two_beeps(app):
+def test_top_danger_uses_all_three_motors(app):
+    """All three motors is the most distinctive haptic available, and
+    since the beep is gone it is now the *whole* danger signal."""
     app._play_warning_pattern("top", "danger")
 
-    beeps = [e for e in app.buzzer.events if e[0] == "beep"]
-    assert beeps and beeps[0][1] == 2
     for motor in (app.front_motor, app.left_motor, app.right_motor):
         assert motor.events, "all three motors should fire on danger"
 
 
-def test_bench_mute_drops_the_beep_but_keeps_the_vibration(app, monkeypatch):
-    """Muting the buzzer must not mute the warning — the haptic half of
-    every TOP pattern still has to fire, or indoor testing would be
-    exercising a code path the deployed device never runs."""
-    monkeypatch.setattr(app_module, "OBSTACLE_BUZZER_ENABLED", False)
-
-    app._play_warning_pattern("top", "warning")
-    app._play_warning_pattern("top", "danger")
-
-    assert app.buzzer.events == []
-    for motor in (app.front_motor, app.left_motor, app.right_motor):
-        assert motor.events
-
-
-def test_bottom_warning_is_silent(app):
-    """The user's cane already finds curbs by touch. Beeping about them
-    would nag without adding information."""
+def test_bottom_warning_pulses_the_front_motor(app):
     app._play_warning_pattern("bottom", "warning")
 
-    assert app.buzzer.events == []
     assert any(e[0] == "pulse" for e in app.front_motor.events)
 
 
-def test_bottom_danger_is_silent_but_uses_all_motors(app):
+def test_bottom_danger_uses_all_three_motors(app):
     app._play_warning_pattern("bottom", "danger")
 
-    assert app.buzzer.events == []
     for motor in (app.front_motor, app.left_motor, app.right_motor):
         assert motor.events
 
 
 def test_missing_actuators_do_not_raise(app):
-    """Running with a buzzer that failed to open must degrade, not crash."""
+    """Running with a motor that failed to open must degrade, not crash."""
     app.buzzer = None
     app.front_motor = None
     app._play_warning_pattern("top", "warning")
@@ -363,14 +359,18 @@ def test_missing_actuators_do_not_raise(app):
 
 
 def test_a_raising_actuator_is_contained(app):
-    class _BrokenBuzzer(MockBuzzer):
-        def beep(self, *args, **kwargs):
+    """A dead motor must not take the pattern down with it.
+
+    The front motor rather than the buzzer, which this path no longer
+    touches — a broken-buzzer test here would pass without executing
+    anything.
+    """
+    class _BrokenMotor(MockVibrationMotor):
+        def pulse(self, *args, **kwargs):
             raise OSError("GPIO gone")
 
-    app.buzzer = _BrokenBuzzer()
-    app._play_warning_pattern("top", "warning")
-    # The motor half of the pattern still ran.
-    assert app.front_motor.events
+    app.front_motor = _BrokenMotor()
+    app._play_warning_pattern("top", "warning")   # must not raise
 
 
 # --- dispatch ----------------------------------------------------------------
@@ -381,8 +381,8 @@ def test_detection_actually_reaches_the_actuators(app):
     sensor = _FixedUltrasonic(OBSTACLE_DANGER_CM - 10)
     app._check_obstacle_sensor("top", sensor)
 
-    assert _wait_for(lambda: bool(app.buzzer.events))
     assert _wait_for(lambda: bool(app.front_motor.events))
+    assert app.buzzer.events == []
 
 
 # --- the tier function in isolation ------------------------------------------

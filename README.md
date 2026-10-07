@@ -57,8 +57,9 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 
 **Navigation Assistance**
 - Real-time obstacle detection, alerting on an obstacle getting *closer* rather than on one merely being present — a tier fires once on entry and re-arms only after the obstacle recedes past a hysteresis band, so a cane that is never quite still does not buzz continuously. The danger tier alone repeats, so a standing hazard is not announced once and forgotten
+- Obstacle warnings are **haptic only**. The buzzer is reserved for emergencies, because it is the only output a bystander can perceive and that exclusivity is what gives it meaning — a sound that fires on both an awning and a medical emergency tells a bystander nothing by its presence, and trains the wearer to tune it out. The danger tier pulses all three motors, which is the most distinctive pattern the device has
 - Multi-sensor distance estimation
-- Audio + vibration directional feedback
+- Vibration directional feedback, with speech for turn-by-turn instructions
 - Turn-by-turn cueing with off-route warnings
 - Destination confirmation before routing — the chosen place is read back with its distance, and nothing starts until the user presses to confirm
 - Candidate re-ranking, so "the nearest Jollibee" is decided locally by distance rather than by the geocoder's own relevance score
@@ -73,6 +74,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 **Safety Monitoring**
 - Fall detection using the MPU6050 IMU, on two routes: *freefall → impact → stillness* for a straight-down collapse, and *impact → body now horizontal → stillness* for a trip. A chest-mounted sensor in a trip swings about the feet rather than dropping, so it never goes weightless — the freefall route alone caught 0 of 3 recorded trips. Neither impact nor orientation separates falls from ordinary activity on its own; requiring both does (3/3 falls, 7/7 activities on recorded traces)
 - Emergency SOS trigger via physical button
+- A detected fall raises the **same alarm as the button** — buzzer and all three motors — not just a silent alert. It matters more there than on the button: the button is pressed by someone who can still reach it, while a fall is the case where the wearer may be unable to summon anyone themselves
 - The wearer is told what the device knows: a detected fall and both battery tiers are spoken aloud, not only sent to guardians
 - Critical announcements interrupt whatever is being said, including mid-synthesis
 
@@ -437,7 +439,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | Navigation never starts, always says "cancelled" | The destination confirmation timed out. It wants a **PTT press** within `DESTINATION_CONFIRM_TIMEOUT_S` after the place is read back |
 | The device talks over itself | Should be impossible — every main-loop utterance goes through the announcer, which is single-threaded. If it happens, something is calling `play()` directly |
 | Process dies with `double free or corruption` and no traceback | A C-level fault, almost always PortAudio. `voice/audio.py` owns every stream and must never call `sd.play` / `sd.rec` / `sd.stop` — those share one global context and let one thread close another's stream. `test_audio_playback.py` guards this |
-| Obstacles vibrate but never beep | `OBSTACLE_BUZZER_ENABLED` is `False` in `config.py` — the bench mute for indoor testing. Set it back to `True` before any demo or field test |
+| Obstacles vibrate but never beep | Working as designed. The buzzer is reserved for emergencies — the button and a detected fall — so that one sound carries one meaning to a bystander. Obstacles are haptic-only on both sensors and both tiers |
 | Saved places vanish after a reboot | `var/places.json` unwritable, or the process runs as a user without write access to `var/` |
 
 ## Voice Commands
