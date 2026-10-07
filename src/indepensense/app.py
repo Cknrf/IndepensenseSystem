@@ -2653,7 +2653,7 @@ The comparisons are inclusive, so a threshold names the percentage
             print(f"[feedback] chime error: {exc}", file=sys.stderr, flush=True)
 
     def _play_emergency_feedback(self) -> None:
-        """Emergency feedback: 3 fast buzzer beeps + all-motor pulse.
+        """Emergency feedback: 3 bursts of rapid beeps + all-motor pulse.
 
         **The only thing in the runtime that sounds the buzzer**, and
         both ways an emergency can arise go through it — the button, via
@@ -2670,7 +2670,10 @@ The comparisons are inclusive, so a threshold names the percentage
         would leave a bystander unable to tell an awning from an
         emergency.
 
-        Blocking for roughly 0.7 s, so every caller spawns it rather than
+        Three repetitions with gaps prevent desensitization and improve
+        recognition of the alert as urgent rather than incidental.
+
+        Blocking for roughly 2.9 s, so every caller spawns it rather than
         calling it inline.
         """
         with self._warning_lock:
@@ -2682,7 +2685,10 @@ The comparisons are inclusive, so a threshold names the percentage
                 print(f"[feedback] motor-ack error: {exc}", file=sys.stderr, flush=True)
             try:
                 if self.buzzer is not None:
-                    self.buzzer.beep(times=3, duration_s=0.1, gap_s=0.06)
+                    for i in range(3):
+                        self.buzzer.beep(times=3, duration_s=0.1, gap_s=0.06)
+                        if i < 2:  # Don't sleep after the last burst
+                            time.sleep(0.5)
             except Exception as exc:
                 print(f"[feedback] buzzer error: {exc}", file=sys.stderr, flush=True)
 
