@@ -440,7 +440,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | Navigation never starts, always says "cancelled" | The destination confirmation timed out. It wants a **PTT press** within `DESTINATION_CONFIRM_TIMEOUT_S` after the place is read back |
 | The device talks over itself | Should be impossible — every main-loop utterance goes through the announcer, which is single-threaded. If it happens, something is calling `play()` directly |
 | Process dies with `double free or corruption` and no traceback | A C-level fault, almost always PortAudio. `voice/audio.py` owns every stream and must never call `sd.play` / `sd.rec` / `sd.stop` — those share one global context and let one thread close another's stream. `test_audio_playback.py` guards this |
-| Obstacles vibrate but never beep | Working as designed. The buzzer is reserved for emergencies — the button and a detected fall — so that one sound carries one meaning to a bystander. Obstacles are haptic-only on both sensors and both tiers |
+| Obstacles vibrate but never beep | Working as designed. The buzzer is reserved for emergencies — the button and a detected fall — so that one sound carries one meaning to a bystander. Obstacles are haptic-only on both sensors and every tier — far, warning and danger on TOP; warning and danger on BOTTOM |
 | Saved places vanish after a reboot | `var/places.json` unwritable, or the process runs as a user without write access to `var/` |
 
 ## Voice Commands
