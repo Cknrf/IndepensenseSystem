@@ -281,3 +281,27 @@ The only valid offline-state machine is: **queue locally, retry when online**. T
 4. **Questions 4 & 5** (offline queue, SMS retry) — formalize and harden emergency path; medium effort.
 5. **Question 9** ("user is fine" status) — nice-to-have; add if time permits.
 6. **Question 8** (general messaging) — defer unless you decide it's core to your thesis.
+
+
+
+ Raw gauge │    Reported    │
+  ├───────────┼────────────────┤
+  │      100% │           100% │
+  ├───────────┼────────────────┤
+  │       90% │            76% │
+  ├───────────┼────────────────┤
+  │       80% │            53% │
+  ├───────────┼────────────────┤
+  │       75% │            41% │
+  ├───────────┼────────────────┤
+  │       70% │      30% ← low │
+  ├───────────┼────────────────┤
+  │       68% │            25% │
+  ├───────────┼────────────────┤
+  │       66% │ 20% ← critical │
+  ├───────────┼────────────────┤
+  │       63% │            13% │
+  ├───────────┼────────────────┤
+  │       60% │             6% │
+  ├───────────┼────────────────┤
+  │       57% │             1% │
