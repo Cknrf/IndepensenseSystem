@@ -373,6 +373,7 @@ class IntentExecutor:
             Intent.NAVIGATION_LOCATION: self._handle_navigation_location,
             Intent.NAVIGATION_PROGRESS: self._handle_navigation_progress,
             Intent.EMERGENCY_TRIGGER:   self._handle_emergency_trigger,
+            Intent.GUARDIAN_STATUS_OK:  self._handle_guardian_status_ok,
             Intent.SYSTEM_SHUTDOWN:     self._handle_system_shutdown,
             Intent.DEVICE_STATUS:       self._handle_device_status,
             Intent.SYSTEM_TIME:         self._handle_system_time,
@@ -609,6 +610,32 @@ class IntentExecutor:
         if sent:
             return messages.get("emergency.sent", self._lang)
         return messages.get("emergency.queued", self._lang)
+
+    def _handle_guardian_status_ok(self, result: IntentResult) -> str:
+        """Send a non-emergency status confirmation to the guardians.
+
+        Lets guardians know the user is safe and there is no need for
+        concern, especially useful after an emergency alert has been sent.
+        This is fire-and-forget: no retry on failure, and the status is
+        not persisted across restarts.
+        """
+        if self._telemetry is None or not self._device_id:
+            return messages.get("guardian.status_ok", self._lang)
+
+        position = self._current_position()
+        lat = position.lat if position is not None else 0.0
+        lon = position.lon if position is not None else 0.0
+
+        event = AlertEvent(
+            device_id=self._device_id,
+            event_type=EventType.USER_STATUS_OK,
+            latitude=lat,
+            longitude=lon,
+            occurred_at=datetime.now(timezone.utc),
+        )
+        self._telemetry.send_alert(event)
+
+        return messages.get("guardian.status_ok", self._lang)
 
     def _handle_system_shutdown(self, result: IntentResult) -> str:
         """Confirm, then arm the power-off. Never powers off directly.
