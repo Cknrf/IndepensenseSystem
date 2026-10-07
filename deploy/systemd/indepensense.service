@@ -2,7 +2,31 @@
 Description=IndepenSense wearable runtime
 Documentation=https://github.com/cknrf/IndepensenseSystem
 Wants=network-online.target
-After=network-online.target ollama.service ollama-warmup.service graphhopper.service photon.service
+# Deliberately NOT ordered after `ollama-warmup.service`.
+#
+# That unit is `Type=oneshot`, which means systemd treats it as started
+# only when its script *exits* — and that script waits up to 60 s for
+# Ollama to catalogue the model, then up to 120 s pinning it in RAM. An
+# `After=` on it therefore held the whole wearable behind a model load,
+# on top of the Pi's own boot.
+#
+# The cost is not the delay itself but what the delay is in front of.
+# `start()` opens by playing the "IndepenSense is starting up, this takes
+# about two minutes" clip — the one thing that tells a user who cannot
+# see a screen that the device is alive. Every second queued here is a
+# second of silence indistinguishable from a device that failed to power
+# on, which is precisely what that message exists to prevent.
+#
+# Nothing is lost by starting earlier. The app warms the NLU itself on a
+# background thread (`_warm_up_nlu`) and holds the "ready" greeting until
+# that finishes, so the user is still told when voice commands work. The
+# warmup unit keeps running in parallel — it is `WantedBy=multi-user.target`
+# in its own right — it just no longer gates anything.
+#
+# `graphhopper` and `photon` stay in `After=` and cost nothing: both are
+# `Type=simple`, so systemd calls them started the moment java is exec'd
+# and never waits for the graph or the index to load.
+After=network-online.target ollama.service graphhopper.service photon.service
 Requires=ollama.service graphhopper.service photon.service
 
 [Service]

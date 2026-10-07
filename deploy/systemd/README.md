@@ -13,6 +13,21 @@ official Ollama installer). The `ollama-warmup.service` here pre-loads
 the NLU model on boot so the first user command doesn't pay the 25-40 s
 cold-load cost.
 
+**It runs in parallel with the wearable, not in front of it.**
+`indepensense.service` is deliberately *not* ordered `After=` the warmup.
+That unit is `Type=oneshot`, so systemd calls it started only when its
+script exits — up to 60 s waiting for the model catalogue plus up to
+120 s loading — and an `After=` on it delayed the app's own startup
+announcement by that whole time. A user who cannot see a screen cannot
+tell that silence from a device that failed to power on, and the
+announcement is the thing that exists to tell them apart. The app warms
+the NLU itself on a background thread anyway, and holds its "ready"
+greeting until that finishes.
+
+Ordering after `graphhopper` and `photon` costs nothing by comparison:
+both are `Type=simple`, so systemd calls them started the moment java is
+exec'd and never waits for the graph or the index to finish loading.
+
 ## Install
 
 Copy all four unit files into systemd's directory, enable them at boot,
