@@ -1420,11 +1420,11 @@ class App:
             so it interrupts. No second guardian alert: they were told at
             30% over two channels and a repeat says nothing they can act on.
 
-        Both comparisons are strict, so the threshold means *below*: at a
-        reported 30% nothing fires and 29% is the first value that does.
-        Against the rescaled gauge that is a raw reading of 69.8% rather
-        than 69.9%, narrow enough that a bench test stopping at 30% reads
-        as a broken warning. It is not — see `BATTERY_EMPTY_RAW_PERCENT`.
+The comparisons are inclusive, so a threshold names the percentage
+        the wearer is warned *at*: 30% fires, and the spoken warning says
+        "30 percent". They were strict until a bench test sat at exactly
+        30% in silence — correct by the code, indefensible to explain, and
+        it made the constant mean "one below the number written here".
 
         Firing also requires `is_discharging`: a device on mains is not
         going flat, whatever the gauge says.
@@ -1486,7 +1486,7 @@ class App:
                 )
                 self._set_low_battery_latch(False)
         else:
-            if pct < LOW_BATTERY_PERCENT and reading.is_discharging:
+            if pct <= LOW_BATTERY_PERCENT and reading.is_discharging:
                 print(
                     f"[battery] {pct}% — firing LOW_BATTERY alert",
                     flush=True,
@@ -1509,7 +1509,7 @@ class App:
                 )
                 self._set_critical_battery_latch(False)
         else:
-            gauge_critical = pct < CRITICAL_BATTERY_PERCENT and reading.is_discharging
+            gauge_critical = pct <= CRITICAL_BATTERY_PERCENT and reading.is_discharging
             if gauge_critical or voltage_critical:
                 print(
                     f"[battery] critical, warning the wearer — "

@@ -11,7 +11,7 @@ warning and nothing in the journal to say why — the alert has four
 independent gates and a silent device looks identical whichever one is
 closed:
 
-  1. the percentage is not below the threshold
+  1. the percentage is still above the threshold
   2. the pack is not reported as discharging
   3. the latch is already set from an earlier run
   4. the HAT cannot be read at all
@@ -37,7 +37,7 @@ from indepensense.power.waveshare_ups_e import WaveshareUPSHatE
 def _tier(name, pct, fire, recovery, latch_path, discharging, extra_fire=False):
     latched = latch_path.exists()
     print(f"\n  {name}")
-    print(f"    reported {pct}%   fires below {fire}%   clears at {recovery}%")
+    print(f"    reported {pct}%   fires at or below {fire}%   clears at {recovery}%")
 
     if latched:
         print(f"    LATCH SET  — {latch_path}")
@@ -50,15 +50,14 @@ def _tier(name, pct, fire, recovery, latch_path, discharging, extra_fire=False):
         return
 
     print(f"    latch clear ({latch_path.name} absent)")
-    below = pct < fire
-    print(f"    below threshold?   {below}   ({pct} < {fire})")
+    below = pct <= fire
+    print(f"    at/below threshold? {below}   ({pct} <= {fire})")
     if not extra_fire:
         print(f"    discharging?       {discharging}")
     if (below and discharging) or extra_fire:
         print("    -> WOULD FIRE")
     elif not below:
-        print(f"    -> silent: not below {fire}% yet. "
-              f"The comparison is strict, so {fire}% itself is silent.")
+        print(f"    -> silent: still above {fire}%.")
     else:
         print("    -> silent: below the threshold, but not reported as "
               "discharging. On mains, or the gauge says 'idle'.")
