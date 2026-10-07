@@ -1152,6 +1152,7 @@ class App:
 
         print("  Opening UPS HAT (battery)...", flush=True)
         self.battery = self._try_open_battery()
+        self._announce_battery_status()
 
         print("  Opening magnetometer (QMC5883P compass)...", flush=True)
         self.magnetometer = self._try_open_magnetometer()
@@ -3331,6 +3332,31 @@ The comparisons are inclusive, so a threshold names the percentage
             except Exception as exc:
                 print(f"[nlu-warmup] failed: {exc}", file=sys.stderr, flush=True)
         self._speak_greeting()
+
+    def _announce_battery_status(self) -> None:
+        """Announce battery percentage right after startup. Never raises.
+
+        The user needs to know if the device is ready to go or needs
+        charging before heading out. Announced after the battery is opened
+        but before the language greeting plays. Best-effort: a missing
+        battery handler is no reason to fail startup.
+        """
+        if self.battery is None:
+            return
+        try:
+            reading = self.battery.read()
+        except Exception as exc:
+            print(f"[battery-startup] read error: {exc}", file=sys.stderr, flush=True)
+            return
+        if reading is None:
+            return
+
+        pct = reading.percentage
+        if reading.is_charging:
+            msg = messages.get("battery.charging", self.language.current, percent=pct)
+        else:
+            msg = messages.get("battery.level", self.language.current, percent=pct)
+        self._announce(msg)
 
     def _speak_greeting(self) -> None:
         """Announce readiness in the active language. Never raises.
