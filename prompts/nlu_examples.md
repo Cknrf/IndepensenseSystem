@@ -207,6 +207,28 @@ Abisuhan mo ang tagabantay ko
 Sabihan mo ang tagapag-alaga ko
 Ipaalam mo sa tagabantay ko na kailangan ko ng tulong
 
+## guardian.status_ok
+
+I'm fine
+I'm okay
+Tell my guardian I'm safe
+Let my guardian know I'm fine
+Everything is okay
+I'm alright
+I'm doing well
+Tell them I'm safe now
+I'm good
+
+Ayos lang ako
+Maayos ako
+Sabihin mo sa tagapag-alaga ko na ako ay maayos
+Ipaalam mo sa guardian ko na ligtas ako
+Lahat ay okay
+Okay na ako
+Buti na ako
+Sabihin mo na kami ay safe
+Okay lang
+
 ## system.time
 
 What time is it now

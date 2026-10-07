@@ -573,6 +573,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Naipadala ko na ang alerto sa iyong tagapag-alaga.",
     },
 
+    # --- guardian status messages ------------------------------------------------
+    "guardian.status_ok": {
+        "en": "Letting your guardian know you're fine.",
+        "tl": "Ipinapaalam ko sa iyong tagapag-alaga na ikaw ay maayos.",
+    },
+
     # --- emergency delivery outcomes ---------------------------------------
     # One per combination of (backend reached, SMS reached). The wearer is
     # told which channel failed rather than a generic "something went
