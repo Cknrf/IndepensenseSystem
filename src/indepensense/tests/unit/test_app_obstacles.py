@@ -30,6 +30,9 @@ from indepensense.app_mock import MockApp
 from indepensense.config import (
     OBSTACLE_DANGER_CM,
     OBSTACLE_DANGER_REPEAT_S,
+    OBSTACLE_DANGER_REPEAT_WALKING_S,
+    OBSTACLE_FAR_CM,
+    OBSTACLE_READING_MAX_AGE_S,
     OBSTACLE_RELEASE_CM,
     OBSTACLE_WARNING_CM,
 )
@@ -55,6 +58,15 @@ class _FixedUltrasonic:
 
     def close(self):
         pass
+
+
+class _Motion:
+    """Stands in for `WalkingDetector`: the obstacle path only reads
+    `.walking`, and what it does with the answer is what is under test
+    here. The classifier itself is tested in `safety/tests/unit`."""
+
+    def __init__(self, walking):
+        self.walking = walking
 
 
 @pytest.fixture
@@ -87,7 +99,7 @@ def _wait_for(condition, timeout_s=2.0):
 # --- tiering -----------------------------------------------------------------
 
 def test_safe_distance_fires_nothing(app):
-    sensor = _FixedUltrasonic(OBSTACLE_WARNING_CM + 50)
+    sensor = _FixedUltrasonic(OBSTACLE_FAR_CM + 50)
     app._check_obstacle_sensor("top", sensor)
 
     assert app._obstacle_tier["top"] is None
@@ -112,13 +124,28 @@ def test_danger_zone_fires_the_danger_tier(app):
 
 def test_the_threshold_itself_is_the_safe_side(app):
     """Thresholds are exclusive (`distance < OBSTACLE_WARNING_CM`), so a
-    reading exactly at 100 cm is safe. Pinning this stops a later
-    refactor flipping it silently."""
-    app._check_obstacle_sensor("top", _FixedUltrasonic(OBSTACLE_WARNING_CM))
+    reading exactly at a threshold falls in the milder tier. Pinning this
+    stops a later refactor flipping it silently."""
+    app._check_obstacle_sensor("top", _FixedUltrasonic(OBSTACLE_FAR_CM))
     assert app._obstacle_tier["top"] is None
 
     app._check_obstacle_sensor("bottom", _FixedUltrasonic(OBSTACLE_DANGER_CM))
     assert app._obstacle_tier["bottom"] == "warning"
+
+
+def test_top_has_a_far_tier(app):
+    """Head height is what the cane cannot reach, so TOP warns earlier."""
+    app._check_obstacle_sensor("top", _FixedUltrasonic(OBSTACLE_WARNING_CM + 50))
+    assert app._obstacle_tier["top"] == "far"
+    assert "top" in app._obstacle_last_fired
+
+
+def test_bottom_has_no_far_tier(app):
+    """The cane already reaches about a metre at foot level; a warning
+    beyond that is about something it is about to touch anyway."""
+    app._check_obstacle_sensor("bottom", _FixedUltrasonic(OBSTACLE_WARNING_CM + 50))
+    assert app._obstacle_tier["bottom"] is None
+    assert app._obstacle_last_fired == {}
 
 
 # --- non-readings ------------------------------------------------------------
@@ -250,9 +277,10 @@ def test_de_escalating_is_silent(app, monkeypatch):
 # --- the danger backstop -----------------------------------------------------
 
 def test_a_standing_danger_is_repeated_eventually(app, monkeypatch):
-    """Someone walking a long wall at 42 cm should not be told once and
+    """Someone stopped at 42 cm from a hazard should not be told once and
     then left. Danger — and only danger — re-notifies."""
     monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
+    app.walking_detector = _Motion(walking=False)
     close = OBSTACLE_DANGER_CM - 8
     _feed(app, "top", close)
 
@@ -275,10 +303,119 @@ def test_a_standing_warning_is_never_repeated(app, monkeypatch):
 
 def test_the_backstop_does_not_fire_early(app, monkeypatch):
     monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
+    app.walking_detector = _Motion(walking=False)
     close = OBSTACLE_DANGER_CM - 8
     _feed(app, "top", close)
 
     app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_S / 2
+
+    assert _feed(app, "top", close) == []
+
+
+def test_walking_repeats_danger_sooner(app, monkeypatch):
+    """A danger-tier obstacle still there after a few seconds of walking
+    is moving with the user or blocking them — remind them soon."""
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
+    app.walking_detector = _Motion(walking=True)
+    close = OBSTACLE_DANGER_CM - 8
+    _feed(app, "top", close)
+
+    app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_WALKING_S + 0.5
+
+    assert _feed(app, "top", close) == [close]
+
+
+def test_standing_still_keeps_the_long_backstop(app, monkeypatch):
+    """The same few seconds while standing in a queue must stay quiet."""
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
+    app.walking_detector = _Motion(walking=False)
+    close = OBSTACLE_DANGER_CM - 8
+    _feed(app, "top", close)
+
+    app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_WALKING_S + 0.5
+
+    assert _feed(app, "top", close) == []
+
+
+def test_no_motion_signal_is_treated_as_walking(app):
+    """Without an IMU there is no evidence the user is still, so the
+    backstop takes the interval that suppresses less."""
+    app.walking_detector = None
+    assert app._danger_repeat_s() == OBSTACLE_DANGER_REPEAT_WALKING_S
+
+
+# --- setting off -------------------------------------------------------------
+#
+# Alerts fire when an obstacle gets closer. Someone who stood in front of a
+# post and then walked towards it heard nothing, because the distance had
+# not changed when they set off. The chest IMU sees them start moving
+# before the ultrasonic sees the gap close.
+
+def test_setting_off_re_alerts_an_obstacle_already_in_range(app, monkeypatch):
+    played = []
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: played.append(a))
+    mid = (OBSTACLE_WARNING_CM + OBSTACLE_DANGER_CM) / 2
+    _feed(app, "top", mid, mid, mid)
+    assert len(played) == 1
+
+    app._on_started_walking()
+
+    assert _wait_for(lambda: len(played) == 2)
+    assert played[1] == ("top", "warning")
+
+
+def test_setting_off_re_alerts_each_sensor_in_its_own_tier(app, monkeypatch):
+    played = []
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: played.append(a))
+    _feed(app, "top", OBSTACLE_WARNING_CM + 50)
+    _feed(app, "bottom", OBSTACLE_DANGER_CM - 10)
+    assert _wait_for(lambda: len(played) == 2)
+
+    app._on_started_walking()
+
+    assert _wait_for(lambda: len(played) == 4)
+    assert sorted(played[2:]) == [("bottom", "danger"), ("top", "far")]
+
+
+def test_setting_off_with_nothing_in_range_is_silent(app, monkeypatch):
+    played = []
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: played.append(a))
+    _feed(app, "top", OBSTACLE_FAR_CM + 50)
+
+    app._on_started_walking()
+
+    time.sleep(0.05)
+    assert played == []
+
+
+def test_setting_off_ignores_a_stale_reading(app, monkeypatch):
+    """A sensor that stopped reporting has a tier describing where the
+    world was, not where it is."""
+    played = []
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: played.append(a))
+    _feed(app, "top", OBSTACLE_DANGER_CM - 10)
+    assert _wait_for(lambda: len(played) == 1)
+    distance, stamped_at = app._obstacle_reading["top"]
+    app._obstacle_reading["top"] = (
+        distance, stamped_at - OBSTACLE_READING_MAX_AGE_S - 1,
+    )
+
+    app._on_started_walking()
+
+    time.sleep(0.05)
+    assert len(played) == 1
+
+
+def test_a_re_alert_restarts_the_danger_backstop(app, monkeypatch):
+    """The re-alert counts as the latest danger notice, so the walking
+    backstop does not fire a second one straight after it."""
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
+    app.walking_detector = _Motion(walking=True)
+    close = OBSTACLE_DANGER_CM - 8
+    _feed(app, "top", close)
+    app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_WALKING_S + 0.5
+
+    app._on_started_walking()
 
     assert _feed(app, "top", close) == []
 
@@ -299,7 +436,7 @@ def test_latches_are_independent_per_sensor(app, monkeypatch):
 # --- feedback patterns -------------------------------------------------------
 
 @pytest.mark.parametrize("sensor_name", ["top", "bottom"])
-@pytest.mark.parametrize("tier", ["warning", "danger"])
+@pytest.mark.parametrize("tier", ["far", "warning", "danger"])
 def test_no_obstacle_pattern_ever_sounds_the_buzzer(app, sensor_name, tier):
     """The invariant the whole feedback matrix now rests on.
 
@@ -326,6 +463,28 @@ def test_top_warning_pulses_the_front_motor(app):
     app._play_warning_pattern("top", "warning")
 
     assert any(e[0] == "pulse" for e in app.front_motor.events)
+
+
+def test_top_far_is_a_short_silent_tick(app):
+    app._play_warning_pattern("top", "far")
+
+    assert app.buzzer.events == []
+    assert app.front_motor.events == [("pulse", 1, 0.1, app.front_motor.events[0][3])]
+
+
+def test_front_motor_obstacle_cues_are_single_pulses_of_distinct_length(app):
+    """Pulse *counts* belong to navigation — two front pulses mean
+    "straight on" — so every obstacle cue on the front motor is one pulse,
+    and head height (long) must not feel like foot level (short)."""
+    lengths = {}
+    for sensor, tier in (("top", "far"), ("top", "warning"), ("bottom", "warning")):
+        app.front_motor.events.clear()
+        app._play_warning_pattern(sensor, tier)
+        (event,) = app.front_motor.events
+        assert event[0] == "pulse" and event[1] == 1, (sensor, tier, event)
+        lengths[(sensor, tier)] = event[2]
+
+    assert len(set(lengths.values())) == 3, lengths
 
 
 def test_top_danger_uses_all_three_motors(app):
@@ -415,22 +574,42 @@ def test_detection_actually_reaches_the_actuators(app):
     (OBSTACLE_WARNING_CM + OBSTACLE_RELEASE_CM,    "danger", None),
 ])
 def test_the_hysteresis_table(distance, current, expected):
-    assert app_module._obstacle_tier_for(distance, current) == expected
+    """BOTTOM: the two-tier table."""
+    assert app_module._obstacle_tier_for(distance, current, "bottom") == expected
 
 
-def test_a_tier_is_harder_to_leave_than_to_enter(app):
+@pytest.mark.parametrize("distance,current,expected", [
+    # From clear: the far tier is entered first.
+    (OBSTACLE_FAR_CM,                           None, None),
+    (OBSTACLE_FAR_CM - 1,                       None, "far"),
+    (OBSTACLE_WARNING_CM,                       None, "far"),
+    (OBSTACLE_WARNING_CM - 1,                   None, "warning"),
+
+    # In far: escalates at warning's entry line, holds through its band.
+    (OBSTACLE_WARNING_CM - 1,                   "far", "warning"),
+    (OBSTACLE_FAR_CM + OBSTACLE_RELEASE_CM - 1, "far", "far"),
+    (OBSTACLE_FAR_CM + OBSTACLE_RELEASE_CM,     "far", None),
+
+    # Receding from warning or danger lands in far, not clear.
+    (OBSTACLE_WARNING_CM + OBSTACLE_RELEASE_CM, "warning", "far"),
+    (OBSTACLE_WARNING_CM + OBSTACLE_RELEASE_CM, "danger", "far"),
+    (OBSTACLE_FAR_CM + OBSTACLE_RELEASE_CM,     "danger", None),
+])
+def test_the_top_hysteresis_table(distance, current, expected):
+    assert app_module._obstacle_tier_for(distance, current, "top") == expected
+
+
+@pytest.mark.parametrize("sensor", ["top", "bottom"])
+def test_a_tier_is_harder_to_leave_than_to_enter(sensor):
     """The defining property, stated once rather than per threshold: no
     distance exists that enters a tier from clear but also leaves it."""
-    for entry, tier in (
-        (OBSTACLE_DANGER_CM, "danger"),
-        (OBSTACLE_WARNING_CM, "warning"),
-    ):
+    for tier, entry in app_module._OBSTACLE_TIERS[sensor]:
         for offset in (0.0, 1.0, OBSTACLE_RELEASE_CM - 1):
             distance = entry + offset
-            entered = app_module._obstacle_tier_for(distance, None)
-            held = app_module._obstacle_tier_for(distance, tier)
+            entered = app_module._obstacle_tier_for(distance, None, sensor)
+            held = app_module._obstacle_tier_for(distance, tier, sensor)
             assert _rank(held) >= _rank(entered), (
-                f"{distance} cm leaves {tier} but would not enter it"
+                f"{sensor}: {distance} cm leaves {tier} but would not enter it"
             )
 
 
@@ -492,3 +671,30 @@ def test_the_cache_updates_even_when_no_alert_fires(app, monkeypatch):
     app._check_obstacle_sensor("top", _FixedUltrasonic(38.0))
 
     assert app.obstacle_ahead_cm() == 38.0
+
+
+def test_the_main_loop_reports_setting_off(app, monkeypatch):
+    """The wiring: an IMU sample that the walking detector calls the start
+    of a walk reaches `_on_started_walking` from `run()`."""
+    from indepensense.sensors.mock import MockIMU
+
+    class _SetsOff:
+        walking = True
+
+        def process(self, reading):
+            return True
+
+    app.imu = MockIMU()
+    app.walking_detector = _SetsOff()
+    monkeypatch.setattr(app, "stop", lambda: None)
+    started = []
+
+    def _on_started_walking():
+        started.append(True)
+        app._shutdown.set()
+
+    monkeypatch.setattr(app, "_on_started_walking", _on_started_walking)
+
+    app.run()
+
+    assert started == [True]

@@ -60,7 +60,7 @@ Two DYP-A22 sensors mounted on the cane, both forward-facing:
 
   - TOP sensor: head-level obstacles (branches, low signage). This is
     the wearable's unique value — the user's cane can't sweep the air
-    above them.
+    above them. It gets an extra far tier (200 cm) for earlier notice.
   - BOTTOM sensor: foot-level obstacles (curbs, low walls). The user's
     cane already detects most of these by touch, so we notify without
     nagging.
@@ -75,11 +75,20 @@ the wearer to tune it out. The danger tier already pulses all three
 motors, which is the most distinctive haptic available; adding a beep
 bought intensity, not information. See `_play_warning_pattern`.
 
-Two thresholds: 100 cm (warning) and 50 cm (danger). Alerts fire on an
-obstacle getting *closer*, not on one being present: entering a tier
-alerts once, staying in it is silent, and the tier re-arms only once the
-obstacle has receded `OBSTACLE_RELEASE_CM` past the threshold it came in
-on. The danger tier alone repeats, every `OBSTACLE_DANGER_REPEAT_S`.
+Thresholds: 200 cm (far, TOP only), 100 cm (warning) and 50 cm (danger).
+Alerts fire on an obstacle getting *closer*, not on one being present:
+entering a tier alerts once, staying in it is silent, and the tier
+re-arms only once the obstacle has receded `OBSTACLE_RELEASE_CM` past the
+threshold it came in on.
+
+Distance decides *what* is said; the chest IMU decides *when* it is said
+again. `WalkingDetector` classifies the wearer as still or walking, and:
+
+  - setting off while an obstacle is already in a tier re-fires that
+    tier once — otherwise someone who stood in front of a post and then
+    walked into it heard nothing, because the distance had not changed;
+  - the danger tier alone repeats, every `OBSTACLE_DANGER_REPEAT_WALKING_S`
+    while walking and every `OBSTACLE_DANGER_REPEAT_S` while still.
 
 That replaced a flat 2 s cooldown which re-fired for as long as anything
 stayed in range — on the bench it produced 136 motor pulses in four and a
@@ -206,6 +215,8 @@ from indepensense.config import (
     NLU_WARMUP_TIMEOUT_S,
     OBSTACLE_DANGER_CM,
     OBSTACLE_DANGER_REPEAT_S,
+    OBSTACLE_DANGER_REPEAT_WALKING_S,
+    OBSTACLE_FAR_CM,
     OBSTACLE_READING_MAX_AGE_S,
     OBSTACLE_RELEASE_CM,
     OBSTACLE_WARNING_CM,
@@ -244,6 +255,9 @@ from indepensense.config import (
     VOICE_TEST_DIR,
     WAITING_CUE_DELAY_S,
     WAITING_CUE_INTERVAL_S,
+    WALKING_MOTION_STDDEV_G,
+    WALKING_STILL_HOLD_S,
+    WALKING_WINDOW_S,
     VOLUME_DEFAULT_PERCENT,
     VOLUME_MAX_PERCENT,
     VOLUME_MIN_PERCENT,
@@ -280,6 +294,7 @@ from indepensense.routing.graphhopper import GraphHopperRouter
 from indepensense.routing.places import SavedPlaces
 from indepensense.routing.photon import PhotonGeocoder
 from indepensense.safety.fall_detector import ThresholdFallDetector
+from indepensense.safety.walking_detector import WalkingDetector
 from indepensense.sensors.dyp_a22 import DYPA22
 from indepensense.sensors.gps import SIM7600GPS
 from indepensense.sensors.mpu6050 import MPU6050
@@ -361,10 +376,28 @@ _BOOT_CLIPS: tuple[str, ...] = ("system.starting", "language.greeting")
 
 # Obstacle tiers, ordered. `None` is "clear", so comparing ranks answers
 # "did this get worse?" without a chain of string equality checks.
-_OBSTACLE_RANK: dict[str | None, int] = {None: 0, "warning": 1, "danger": 2}
+_OBSTACLE_RANK: dict[str | None, int] = {
+    None: 0, "far": 1, "warning": 2, "danger": 3,
+}
+
+# Each sensor's tiers, most severe first, with their entry thresholds.
+# Only TOP has a far tier: see `OBSTACLE_FAR_CM`.
+_OBSTACLE_TIERS: dict[str, tuple[tuple[str, float], ...]] = {
+    "top": (
+        ("danger", OBSTACLE_DANGER_CM),
+        ("warning", OBSTACLE_WARNING_CM),
+        ("far", OBSTACLE_FAR_CM),
+    ),
+    "bottom": (
+        ("danger", OBSTACLE_DANGER_CM),
+        ("warning", OBSTACLE_WARNING_CM),
+    ),
+}
 
 
-def _obstacle_tier_for(distance_cm: float, current: str | None) -> str | None:
+def _obstacle_tier_for(
+    distance_cm: float, current: str | None, sensor_name: str,
+) -> str | None:
     """Which tier a reading puts a sensor in, given where it already was.
 
     Schmitt-trigger behaviour: a tier is *entered* at its threshold but
@@ -373,31 +406,27 @@ def _obstacle_tier_for(distance_cm: float, current: str | None) -> str | None:
     on every frame, and since each entry fires a motor pulse, a cane held
     still at 50 cm would buzz at the sensor's 10 Hz frame rate.
 
-    A free function because it is pure arithmetic over two config values
-    and its own argument — no device, no clock, no app state — which is
-    what lets the hysteresis table be asserted directly instead of
-    inferred from how often a mock motor twitched.
+    One rule covers every tier: a tier *more* severe than the current one
+    must be entered at its entry threshold; the current tier and anything
+    milder use their exit threshold. That last part matters on the way
+    out — an obstacle receding from danger lands in warning by the same
+    line it would have to cross to leave warning, so leaving never needs
+    a different line than approaching.
+
+    A free function because it is pure arithmetic over config values and
+    its own arguments — no device, no clock, no app state — which is what
+    lets the hysteresis table be asserted directly instead of inferred
+    from how often a mock motor twitched.
     """
-    danger_exit = OBSTACLE_DANGER_CM + OBSTACLE_RELEASE_CM
-    warning_exit = OBSTACLE_WARNING_CM + OBSTACLE_RELEASE_CM
-
-    if current == "danger":
-        if distance_cm < danger_exit:
-            return "danger"
-        # Receded out of danger, but possibly only into warning. Use the
-        # warning tier's *exit* threshold here too: an obstacle leaving
-        # should not have to cross a different line than one approaching.
-        return "warning" if distance_cm < warning_exit else None
-
-    if current == "warning":
-        if distance_cm < OBSTACLE_DANGER_CM:
-            return "danger"
-        return "warning" if distance_cm < warning_exit else None
-
-    # Clear: both tiers use their entry thresholds.
-    if distance_cm < OBSTACLE_DANGER_CM:
-        return "danger"
-    return "warning" if distance_cm < OBSTACLE_WARNING_CM else None
+    current_rank = _OBSTACLE_RANK[current]
+    for tier, entry_cm in _OBSTACLE_TIERS[sensor_name]:
+        if _OBSTACLE_RANK[tier] > current_rank:
+            threshold = entry_cm
+        else:
+            threshold = entry_cm + OBSTACLE_RELEASE_CM
+        if distance_cm < threshold:
+            return tier
+    return None
 GPS_CACHE_INTERVAL_S = 1.0       # 1 Hz — GPS itself only emits ~1 Hz NMEA anyway
 
 
@@ -837,6 +866,10 @@ class App:
         self.gps_cache: GPSCache | None = None
         self.imu: MPU6050 | None = None
         self.detector: ThresholdFallDetector | None = None
+        # Still / walking, from the same IMU. Read by the obstacle path;
+        # None (no IMU) is treated as walking, the side that suppresses
+        # nothing.
+        self.walking_detector: WalkingDetector | None = None
         self.stt: FasterWhisperSTT | None = None
         self.tts: TTSEngine | None = None
         self.parser: IntentParser | None = None
@@ -977,6 +1010,11 @@ class App:
             stillness_duration_s=FALL_STILLNESS_DURATION_S,
             posture_impact_threshold_g=FALL_POSTURE_IMPACT_THRESHOLD_G,
             posture_tilt_threshold_deg=FALL_POSTURE_TILT_THRESHOLD_DEG,
+        )
+        self.walking_detector = WalkingDetector(
+            window_s=WALKING_WINDOW_S,
+            motion_stddev_g=WALKING_MOTION_STDDEV_G,
+            still_hold_s=WALKING_STILL_HOLD_S,
         )
 
         print("  Opening GPS...", flush=True)
@@ -1195,6 +1233,9 @@ class App:
                             event = self.detector.process(reading)
                             if event is not None:
                                 self._on_fall_detected(event)
+                        if reading is not None and self.walking_detector is not None:
+                            if self.walking_detector.process(reading):
+                                self._on_started_walking()
                 except Exception as exc:
                     # Log and continue — a single bad I²C read is not
                     # a reason to take down fall detection permanently.
@@ -1819,9 +1860,11 @@ class App:
 
         Fires on **escalation**, not on presence. Entering a tier alerts
         once; staying in it is silent; receding past the release threshold
-        re-arms it. The one exception is the danger tier, which repeats
-        every `OBSTACLE_DANGER_REPEAT_S` so a standing hazard is not
-        announced once and then forgotten.
+        re-arms it. The one exception is the danger tier, which repeats so
+        a standing hazard is not announced once and then forgotten — every
+        `OBSTACLE_DANGER_REPEAT_WALKING_S` while the wearer is walking,
+        every `OBSTACLE_DANGER_REPEAT_S` while they stand still. The other
+        re-alert, on setting off, lives in `_on_started_walking`.
 
         This replaced a fixed two-second cooldown that re-fired for as
         long as anything stayed in range — a field log shows `danger at
@@ -1852,7 +1895,7 @@ class App:
         self._obstacle_reading[sensor_name] = (distance, time.monotonic())
 
         previous = self._obstacle_tier.get(sensor_name)
-        tier = _obstacle_tier_for(distance, previous)
+        tier = _obstacle_tier_for(distance, previous, sensor_name)
         self._obstacle_tier[sensor_name] = tier
 
         if tier is None:
@@ -1870,12 +1913,49 @@ class App:
             reason = "entered"
         elif tier == "danger" and (
             now - self._obstacle_last_fired.get(sensor_name, 0.0)
-            >= OBSTACLE_DANGER_REPEAT_S
+            >= self._danger_repeat_s()
         ):
-            reason = "still"
+            reason = "repeat"
         else:
             return
 
+        self._fire_obstacle(sensor_name, tier, distance, reason, now)
+
+    def _danger_repeat_s(self) -> float:
+        """The danger backstop interval for the wearer's current motion."""
+        if self.walking_detector is None or self.walking_detector.walking:
+            return OBSTACLE_DANGER_REPEAT_WALKING_S
+        return OBSTACLE_DANGER_REPEAT_S
+
+    def _on_started_walking(self) -> None:
+        """Re-alert every sensor that is already in a tier.
+
+        Alerts fire when an obstacle gets closer, so someone who stopped in
+        front of a post, waited, then set off towards it heard nothing: the
+        distance had not changed when they started moving, and by the time
+        it had they might be on top of it. The chest IMU sees them set off
+        before the ultrasonic sees the gap close.
+
+        Fires the tier the sensor is in, once, through the same path as an
+        escalation. A sensor whose last reading is stale is skipped — its
+        tier describes where the world was, not where it is.
+        """
+        now = time.monotonic()
+        for sensor_name, tier in self._obstacle_tier.items():
+            if tier is None:
+                continue
+            cached = self._obstacle_reading.get(sensor_name)
+            if cached is None:
+                continue
+            distance, stamped_at = cached
+            if now - stamped_at > OBSTACLE_READING_MAX_AGE_S:
+                continue
+            self._fire_obstacle(sensor_name, tier, distance, "walking", now)
+
+    def _fire_obstacle(
+        self, sensor_name: str, tier: str, distance: float, reason: str, now: float,
+    ) -> None:
+        """Stamp, log and play one obstacle alert off the main loop."""
         self._obstacle_last_fired[sensor_name] = now
         print(
             f"[obstacle:{sensor_name}] {tier} at {distance:.0f} cm ({reason})",
@@ -1900,27 +1980,32 @@ class App:
 
         Feedback matrix (see docstring at top of module):
 
-          TOP + warning  → front motor pulse
+          TOP + far      → one short front tick (0.1 s)
+          TOP + warning  → one long front pulse (0.5 s)
           TOP + danger   → all 3 motors
-          BOTTOM + warn  → front motor pulse
+          BOTTOM + warn  → one front pulse (0.25 s)
           BOTTOM + danger→ all 3 motors
 
         **Haptic only.** Both TOP tiers used to add a buzzer beep; the
         buzzer is now reserved for emergencies, which is argued at the top
         of this module.
 
-        That leaves the two sensors with identical patterns, and the
-        branch on `sensor_name` is kept deliberately rather than collapsed
-        to a tier-only check. It is the extension point for the one
-        escalation this change leaves open: if an all-motor pulse turns
-        out to be too subtle at head height while walking, the answer is a
-        more distinctive pattern for TOP specifically — not the beep back.
+        Every obstacle cue on the front motor is a *single* pulse, and
+        what varies is its length. Pulse counts are already spoken for by
+        navigation — two front pulses mean "straight on", three on a side
+        motor mean "missed turn" — so an obstacle cue that counted pulses
+        would read as a direction. Length is also what now tells head
+        height (long) from foot level (short), the TOP-specific pattern
+        the branch on `sensor_name` was kept for once the beep was gone.
         """
         with self._warning_lock:
             try:
-                if sensor_name == "top" and tier == "warning":
+                if sensor_name == "top" and tier == "far":
                     if self.front_motor is not None:
-                        self.front_motor.pulse(times=1, duration_s=0.25)
+                        self.front_motor.pulse(times=1, duration_s=0.1)
+                elif sensor_name == "top" and tier == "warning":
+                    if self.front_motor is not None:
+                        self.front_motor.pulse(times=1, duration_s=0.5)
                 elif sensor_name == "top" and tier == "danger":
                     self._pulse_all_motors(duration_s=0.4)
                 elif sensor_name == "bottom" and tier == "warning":

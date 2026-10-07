@@ -56,7 +56,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 ## Core Features
 
 **Navigation Assistance**
-- Real-time obstacle detection, alerting on an obstacle getting *closer* rather than on one merely being present — a tier fires once on entry and re-arms only after the obstacle recedes past a hysteresis band, so a cane that is never quite still does not buzz continuously. The danger tier alone repeats, so a standing hazard is not announced once and forgotten
+- Real-time obstacle detection, alerting on an obstacle getting *closer* rather than on one merely being present — a tier fires once on entry and re-arms only after the obstacle recedes past a hysteresis band, so a cane that is never quite still does not buzz continuously. Head height gets an extra far tier (200 cm) because the cane cannot reach it. The chest IMU classifies the wearer as still or walking: setting off with an obstacle already in range re-alerts it, and the danger tier repeats every 3 s while walking but only every 15 s while standing still
 - Obstacle warnings are **haptic only**. The buzzer is reserved for emergencies, because it is the only output a bystander can perceive and that exclusivity is what gives it meaning — a sound that fires on both an awning and a medical emergency tells a bystander nothing by its presence, and trains the wearer to tune it out. The danger tier pulses all three motors, which is the most distinctive pattern the device has
 - Multi-sensor distance estimation
 - Vibration directional feedback, with speech for turn-by-turn instructions
@@ -169,7 +169,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing, remaining-distance, compass turn verification, and turn-to-face orientation logic |
 | `routing/` | GraphHopper + Photon HTTP clients, local candidate ranking, geo helpers (distance and bearing), and the user's own saved places |
 | `feedback/` | Buzzer, vibration motors, PTT + SOS buttons |
-| `safety/` | Fall detection via accelerometer thresholds |
+| `safety/` | Fall detection via accelerometer thresholds; still / walking classification for obstacle re-alerts |
 | `power/` | Waveshare UPS HAT driver, low-battery alerts |
 | `telemetry/` | Buffered heartbeat + alert sender to the backend, guardian contact cache, SMS fan-out on alerts |
 | `messaging/` | Outbound SMS via ModemManager (`mmcli`) — the fallback notification path when data is unavailable |
@@ -296,6 +296,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | Purpose | Command |
 |---|---|
 | Live fall detection (drop the wearable safely) | `python -m indepensense.safety.tests.manual.live_fall_test` |
+| Still / walking classifier, live (wear the vest) | `python -m indepensense.safety.tests.manual.live_walking_test` — prints the rolling acceleration stddev and state, and `SET OFF` on each still → walking change. Use it to tune `WALKING_MOTION_STDDEV_G` |
 | Record a labelled IMU trace for offline replay | `python -m indepensense.safety.tests.manual.record_trace <label>` — prefix the label `fall_` or `adl_` so `fall_probe` can score it. Reports the achieved sample rate, which the freefall gate depends on |
 | Fall-detector sensitivity + specificity over recorded traces | `python -m indepensense.safety.tests.manual.fall_probe` — add `--sweep` to grid over the freefall and impact thresholds, `--trace <name>` for one recording. Runs on a Mac; no hardware needed |
 

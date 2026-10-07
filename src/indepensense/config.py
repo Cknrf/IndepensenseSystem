@@ -85,11 +85,19 @@ DYP_A22_BOTTOM_PORT = "/dev/ttyAMA4"
 DYP_A22_BAUDRATE = 115200
 
 # Obstacle warning thresholds. The main app polls both ultrasonic sensors
-# in the fall-detection loop and fires vibration + (for TOP only) buzzer
-# alerts when the reading crosses into the warning or danger zone. See
+# in the fall-detection loop and fires vibration alerts when the reading
+# crosses into a closer tier (far — TOP only —, warning, danger). See
 # app.py for the full pattern definitions.
 OBSTACLE_WARNING_CM = 100.0      # early notice — obstacle within reach
 OBSTACLE_DANGER_CM = 50.0        # imminent — user should stop
+
+# Extra outermost tier, TOP sensor only. Head-level hazards are the ones
+# the cane cannot find at all, so they get notice from further out: at
+# walking pace (~1.2 m/s) 100 cm is under a second, 200 cm is closer to
+# two. BOTTOM gets no far tier — the cane already reaches about a metre,
+# so a warning beyond that would be about something it is about to touch
+# anyway.
+OBSTACLE_FAR_CM = 200.0
 
 # How far the obstacle has to recede before that tier can fire again.
 #
@@ -113,6 +121,13 @@ OBSTACLE_RELEASE_CM = 15.0
 # standing hazard is not forgotten.
 OBSTACLE_DANGER_REPEAT_S = 15.0
 
+# The same backstop while the user is walking. A danger-tier obstacle that
+# is still there after a few seconds of walking is moving with them or
+# blocking their way — that deserves a reminder far sooner than one in
+# front of somebody standing still. Which interval applies is decided by
+# `WalkingDetector` from the chest IMU.
+OBSTACLE_DANGER_REPEAT_WALKING_S = 3.0
+
 # How long a cached ultrasonic reading stays worth repeating.
 #
 # Read by `vision.describe` when the camera recognises nothing, so it can
@@ -121,6 +136,24 @@ OBSTACLE_DANGER_REPEAT_S = 15.0
 # than this means the sensor has stopped reporting — and the user has had
 # a second to move, which at walking pace is about a metre.
 OBSTACLE_READING_MAX_AGE_S = 1.0
+
+# Still / walking classification from the chest IMU (`WalkingDetector`).
+# Used by obstacle warnings: setting off while something is already in
+# range re-alerts it, and the danger backstop above repeats faster while
+# walking.
+#
+# UNTUNED — starting values, not measured on the vest. Walking bounces the
+# torso by roughly ±0.2 g per step; standing still sits near the sensor's
+# noise floor (~0.01 g). 0.06 g is well clear of the second and well
+# under the first. Tune with
+# `python -m indepensense.safety.tests.manual.live_walking_test`.
+#
+# The hold is asymmetric on purpose: walking is declared on the first
+# noisy window, still only after `WALKING_STILL_HOLD_S` of quiet, so a
+# pause mid-stride is not mistaken for stopping.
+WALKING_WINDOW_S = 1.0
+WALKING_MOTION_STDDEV_G = 0.06
+WALKING_STILL_HOLD_S = 2.0
 
 # How long the emergency button stays armed-down after firing.
 #
