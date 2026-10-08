@@ -2,7 +2,11 @@
 Description=Photon geocoding engine (IndepenSense)
 Documentation=https://github.com/cknrf/IndepensenseSystem
 Wants=network-online.target
-After=network-online.target
+# After the wearable, for the same reason as graphhopper.service: its
+# ~0.5 GB OpenSearch index would otherwise be read from the SD card
+# while the voice models load, and geocoding is only reachable through
+# a voice command.
+After=network-online.target indepensense.service
 
 [Service]
 Type=simple
@@ -12,6 +16,10 @@ WorkingDirectory=/home/cknrf/photon
 ExecStart=/usr/bin/java -Xmx2g -jar photon-1.2.0.jar serve -listen-ip 0.0.0.0
 Restart=on-failure
 RestartSec=15
+# See graphhopper.service.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 StandardOutput=journal
 StandardError=journal
 # Photon opens its OpenSearch index on start — first boot takes ~30-60 s.

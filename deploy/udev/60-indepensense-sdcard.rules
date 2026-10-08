@@ -1,0 +1,10 @@
+# Put the SD card under the bfq I/O scheduler. Installed to
+# /etc/udev/rules.d/ — see README.md.
+#
+# Raspberry Pi OS defaults the card to mq-deadline, which ignores
+# per-process I/O priority: measured on the Pi, a reader set to idle
+# class took *longer* to share the card under mq-deadline (124 s for a
+# Whisper load against 103 s at normal priority) and shorter under bfq
+# (83 s). The IOSchedulingClass/Priority lines in the sidecar units are
+# inert without this rule.
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/scheduler}="bfq"

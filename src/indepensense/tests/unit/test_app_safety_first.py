@@ -12,6 +12,7 @@ These tests hold the Whisper load open and check what works underneath
 it, what is refused, and what happens when a load fails or a shutdown
 arrives part-way through.
 """
+import pathlib
 import threading
 import time
 
@@ -192,3 +193,60 @@ def test_stopping_a_voiceless_announcer_does_not_hang(tmp_path):
     assert time.monotonic() - started < 2.0
     assert not announcer._thread.is_alive()
 
+
+# --- systemd readiness ---------------------------------------------------------
+
+@pytest.fixture
+def notify_socket(monkeypatch):
+    """A unix datagram socket standing in for systemd's NOTIFY_SOCKET.
+
+    Not under `tmp_path`: pytest's directory names push the path past
+    the 104-byte limit AF_UNIX allows on macOS.
+    """
+    import shutil
+    import socket
+    import tempfile
+    directory = tempfile.mkdtemp()
+    path = pathlib.Path(directory) / "notify.sock"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sock.bind(str(path))
+    sock.settimeout(0.5)
+    monkeypatch.setenv("NOTIFY_SOCKET", str(path))
+
+    def received():
+        got = []
+        try:
+            while True:
+                got.append(sock.recv(4096).decode())
+        except (socket.timeout, TimeoutError):
+            pass
+        return got
+
+    yield received
+    sock.close()
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_ready_is_signalled_only_once_the_voice_stack_is_loaded(held, notify_socket):
+    app, release, entered, _ = held
+    app.start()
+    entered.wait(2.0)
+
+    before = notify_socket()
+    assert all("READY=1" not in m for m in before), before
+    assert any(m.startswith("STATUS=") for m in before), "no progress reported"
+
+    release.set()
+    app.wait_for_voice_stack(timeout_s=3.0)
+
+    assert any("READY=1" in m for m in notify_socket())
+
+
+def test_notify_is_a_no_op_off_systemd(monkeypatch):
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+    app_module._notify_systemd("READY=1")            # must not raise
+
+
+def test_a_dead_notify_socket_does_not_break_startup(monkeypatch, tmp_path):
+    monkeypatch.setenv("NOTIFY_SOCKET", str(tmp_path / "nobody-listens"))
+    app_module._notify_systemd("STATUS=anything")    # must not raise
