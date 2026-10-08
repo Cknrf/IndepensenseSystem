@@ -231,3 +231,96 @@ I think what we should do here, is to have a message right after the first try t
 
 - I have noticed as well, that the battery warning doesn't get triggered, particularly what I have tested is the 70% raw readings which is 30 percent in the mathemtical correspond right? 
 
+- Why does it take so much time before the indepensense app.py got even started? I mean it shouldn't be because of the booting of the pi, I think it just takes 25-30 seconds accoridng to the online information. What do you think? 
+That's where also my concern emerge, since after turning on the battery which would turn on immediately the pi, there wouldn't be an indicator that the user should wait before the system starts since it is the booting time of the PI. But my problem as well is the time that took before the PI run the app.py. Or is it normal?
+But when I run it manually, the app.py, it initalizes fast, than the service. What do you think? 
+
+- I have tested fortunately right now coincidencetialy the battery:
+ct 08 08:04:26 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:26 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:04:30 cknrf python[1446]: [battery] 30% — firing LOW_BATTERY alert
+Oct 08 08:04:30 cknrf python[1446]: [telemetry] POST /raspberry/alert succeeded on attempt 1
+Oct 08 08:04:36 cknrf python[1446]: [obstacle:bottom] danger at 41 cm (repeat)
+Oct 08 08:04:43 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:43 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:04:43 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:44 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:04:45 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:45 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:04:46 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:47 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:04:50 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:50 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:04:50 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:50 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:04:51 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:51 cknrf python[1446]: [obstacle:bottom] danger at 54 cm (repeat)
+Oct 08 08:04:51 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:04:52 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:52 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:04:54 cknrf python[1446]: [telemetry] POST /raspberry/interval-information succeeded on attempt 1
+Oct 08 08:04:59 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:04:59 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:00 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:00 cknrf python[1446]: [sms] timed out after 30.0s: ['--sms=0', '--send']
+Oct 08 08:05:00 cknrf python[1446]: [sms] send to +639051675263 attempt 1 failed, retrying in 0.1s: send failed
+Oct 08 08:05:01 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:05:01 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:02 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:04 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:05 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:06 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:06 cknrf python[1446]: [obstacle:bottom] danger at 53 cm (repeat)
+Oct 08 08:05:07 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:05:07 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:07 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
+Oct 08 08:05:09 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:09 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:10 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:10 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:10 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:10 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:17 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:18 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:21 cknrf python[1446]: [obstacle:bottom] danger at 54 cm (repeat)
+Oct 08 08:05:22 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:22 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:23 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:23 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:23 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:24 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:25 cknrf python[1446]: [telemetry] POST /raspberry/interval-information succeeded on attempt 1
+Oct 08 08:05:29 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:30 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:30 cknrf python[1446]: [sms] timed out after 30.0s: ['--sms=1', '--send']
+Oct 08 08:05:30 cknrf python[1446]: [sms] send to +639051675263 attempt 2 failed, retrying in 0.5s: send failed
+Oct 08 08:05:32 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:33 cknrf python[1446]: [obstacle:top] warning at 54 cm (entered)
+Oct 08 08:05:36 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:36 cknrf python[1446]: [obstacle:bottom] danger at 53 cm (repeat)
+Oct 08 08:05:37 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:37 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:41 cknrf python[1446]: [obstacle:top] warning at 54 cm (entered)
+Oct 08 08:05:41 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:42 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:05:43 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:05:51 cknrf python[1446]: [obstacle:bottom] danger at 42 cm (repeat)
+Oct 08 08:05:55 cknrf python[1446]: [telemetry] POST /raspberry/interval-information succeeded on attempt 1
+Oct 08 08:06:01 cknrf python[1446]: [sms] timed out after 30.0s: ['--sms=2', '--send']
+Oct 08 08:06:01 cknrf python[1446]: [sms] send to +639051675263 attempt 3 failed, retrying in 1.0s: send failed
+Oct 08 08:06:07 cknrf python[1446]: [obstacle:bottom] danger at 54 cm (repeat)
+Oct 08 08:06:07 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:06:07 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+Oct 08 08:06:08 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
+Oct 08 08:06:09 cknrf python[1446]: [obstacle:top] clear at 6553 cm
+
+Oct 08 08:37:11 cknrf python[1446]: [battery] critical, warning the wearer — gauge 20% (raw 66%), lowest cell 3442 mV
+Oct 08 08:37:21 cknrf python[1446]: [obstacle:bottom] danger at 22 cm (repeat)
+Oct 08 08:37:24 cknrf python[1446]: [telemetry] POST /raspberry/interval-information succeeded on attempt 1
+Oct 08 08:37:24 cknrf python[1446]: [obstacle:top] danger at 27 cm (repeat)
+
+- What if the services failed? I mean those things that we are loading the ram, the ollama, graphhopper, whisper, piper, etc. Would the system would retry loading it? or it is in the background. And what would happen to the system, if they aren't loaded? Since most of the features/functions depend on them, what do you think? 
+
+- I have noticed as well, that there's a battery duration estimate in the message? Let's remove it since it is not accurate enough which would propose a misinformation for the user which is more risky. 
+
+- My coworker also changed the logic for the distance sensing and the feedback, can you check and tell me the mechanism? 
