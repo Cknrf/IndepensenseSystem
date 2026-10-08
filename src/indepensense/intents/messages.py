@@ -601,13 +601,34 @@ MESSAGES: dict[str, dict[str, str]] = {
     # The success cases (both channels, or the dashboard on a unit with no
     # SMS) reuse `emergency.sent` — the sentence was always correct, it was
     # just being said too early, before anything had been delivered.
+    # No modem at all, as distinct from a text that failed to send.
+    #
+    # `sms_failed` promises the system will keep retrying, and with a
+    # modem ModemManager cannot see there is nothing to retry with — the
+    # driver reports that case as non-retryable and the background window
+    # is skipped entirely. Saying the retry sentence anyway would be the
+    # device telling a frightened user that help is still on its way when
+    # nothing further will be attempted.
+    #
+    # So this one promises nothing. It names the cause in words the
+    # wearer can act on — the phone connection, not "the modem" — and
+    # repeats the instruction from `all_failed`, because calling someone
+    # directly is then the only channel left.
+    "emergency.delivery.sms_no_modem": {
+        "en": "Your guardian was notified on the website, but the phone "
+              "connection is unavailable so no text could be sent. Please "
+              "also call for help if possible.",
+        "tl": "Naabisuhan online sa website ang iyong tagapag-alaga, pero "
+              "walang koneksyon sa telepono kaya walang text na naipadala. "
+              "Kung posible, tumawag din para sa tulong.",
+    },
     "emergency.delivery.sms_failed": {
         "en": "Your guardian was notified on the website, but the text "
               "message did not go through. The system will keep retrying "
-              "the text.",
+              "the text for the next few minutes.",
         "tl": "Naabisuhan online sa website ang iyong tagapag-alaga, pero "
-              "hindi maipadala ang text message. Patuloy na susubukan ng "
-              "sistema ang text.",
+              "hindi maipadala ang text message. Patuloy na susubukang "
+              "ipadala ng sistema ang text sa susunod na ilang minuto.",
     },
     "emergency.delivery.no_number": {
         "en": "Your guardian was notified on the website, but no phone "
@@ -624,11 +645,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "emergency.delivery.all_failed": {
         "en": "The system could not reach your guardian right now. It will "
-              "keep retrying for the next minute. Please also call for help "
-              "if possible.",
+              "keep retrying for the next few minutes. Please also call for "
+              "help if possible.",
         "tl": "Hindi agad maabot ng sistema ang iyong tagapag-alaga. Patuloy "
-              "itong susubukan sa susunod na minuto. Kung posible, tumawag "
-              "din para sa tulong.",
+              "itong susubukan sa susunod na ilang minuto. Kung posible, "
+              "tumawag din para sa tulong.",
     },
 
     # --- battery ------------------------------------------------------------

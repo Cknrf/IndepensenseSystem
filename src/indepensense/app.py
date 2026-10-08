@@ -307,6 +307,7 @@ from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
 from indepensense.telemetry.null import NullTelemetryClient
 from indepensense.telemetry.sms_alerts import (
     SMS_FAILED,
+    SMS_NO_MODEM,
     SMS_NO_NUMBER,
     SMS_SENT,
     SMS_UNAVAILABLE,
@@ -2229,9 +2230,13 @@ The comparisons are inclusive, so a threshold names the percentage
     # repeating a sentence the wearer heard moments ago.
     _DELIVERY_MESSAGES = {
         (True, SMS_FAILED):      "emergency.delivery.sms_failed",
+        # Distinct from SMS_FAILED: nothing will be retried, so the
+        # sentence must not promise a retry. See `SMS_NO_MODEM`.
+        (True, SMS_NO_MODEM):    "emergency.delivery.sms_no_modem",
         (True, SMS_NO_NUMBER):   "emergency.delivery.no_number",
         (False, SMS_SENT):       "emergency.delivery.backend_failed",
         (False, SMS_FAILED):     "emergency.delivery.all_failed",
+        (False, SMS_NO_MODEM):   "emergency.delivery.all_failed",
         (False, SMS_NO_NUMBER):  "emergency.delivery.all_failed",
         (False, SMS_UNAVAILABLE): "emergency.delivery.all_failed",
     }

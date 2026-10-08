@@ -99,6 +99,14 @@ def alert_payload(event: AlertEvent) -> dict[str, Any]:
     }
 
 
+# Gaps between HTTP retries, seconds. A module constant rather than a
+# local list so tests can shrink it: a unit test that sleeps 3.5 s to
+# prove a 404 is not retried has spent 3.5 s asserting what a call
+# counter already knew. Same objection `CLAUDE.md` makes to tests that
+# touch the network, with a different clock.
+_BACKOFF_DELAYS_S = [0.5, 1.0, 2.0]
+
+
 class NestJSTelemetryClient:
     def __init__(
         self,
@@ -132,7 +140,7 @@ class NestJSTelemetryClient:
         # Retry up to 3 times with exponential backoff (0.5s, 1s, 2s).
         # HTTP is idempotent so repeated requests are safe. This significantly
         # improves delivery reliability for alerts on degraded networks.
-        backoff_delays = [0.5, 1.0, 2.0]
+        backoff_delays = _BACKOFF_DELAYS_S
         last_error = None
 
         for attempt in range(1 + len(backoff_delays)):

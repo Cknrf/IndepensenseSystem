@@ -125,28 +125,40 @@ class MMCLISMSSender:
         )
 
     def send(self, number: str, text: str) -> SMSResult:
-        """Create, send, then delete one message. Never raises."""
-        created = self._run(
+        """Create, send, then delete one message. Never raises.
+
+        `retryable=False` only when ModemManager cannot see a modem at
+        all. Everything else — a timeout, a refused send, an unparseable
+        reply — might work on the next attempt, and the caller is left
+        free to try. See `SMSResult`.
+        """
+        created, gone = self._run(
             [
                 f"--messaging-create-sms=text='{self._escape(text)}',number='{number}'",
             ]
         )
         if created is None:
-            return SMSResult(number, False, "create failed")
+            return SMSResult(number, False, self._no_modem_detail("create failed", gone),
+                             retryable=not gone)
 
         match = _SMS_PATH_RE.search(created)
         if match is None:
             return SMSResult(number, False, f"could not parse SMS index from: {created!r}")
         index = match.group(1)
 
-        sent = self._run([f"--sms={index}", "--send"])
+        sent, gone = self._run([f"--sms={index}", "--send"])
         # Delete regardless of send outcome — a failed message left in
         # modem storage consumes the same limited space as a sent one.
         self._run([f"--messaging-delete-sms={index}"])
 
         if sent is None:
-            return SMSResult(number, False, "send failed")
+            return SMSResult(number, False, self._no_modem_detail("send failed", gone),
+                             retryable=not gone)
         return SMSResult(number, True)
+
+    @staticmethod
+    def _no_modem_detail(base: str, gone: bool) -> str:
+        return f"{base} (no modem)" if gone else base
 
     def close(self) -> None:
         """Nothing to release — each send is its own subprocess."""
@@ -183,26 +195,31 @@ class MMCLISMSSender:
             )
         return int(match.group(1))
 
-    def _run(self, args: list[str]) -> str | None:
+    def _run(self, args: list[str]) -> tuple[str | None, bool]:
         """Run one mmcli call, re-binding once if the index went stale.
 
-        Returns stdout, or None on any failure. The retry is bounded to a
-        single attempt and happens only on a stale-handle error — see the
-        module docstring for why it is not a loop and not a poll.
+        Returns `(stdout or None, modem_is_gone)`. The retry is bounded
+        to a single attempt and happens only on a stale-handle error —
+        see the module docstring for why it is not a loop and not a poll.
+
+        The second element is the one piece of information no layer above
+        can recover: a failed re-discovery means ModemManager sees no
+        modem at all, so retrying cannot help. Anything else — a timeout,
+        a refusal — is worth another attempt, and the caller decides.
         """
         stdout, detail = self._run_once(args)
         if stdout is not None or not _is_stale_modem(detail):
-            return stdout
+            return stdout, False
 
         print(
             f"[sms] modem {self._modem_index} is gone — re-discovering.",
             file=sys.stderr,
         )
         if not self._rebind():
-            return None
+            return None, True
 
         stdout, _ = self._run_once(args)
-        return stdout
+        return stdout, False
 
     def _rebind(self) -> bool:
         """Point this sender at whatever modem ModemManager has now.

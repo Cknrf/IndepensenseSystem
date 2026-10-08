@@ -60,10 +60,17 @@ itself here only if a channel failed.
 """
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
+from indepensense.config import (
+    SMS_ATTEMPT_DELAYS_S,
+    SMS_REPORT_DEADLINE_S,
+    SMS_RETRY_BACKOFF_S,
+    SMS_RETRY_WINDOW_S,
+)
 from indepensense.messaging.base import SMSSender
 from indepensense.telemetry.base import AlertEvent, IntervalInformation, TelemetryClient
 from indepensense.telemetry.buffered import BufferedTelemetryClient
@@ -86,6 +93,13 @@ SMS_SENT = "sent"             # at least one guardian's phone accepted it
 SMS_FAILED = "failed"         # numbers existed, none of them went through
 SMS_NO_NUMBER = "no_number"   # nobody to text — the directory is empty
 SMS_UNAVAILABLE = "unavailable"  # this unit has no working SMS sender
+SMS_NO_MODEM = "no_modem"     # numbers existed, ModemManager sees no modem
+
+# Distinct from SMS_FAILED because the two need different things said.
+# A failure that might clear is followed by a retry window the user is
+# told about; a modem ModemManager cannot see at all will not be
+# retried, so promising one would be a lie. The device spent a while
+# making exactly that promise — see `emergency.delivery.sms_failed`.
 
 
 @dataclass(frozen=True)
@@ -182,12 +196,40 @@ class SMSAlertNotifier:
         # both channel results. None keeps the old behaviour: outcomes are
         # logged and nothing is spoken.
         on_delivery: Callable[[AlertEvent, AlertDelivery], None] | None = None,
+        # The three knobs, injected rather than read from config, so a
+        # test can collapse five minutes of waiting into nothing. The
+        # defaults are the shipped values.
+        report_deadline_s: float | None = None,
+        attempt_delays_s: tuple[float, ...] | None = None,
+        retry_window_s: float | None = None,
+        retry_backoff_s: tuple[float, ...] | None = None,
+        # Injected for the same reason. A unit test that sleeps through a
+        # real backoff is a unit test that costs seconds to assert what a
+        # counter already knows — the same objection `CLAUDE.md` makes to
+        # tests that touch the network, with a different clock.
+        sleep: Callable[[float], None] = time.sleep,
     ):
         self._inner = inner
         self._sms = sms
         self._guardians = guardians
         self._event_type_values = event_type_values
         self._on_delivery = on_delivery
+        # Resolved here rather than as argument defaults, which bind at
+        # import time and cannot then be patched for a test that must not
+        # spend five real minutes proving a retry window exists.
+        self._report_deadline_s = (
+            SMS_REPORT_DEADLINE_S if report_deadline_s is None else report_deadline_s
+        )
+        self._attempt_delays_s = (
+            SMS_ATTEMPT_DELAYS_S if attempt_delays_s is None else attempt_delays_s
+        )
+        self._retry_window_s = (
+            SMS_RETRY_WINDOW_S if retry_window_s is None else retry_window_s
+        )
+        self._retry_backoff_s = (
+            SMS_RETRY_BACKOFF_S if retry_backoff_s is None else retry_backoff_s
+        )
+        self._sleep = sleep
 
         # Observable counters, same spirit as the heartbeat sender's —
         # useful for a thesis-facing table of delivery success.
@@ -253,82 +295,153 @@ class SMSAlertNotifier:
         numbers: list[str],
         backend: _BackendOutcome,
     ) -> None:
+        pending: dict[str, str] = {}
         if self._sms is None:
             state = SMS_UNAVAILABLE
         elif numbers:
-            state = self._text_everyone(event, numbers)
+            state, pending = self._text_everyone(event, numbers)
         else:
             state = SMS_NO_NUMBER
-        if self._on_delivery is None:
-            return
 
-        delivery = AlertDelivery(
-            backend_ok=backend.wait(_BACKEND_WAIT_S), sms=state,
-        )
-        try:
-            self._on_delivery(event, delivery)
-        except Exception as exc:
-            # The callback speaks, so it touches TTS and the announcer. A
-            # failure there must not kill this thread before the counters
-            # above are the only record left of what happened.
-            print(f"[sms] delivery report failed: {exc}", file=sys.stderr)
+        if self._on_delivery is not None:
+            delivery = AlertDelivery(
+                backend_ok=backend.wait(_BACKEND_WAIT_S), sms=state,
+            )
+            try:
+                self._on_delivery(event, delivery)
+            except Exception as exc:
+                self._report_failed(exc)
 
-    def _text_everyone(self, event: AlertEvent, numbers: list[str]) -> str:
-        """Text every guardian with up to 3 attempts per number. `SMS_SENT` if any accepted.
+        # Only now, with the wearer told. Same thread: the fan-out thread
+        # has nothing else to do, and spawning a second one to wait out a
+        # five-minute window would add a thread whose whole job is
+        # sleeping. See `_keep_trying` for why this is bounded.
+        if pending:
+            self._keep_trying(pending, compose_alert_sms(event))
 
-        Each number is retried up to 3 times with delays (100ms, 500ms, 1s)
-        on failure, giving the modem time to recover from transient glitches.
-        One guardian's failure does not prevent others being notified.
+    @staticmethod
+    def _report_failed(exc: Exception) -> None:
+        """The delivery callback raised.
+
+        It speaks, so it touches TTS and the announcer. A failure there
+        must not kill this thread: the counters and this line are then
+        the only record of what happened, and the background retry still
+        has work to do.
         """
-        import time
+        print(f"[sms] delivery report failed: {exc}", file=sys.stderr)
+
+    def _attempt_round(self, pending: dict[str, str], text: str) -> tuple[bool, list[str]]:
+        """One send attempt per still-pending recipient.
+
+        Mutates nothing. Returns `(anything_sent, numbers_worth_retrying)` —
+        a number drops out of the second list when it succeeded or when
+        the driver said retrying cannot help.
+        """
+        sent_any = False
+        retryable: list[str] = []
+        for number in list(pending):
+            try:
+                result = self._sms.send(number, text)
+            except Exception as exc:
+                # The protocol says senders don't raise, but a driver bug
+                # must not take the remaining recipients down with it.
+                pending[number] = f"raised: {exc}"
+                retryable.append(number)
+                continue
+            if result.sent:
+                sent_any = True
+                self.sms_sent_count += 1
+                pending.pop(number)
+                print(f"[sms] sent to {number}", flush=True)
+                continue
+            pending[number] = result.detail
+            if result.retryable:
+                retryable.append(number)
+        return sent_any, retryable
+
+    def _text_everyone(self, event: AlertEvent, numbers: list[str]) -> tuple[str, dict]:
+        """Text every guardian, bounded by `SMS_REPORT_DEADLINE_S`.
+
+        Returns `(state, still_pending)` — the verdict to speak, and the
+        recipients worth another try once the wearer has been told.
+
+        **The deadline is on telling the user, not on trying.** This used
+        to run to completion before anything was spoken: three 30-second
+        modem timeouts meant 90 seconds of silence after an emergency
+        press, while the backend leg had already succeeded a second in.
+        The information existed immediately and was withheld to give a
+        dead modem two more chances. Now the verdict goes out on time and
+        `_keep_trying` carries on behind it.
+
+        A recipient the driver marked non-retryable is dropped rather than
+        re-attempted — see `SMSResult.retryable`. With the modem
+        physically gone, three attempts cost ninety seconds to learn what
+        the first one already knew.
+        """
         text = compose_alert_sms(event)
+        pending = {number: "" for number in numbers}
+        deadline = time.monotonic() + self._report_deadline_s
         any_sent = False
-        for number in numbers:
-            # Retry delays in seconds: 100ms, 500ms, 1s
-            delays = [0.1, 0.5, 1.0]
-            result = None
+        saw_retryable = True
 
-            for attempt in range(1 + len(delays)):
-                try:
-                    result = self._sms.send(number, text)
-                except Exception as exc:
-                    # The protocol says senders don't raise, but a driver bug
-                    # must not take the remaining recipients down with it.
-                    if attempt < len(delays):
-                        delay = delays[attempt]
-                        print(
-                            f"[sms] send to {number} attempt {attempt + 1} raised, "
-                            f"retrying in {delay}s: {exc}",
-                            file=sys.stderr,
-                        )
-                        time.sleep(delay)
-                        continue
-                    self.sms_failed_count += 1
-                    print(
-                        f"[sms] failed to send to {number} after {attempt + 1} attempts: {exc}",
-                        file=sys.stderr,
-                    )
-                    break
+        for index, delay in enumerate((0.0, *self._attempt_delays_s)):
+            if index:
+                self._sleep(delay)
+            if time.monotonic() >= deadline:
+                break
+            sent_any, retryable = self._attempt_round(pending, text)
+            any_sent = any_sent or sent_any
+            saw_retryable = bool(retryable)
+            if not pending or not retryable:
+                break                      # done, or nothing that could work
 
-                if result.sent:
-                    any_sent = True
-                    self.sms_sent_count += 1
-                    print(f"[sms] sent to {number} on attempt {attempt + 1}", flush=True)
-                    break
-                elif attempt < len(delays):
-                    delay = delays[attempt]
-                    print(
-                        f"[sms] send to {number} attempt {attempt + 1} failed, "
-                        f"retrying in {delay}s: {result.detail}",
-                        file=sys.stderr,
-                    )
-                    time.sleep(delay)
-                else:
-                    self.sms_failed_count += 1
-                    print(
-                        f"[sms] failed to send to {number} after {attempt + 1} attempts: "
-                        f"{result.detail}",
-                        file=sys.stderr,
-                    )
+        for number, detail in pending.items():
+            self.sms_failed_count += 1
+            print(f"[sms] could not reach {number}: {detail}", file=sys.stderr)
 
-        return SMS_SENT if any_sent else SMS_FAILED
+        if any_sent:
+            return SMS_SENT, {}
+        if not saw_retryable:
+            return SMS_NO_MODEM, {}
+        return SMS_FAILED, pending
+
+    def _keep_trying(self, pending: dict[str, str], text: str) -> None:
+        """Carry on after the verdict, silently. Never raises.
+
+        The wearer has already been told the text did not get through and
+        that the device will keep trying — a promise `emergency.delivery.*`
+        was making while nothing in the code honoured it. This is what
+        makes it true.
+
+        Silent on success by design. The wearer is mid-emergency and was
+        told to seek help another way; a second announcement four minutes
+        later is noise, and the guardian — who is the one that matters —
+        has the text either way. The journal records it.
+
+        Bounded by `SMS_RETRY_WINDOW_S`, not endless. A text arriving
+        forty minutes late describes a situation that has already
+        resolved, and two overlapping alerts can land out of order. The
+        channel that retries indefinitely is the backend queue.
+        """
+        deadline = time.monotonic() + self._retry_window_s
+        for delay in self._retry_backoff_s:
+            if not pending or time.monotonic() >= deadline:
+                break
+            self._sleep(delay)
+            if time.monotonic() >= deadline:
+                break
+            try:
+                sent_any, retryable = self._attempt_round(pending, text)
+            except Exception as exc:
+                print(f"[sms] background retry failed: {exc}", file=sys.stderr)
+                return
+            if sent_any:
+                print("[sms] a later attempt got through.", flush=True)
+            if not retryable:
+                break
+        if pending:
+            print(
+                f"[sms] giving up on {', '.join(pending)} after "
+                f"{self._retry_window_s:.0f}s.",
+                file=sys.stderr,
+            )
