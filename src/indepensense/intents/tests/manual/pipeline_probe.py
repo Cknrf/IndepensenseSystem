@@ -72,7 +72,7 @@ from indepensense.config import (
     NLU_COMPACT_PREFILL,
     NLU_EMBEDDING_BANK_PATH,
     NLU_EMBEDDING_MARGIN_THRESHOLD,
-    NLU_EMBEDDING_MODEL,
+    NLU_EMBEDDING_MODEL_DIR,
     NLU_EMBEDDING_SCORE_THRESHOLD,
     NLU_MODEL,
     NLU_PROMPT_PATH,
@@ -210,7 +210,7 @@ def build_parser(args):
     matcher = None
     if not args.llm_only:
         matcher = build_matcher(
-            model_name=NLU_EMBEDDING_MODEL,
+            model_path=NLU_EMBEDDING_MODEL_DIR,
             bank_path=Path(args.bank),
             score_threshold=args.score,
             margin_threshold=args.margin,

@@ -103,7 +103,7 @@ def matcher(tmp_path, monkeypatch):
 
     def _build(score_threshold=0.86, margin_threshold=0.02):
         return EmbeddingMatcher(
-            model_name="stub",
+            model_path=tmp_path / "stub",
             bank_path=bank,
             score_threshold=score_threshold,
             margin_threshold=margin_threshold,

@@ -748,6 +748,19 @@ PIPER_VOICES = {
 MMS_VOICES = {
     "tl": PROJECT_ROOT / "models" / "voices" / "mms-tts-tgl",
 }
+# Where `tools/fetch_models.py` gets each MMS voice from. Only the tool
+# reads this; the runtime loads the directory above and never sees a
+# repo id.
+MMS_VOICE_REPOS = {
+    "tl": "facebook/mms-tts-tgl",
+}
+
+# Each Whisper size is a directory under here — `models/whisper/small/`
+# and so on — laid out once by `tools/fetch_models.py`. The driver loads
+# the directory by path and never resolves a model name through the Hub,
+# for the same reason the MMS voice is a local snapshot: a wearable that
+# starts in the field cannot depend on huggingface.co answering, and the
+# Hub check cost a round trip per model on every boot.
 WHISPER_MODEL_DIR = PROJECT_ROOT / "models" / "whisper"
 
 # Whisper model size per language. English uses `tiny` because it's accurate
@@ -1162,6 +1175,12 @@ NLU_WARMUP_TIMEOUT_S = 180.0 if NLU_LARGE_MODEL else 90.0
 # 2 points of coverage and cost the first wrong answer — not a trade
 # worth making on a device where a wrong action is worse than no action.
 NLU_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+# The repo id above is only what `tools/fetch_models.py` downloads. The
+# matcher loads this directory by path. Resolving the repo id at startup
+# asked the Hub for the current revision and probed ten files the repo
+# does not have — measured at ~8 s per boot, and a timeout with no
+# network.
+NLU_EMBEDDING_MODEL_DIR = PROJECT_ROOT / "models" / "embeddings" / "multilingual-e5-small"
 NLU_EMBEDDING_BANK_PATH = PROJECT_ROOT / "prompts" / "nlu_examples.md"
 NLU_EMBEDDING_SCORE_THRESHOLD = 0.86
 NLU_EMBEDDING_MARGIN_THRESHOLD = 0.02

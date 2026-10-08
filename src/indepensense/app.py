@@ -207,7 +207,7 @@ from indepensense.config import (
     NLU_COMPACT_PREFILL,
     NLU_EMBEDDING_BANK_PATH,
     NLU_EMBEDDING_MARGIN_THRESHOLD,
-    NLU_EMBEDDING_MODEL,
+    NLU_EMBEDDING_MODEL_DIR,
     NLU_EMBEDDING_SCORE_THRESHOLD,
     NLU_MODEL,
     NLU_PROMPT_PATH,
@@ -3572,7 +3572,7 @@ The comparisons are inclusive, so a threshold names the percentage
         command — which is the cost this whole layer exists to remove.
         """
         return build_matcher(
-            model_name=NLU_EMBEDDING_MODEL,
+            model_path=NLU_EMBEDDING_MODEL_DIR,
             bank_path=NLU_EMBEDDING_BANK_PATH,
             score_threshold=NLU_EMBEDDING_SCORE_THRESHOLD,
             margin_threshold=NLU_EMBEDDING_MARGIN_THRESHOLD,

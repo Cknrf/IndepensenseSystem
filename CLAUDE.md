@@ -49,6 +49,8 @@ How Claude collaborates on this thesis project.
    import serial  # lazy: only resolvable on the Pi
    ```
 
+   **Models load from directories under `models/`, laid out once by `tools/fetch_models.py`. Nothing resolves a Hugging Face repo id at runtime.** Whisper and the embedding model used to be handed a name and let their libraries resolve it, which asks the Hub for the current revision before touching the local copy — measured at ~8 s per boot for the embedding model alone, and a wait for the timeout on a boot with no network. A directory path is loaded as is, so startup is the same with the modem up, down or absent, and the weights in use are the ones that were tested. The cost is that a model never fetched is a startup error naming the tool rather than a download, which is the right failure for a device that must come up in the field.
+
 4. **Drivers own protocol knowledge.** Parsing, checksums, register maps, and unit conversion live in the driver, not in tests or callers. Tests verify the driver; callers consume clean values. Document register addresses and datasheet sections in the driver's docstring, as `mpu6050.py` does.
 
 5. **`config.py` owns what varies; drivers own what's fixed.** Ports, pins, I²C addresses, thresholds, intervals, model paths → `config.py`. Constants dictated by the chip itself (frame layout, header byte, checksum formula) stay in the driver — those are the chip's contract, not configuration.
