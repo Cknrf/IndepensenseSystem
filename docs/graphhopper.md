@@ -112,10 +112,13 @@ graphhopper:
   graph.encoded_values: "foot_access, hike_rating, foot_priority, country, road_class, foot_road_access, mtb_rating, foot_average_speed"
 
   # Pedestrian profile (GH 9+ uses custom_model_files, the legacy
-  # `vehicle: foot` syntax is rejected as of GH 11)
+  # `vehicle: foot` syntax is rejected as of GH 11). The second file is
+  # ours, merged on top of the built-in one — see "The foot model adds
+  # two rules" below for what it does and how to install it.
+  custom_models.directory: custom_models
   profiles:
     - name: foot
-      custom_model_files: [foot.json]
+      custom_model_files: [foot.json, indepensense_foot.json]
 
   profiles_ch:
     - profile: foot
@@ -131,12 +134,17 @@ server:
       bind_host: 0.0.0.0
 ```
 
-## The foot model adds one rule to GraphHopper's default
+## The foot model adds two rules to GraphHopper's default
 
-`deploy/graphhopper/service_roads.json` is the whole of it:
+`deploy/graphhopper/indepensense_foot.json` is the whole of it:
 
 ```json
-{ "priority": [ { "if": "road_class == SERVICE", "multiply_by": "0.6" } ] }
+{
+  "priority": [
+    { "if": "road_class == SERVICE", "multiply_by": "0.6" },
+    { "if": "road_class == TRUNK",   "multiply_by": "1.5" }
+  ]
+}
 ```
 
 It is **layered on** the bundled foot model rather than replacing it.
@@ -144,7 +152,7 @@ It is **layered on** the bundled foot model rather than replacing it.
 same pattern the bundled model's own header documents
 (`[foot.json, foot_elevation.json]`). So upstream improvements to
 `foot.json` still arrive on a GraphHopper upgrade, and the diff that is
-ours stays one line.
+ours stays two lines.
 
 Copying the stock model into a local `foot.json` was tried first and
 GraphHopper refuses it outright:
@@ -235,7 +243,7 @@ for the previous weighting, so the model demonstrably took effect.
 
 ```bash
 mkdir -p ~/graphhopper/custom_models
-cp ~/Desktop/thesis/IndepensenseSystem/deploy/graphhopper/service_roads.json \
+cp ~/Desktop/thesis/IndepensenseSystem/deploy/graphhopper/indepensense_foot.json \
    ~/graphhopper/custom_models/
 ```
 
@@ -250,10 +258,10 @@ with the profile listing both files, built-in first:
 ```yaml
   profiles:
     - name: foot
-      custom_model_files: [foot.json, service_roads.json]
+      custom_model_files: [foot.json, indepensense_foot.json]
 ```
 
-`foot.json` still resolves from inside the JAR; `service_roads.json`
+`foot.json` still resolves from inside the JAR; `indepensense_foot.json`
 comes from the directory above and is merged on top.
 
 **This needs a graph rebuild.** The weighting is baked into the

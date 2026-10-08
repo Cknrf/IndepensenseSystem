@@ -36,13 +36,24 @@ Usage
     python -m indepensense.routing.tests.manual.model_compare \\
         --from 13.937387,121.118698
 
-    # your own destinations
+    # your own destinations — a place name, or a fixed lat,lon
     python -m indepensense.routing.tests.manual.model_compare \\
-        --from 13.937387,121.118698 --to "SM Lipa" --to "hospital"
+        --from 13.937387,121.118698 --to "SM Lipa" --to 13.956494,121.166000
+
+    # a different delta, without editing CANDIDATE_MODEL
+    python -m indepensense.routing.tests.manual.model_compare \\
+        --from 13.937387,121.118698 \\
+        --candidate '{"priority": [{"if": "road_class == TRUNK", "multiply_by": "4"}]}'
+
+A place name resolves to the *nearest* match, so every default
+destination is a short walk. Long walks along a corridor — where a
+weighting that saturates at 2 km may stop saturating — need a fixed
+`lat,lon`.
 
 Needs Photon and GraphHopper running.
 """
 import argparse
+import json
 import sys
 
 from indepensense.config import GRAPHHOPPER_URL, PHOTON_URL
@@ -152,9 +163,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="origin", required=True, metavar="LAT,LON")
     parser.add_argument("--to", dest="destinations", action="append",
                         metavar="QUERY",
-                        help="destination to test (repeatable; defaults to a "
-                             "spread of Lipa landmarks)")
+                        help="destination to test: a place name or LAT,LON "
+                             "(repeatable; defaults to a spread of Lipa "
+                             "landmarks)")
+    parser.add_argument("--candidate", metavar="JSON",
+                        help="custom-model delta to test instead of "
+                             "CANDIDATE_MODEL")
     args = parser.parse_args(argv)
+
+    candidate_model = CANDIDATE_MODEL
+    if args.candidate:
+        try:
+            candidate_model = json.loads(args.candidate)
+        except ValueError as exc:
+            print(f"bad --candidate: {exc}", file=sys.stderr)
+            return 2
 
     try:
         origin = _parse_origin(args.origin)
@@ -173,15 +196,18 @@ def main(argv: list[str] | None = None) -> int:
 
     deltas: list[tuple[str, float, int]] = []
     for query in queries:
-        hits = geocoder.geocode(query, limit=10, near=origin)
-        if not hits:
-            print(f"{query[:24]:24}  {'(not found)':>14}")
-            continue
-        target = rank_candidates(hits, origin=origin, query=query,
-                                 prefer_nearest=True)[0]
+        try:
+            destination = _parse_origin(query)
+        except ValueError:
+            hits = geocoder.geocode(query, limit=10, near=origin)
+            if not hits:
+                print(f"{query[:24]:24}  {'(not found)':>14}")
+                continue
+            destination = rank_candidates(hits, origin=origin, query=query,
+                                          prefer_nearest=True)[0].coordinate
 
-        stock = _route(origin, target.coordinate, BASELINE_MODEL)
-        candidate = _route(origin, target.coordinate, CANDIDATE_MODEL)
+        stock = _route(origin, destination, BASELINE_MODEL)
+        candidate = _route(origin, destination, candidate_model)
         if stock is None or candidate is None:
             continue
 
