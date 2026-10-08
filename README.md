@@ -91,7 +91,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - A soft blip while the device is working. Transcription plus local classification is 3-7 s of silence on a Pi, which is indistinguishable from a device that has died; a command answered faster than 1.5 s never blips at all
 - Speech and commands can both be interrupted — the repeat button stops the wearable mid-sentence (which matters when OCR is reading a menu) and cancels a command still being transcribed or classified, so a question asked by mistake can be taken back without waiting out the answer. Every press answers with a short tone, because silence is also what a dead device sounds like
 - Spoken help, so a user who cannot read a manual can ask what the device does
-- Speaks as soon as it is powered on — startup takes 2-3 minutes, and a pre-rendered announcement plays before any model loads so silence is never mistaken for a device that failed to boot
+- Speaks as soon as it is powered on — a pre-rendered announcement plays before any model loads so silence is never mistaken for a device that failed to boot. Fall detection, obstacle warnings and the emergency button are live within seconds; the voice models load behind them and a second announcement says when voice commands work
 - Voice shutdown, gated behind a spoken question and a confirming button press
 - Speaker volume by voice, with a floor the user cannot go below
 
@@ -439,7 +439,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | No audio output | The headset isn't the default sink. `aplay -l` should list it as a card; `wpctl status` shows the real default and the `Settings` block shows what is pinned. A pin left over from a previous audio device survives that device being unplugged |
 | Headset not in `aplay -l` / `arecord -l` at all | Nothing in `lsusb` either means it's a passive analog USB-C earphone relying on a host DAC, not a USB Audio Class device — no adapter will make it work on a Pi |
 | STT suddenly got worse, nothing in the logs | Mic gain reset. Nothing in the app manages the PipeWire source level — re-run `wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 60%`, with the `%`: a bare number is a linear factor and over-amplifies into clipping |
-| Whisper / Piper / MMS / Ollama slow to start | First boot loads models into RAM (~30–60 s). Subsequent starts are fast. |
+| Voice commands unavailable for the first minutes after boot | Expected: the models load on the `voice-stack` thread after the safety features are up, and a PTT press meanwhile answers with the busy cue. The journal's `Startup profile:` line says how long each load took; the SD card's read speed is the usual limit. |
 | PTT button raises `PinInvalidState` | Do not set `active_state=True` when `pull_up=False` — the pull sets the polarity already |
 | YOLO very slow | Expected during `continuous_detect_test`. In production, YOLO only runs on-demand per voice command |
 | Voice commands don't classify correctly | Check `ollama list` — the Qwen model may not be loaded; the warmup service takes ~1–2 min on cold boot |

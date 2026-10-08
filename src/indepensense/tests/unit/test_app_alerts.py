@@ -810,6 +810,10 @@ def _start_and_press(app, monkeypatch):
     monkeypatch.setattr(app, "_announce",
                         lambda text, critical=False: spoken.append(text))
     app.start()
+    # The voice stack loads on its own thread and ends with the greeting
+    # and the battery level. Waiting for it makes the spoken order these
+    # tests assert deterministic: battery first, then the alert.
+    assert app.wait_for_voice_stack(timeout_s=5.0)
     app.emergency_button.press()
     return spoken
 
