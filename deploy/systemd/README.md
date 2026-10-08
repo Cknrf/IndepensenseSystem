@@ -50,20 +50,26 @@ has a `Startup profile:` line per boot with every stage's duration.
 ### The Ollama warmup
 
 Ollama itself ships with its own systemd service (installed by the
-official Ollama installer). The `ollama-warmup.service` here pre-loads
-the NLU model on boot so the first user command doesn't pay the 25-40 s
-cold-load cost.
+official Ollama installer). `ollama-warmup.service` runs
+`python -m indepensense.tools.warm_nlu` at boot: it waits for the model
+to be catalogued, then sends the intent parser's own warmup request —
+same model, same system prompt, `keep_alive=-1` — so the model is
+resident *and* its 2,500-token system prompt is already in Ollama's
+prefix cache. It used to send `"ok"` through curl, which pinned the
+weights but left the prefill to the app: 54.5 s at the end of every
+boot. With the prefix cached, the app's own warmup takes ~3 s.
 
 **It runs in parallel with the wearable, not in front of it.**
 `indepensense.service` is deliberately *not* ordered `After=` the warmup.
-That unit is `Type=oneshot`, so systemd calls it started only when its
-script exits — up to 60 s waiting for the model catalogue plus up to
-120 s loading — and an `After=` on it delayed the app's own startup
+That unit is `Type=oneshot`, so systemd calls it started only when the
+tool exits — up to 60 s waiting for the model catalogue plus the load
+and prefill — and an `After=` on it delayed the app's own startup
 announcement by that whole time. A user who cannot see a screen cannot
 tell that silence from a device that failed to power on, and the
-announcement is the thing that exists to tell them apart. The app warms
-the NLU itself on a background thread anyway, and holds its "ready"
-greeting until that finishes.
+announcement is the thing that exists to tell them apart. The app
+re-warms the model itself at the end of its own load regardless, so a
+warmup unit that failed costs the user that time, not the voice
+interface.
 
 ## Install
 
@@ -91,16 +97,14 @@ Then the udev rule in `../udev/README.md`, and the models:
 python -m indepensense.tools.fetch_models
 ```
 
-**`ollama-warmup.service` runs a script from the repo**, by absolute path:
-`deploy/systemd/ollama-warmup.sh`. Nothing to copy — but the repo has to
-stay at `/home/cknrf/Desktop/thesis/IndepensenseSystem`, and if it moves,
-that path in the unit moves with it.
-
-The script exists so the model name is read from `config.NLU_MODEL`
-rather than written into the unit. It used to be hardcoded as
-`qwen3:1.7b` in two places while `config.py` switched between that and
-`qwen3:4b`, so flipping `NLU_LARGE_MODEL` would have left the unit
-waiting for a model nobody pulled and then pinning the wrong one.
+**Two units run Python from the repo**, by absolute path:
+`ollama-warmup.service` runs `indepensense.tools.warm_nlu` and
+`indepensense.service` runs `indepensense.app`. Nothing to copy — but
+the repo has to stay at `/home/cknrf/Desktop/thesis/IndepensenseSystem`,
+and if it moves, those paths in the units move with it. The model name
+the warmup pins comes from `config.NLU_MODEL`, so flipping
+`NLU_LARGE_MODEL` cannot leave the unit waiting for a model nobody
+pulled and then pinning the wrong one, as a hardcoded name once did.
 
 ### Emergency SMS needs one more file
 
@@ -199,7 +203,7 @@ sudo systemctl status graphhopper photon ollama-warmup
 
 - **graphhopper** — should read `Active: active (running)` within ~5 s.
 - **photon** — same, but takes ~30-60 s to open its OpenSearch index.
-- **ollama-warmup** — `oneshot` service, expected state is `Active: active (exited)` — this is normal for oneshot units. Its job is to fire once at boot, load the model, and exit. Check the model is actually loaded with `ollama ps`.
+- **ollama-warmup** — `oneshot` service, expected state is `Active: active (exited)` — this is normal for oneshot units. Its job is to fire once at boot, load the model, prefill the system prompt, and exit. Check the model is actually loaded with `ollama ps`; `journalctl -u indepensense | grep "Warmup done"` should then show a few seconds, not fifty.
 - **indepensense** — `Type=notify`: `activating (start)` for the two to three minutes its models take to load, with the current stage in the `Status:` line, then `active (running)`. GraphHopper and Photon stay `inactive` until then by design.
 - **indepensense** — `Active: active (running)`. Full startup takes ~30-60 s (Whisper + Piper model loading + Ollama warmup); watch the log for `Ready. Running fall-detection loop.`
 
