@@ -155,6 +155,26 @@ MESSAGES: dict[str, dict[str, str]] = {
     # before any model is loaded — see `config.STARTUP_AUDIO_DIR`. It has
     # to name the wait explicitly: a blind user cannot see a progress
     # indicator, and two silent minutes reads as a device that never woke.
+    # Spoken when the voice stack failed every load attempt and the
+    # device is carrying on with safety only.
+    #
+    # Static, and that is load-bearing: TTS may be the thing that
+    # failed, so this has to be replayable from a rendered clip with no
+    # engine at all — the same path `system.starting` uses before any
+    # model exists.
+    #
+    # It names what still works rather than only what does not. A user
+    # told "voice commands are unavailable" and nothing else cannot know
+    # whether the device will still call for help if they fall, which is
+    # the one thing they most need to know.
+    "system.voice_unavailable": {
+        "en": "Voice commands are not available on this start-up. Fall "
+              "detection, obstacle warnings and the emergency button are "
+              "still working.",
+        "tl": "Hindi gumagana ang mga utos sa boses sa pagbukas na ito. "
+              "Gumagana pa rin ang pagtukoy ng pagkahulog, ang babala sa "
+              "harang, at ang pangemergency na butones.",
+    },
     "system.starting": {
         "en": "IndepenSense is starting up. This takes about two minutes. "
               "I will tell you when I am ready.",

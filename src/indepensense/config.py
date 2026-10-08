@@ -199,6 +199,28 @@ EMERGENCY_REARM_S = 10.0
 # The backend leg already had a deadline (`_BACKEND_WAIT_S` in
 # sms_alerts.py) with a comment arguing exactly this. The SMS leg had
 # none. This is the matching bound.
+# How hard to try loading the voice stack before giving up on it and
+# running safety-only.
+#
+# Whisper, TTS and the parser are `_open_*`: the runtime cannot do its
+# job without them. That used to mean aborting `start()`, which cost
+# nothing because nothing was running yet. Now safety is live within
+# about eight seconds and the voice stack loads behind it, so the same
+# failure tears down a working fall detector a minute later — and with
+# `Restart=on-failure` a *persistent* failure becomes a loop in which
+# safety is up for eight seconds out of every ninety.
+#
+# A corrupt model file is the obvious way to get there, and is no longer
+# hypothetical: the SD card in this unit was measured writing 400 MB and
+# reading back different bytes.
+#
+# So: retry, because most load failures are transient and a restart
+# would have fixed them. Then degrade rather than exit, because fall
+# detection, obstacle warnings and the emergency button do not need a
+# voice, and losing them is a worse outcome than losing speech.
+VOICE_STACK_LOAD_ATTEMPTS = 3
+VOICE_STACK_RETRY_DELAY_S = 5.0
+
 SMS_REPORT_DEADLINE_S = 30.0
 
 # Gaps between attempts *before* the verdict is spoken. Four attempts in
