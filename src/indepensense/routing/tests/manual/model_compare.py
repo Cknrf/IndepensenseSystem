@@ -80,28 +80,22 @@ BASELINE_MODEL: dict = {"priority": [], "speed": []}
 # already has. Update this when evaluating a new change; the baseline
 # above always means "the device as it runs today".
 #
-# **Round 2: trunk x 1.5.** Round 1's service penalty stopped the router
-# weaving across the highway between short frontage stubs, but it did
-# not stop it abandoning the corridor altogether. Going 2 km east the
-# router took 174 m of highway, detoured 1334 m through side roads, and
-# came back — 3.85 km and 21 instructions where OSRM walks 2.5 km in 5.
+# **Round 3: trunk x 1.5 -> x 3, shipped.** Round 2's x 1.5 fixed both
+# test journeys but only because they were short. Over 5-8 km the router
+# still left the highway: to the Jollibee by JP Laurel it walked 174 m of
+# highway and ~4.6 km of side streets, 7.31 km / 25 instructions. An
+# extra x 2 on top of the shipped 1.5 held the corridor — 6.50 km / 8 —
+# and changed none of the short routes:
 #
-# Cause is the same `foot_priority` that makes trunk expensive per
-# metre. Once the alternative is a *network* of ordinary roads rather
-# than short stubs, the long way round wins. Multiplying trunk back up
-# cancels that.
+#   12 routes: -4.55 km total, -89 instructions, none worse
 #
-# 1.5 is the smallest value that works: 1.5, 2.0 and 3.0 all produce the
-# identical route on both test journeys, so the effect saturates and a
-# larger number would only risk over-attracting to highways somewhere
-# untested.
-#
-#   trunk x1.0 (control)  1.45 km  6i   |  3.85 km  21i
-#   trunk x1.5            1.44 km  5i   |  2.52 km   5i
-#   OSRM, same points     1.4 km  ~4i   |  2.5 km    5
+# x 4 on top gives the same routes, so it saturates by x 3. Left here as
+# a check: on top of the shipped x 3 it should now change nothing, and a
+# change means the profile on the server is not the one in `deploy/`.
+# Replace it with the next delta under test.
 CANDIDATE_MODEL = {
     "priority": [
-        {"if": "road_class == TRUNK", "multiply_by": "1.5"},
+        {"if": "road_class == TRUNK", "multiply_by": "2"},
     ],
 }
 
