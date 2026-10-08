@@ -648,14 +648,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Battery is at {percent} percent.",
         "tl": "Ang baterya ay {percent} porsyento.",
     },
-    "battery.level_with_hours": {
-        "en": "Battery is at {percent} percent, about {hours} hours and {minutes} minutes remaining.",
-        "tl": "Ang baterya ay {percent} porsyento, mga {hours} oras at {minutes} minuto pa ang natitira.",
-    },
-    "battery.level_with_minutes": {
-        "en": "Battery is at {percent} percent, about {minutes} minutes remaining.",
-        "tl": "Ang baterya ay {percent} porsyento, mga {minutes} minuto pa ang natitira.",
-    },
 
     # --- GPS status ---------------------------------------------------------
     "gps.not_configured": {

@@ -723,17 +723,24 @@ class IntentExecutor:
         pct = reading.percentage
         if reading.is_charging:
             return messages.get("battery.charging", self._lang, percent=pct)
-        if reading.time_to_empty_min > 0:
-            hours = reading.time_to_empty_min // 60
-            minutes = reading.time_to_empty_min % 60
-            if hours > 0:
-                return messages.get(
-                    "battery.level_with_hours",
-                    self._lang, percent=pct, hours=hours, minutes=minutes,
-                )
-            return messages.get(
-                "battery.level_with_minutes", self._lang, percent=pct, minutes=minutes,
-            )
+        # Deliberately not spoken: `reading.time_to_empty_min`.
+        #
+        # The gauge offers an estimate and it is not good enough to say
+        # out loud. It is derived from the same state-of-charge reading
+        # that needed `BATTERY_EMPTY_RAW_PERCENT` to be usable at all —
+        # a gauge that pins at 57% on a flat pack is not one whose
+        # minutes-remaining can be trusted — and it swings with load, so
+        # a camera capture or an LLM call moves it by tens of minutes.
+        #
+        # A percentage that is roughly right invites the user to judge
+        # for themselves. "About 2 hours remaining" sounds measured, and
+        # someone deciding whether to set out will act on it. Being
+        # confidently wrong about that is worse than saying less: the
+        # failure mode is a blind user stranded with a dead wearable.
+        #
+        # The field is still on the reading and still logged, so the
+        # estimate can be evaluated against real discharges later. It
+        # just does not get spoken until it has earned it.
         return messages.get("battery.level", self._lang, percent=pct)
 
     def _describe_cellular_signal(self) -> str:
