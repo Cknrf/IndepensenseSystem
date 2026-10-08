@@ -4,7 +4,9 @@ It used to run inline in `start()`: 56-87 s on the Pi for Qwen 3 1.7B,
 before the main loop and before the buttons were opened. For that long at
 every boot there was no fall detection, no obstacle warning and no
 emergency button. These tests hold the warmup open and check that startup
-finishes underneath it.
+finishes underneath it. The warmup now runs at the end of the voice-stack
+loader thread (see `test_app_safety_first.py`), which is why the first
+test waits for it to begin rather than asserting it already has.
 """
 import threading
 import time
@@ -72,7 +74,7 @@ def test_startup_finishes_while_the_llm_is_still_warming(started):
 
     app, greetings = started(parser)            # returns despite the held warmup
 
-    assert parser.warming.is_set()
+    assert _wait_for(parser.warming.is_set), "the warmup never started"
     assert app.emergency_button is not None, "the emergency button waited on the LLM"
     assert app.imu is not None
     assert greetings == [], "ready was announced before voice commands work"

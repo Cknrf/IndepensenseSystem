@@ -47,11 +47,17 @@ well-scoped background threads for I/O concerns:
   - GPS cache thread: polls SIM7600 GPS at 1 Hz, exposes latest fix to
     all consumers (executor, heartbeat, fall alerts) without serial
     port contention.
-  - NLU warmup thread (one-shot, exits): loads the LLM and prefills its
-    system prompt, then speaks the "ready" greeting. 56-87 s for 1.7B on
-    the Pi. It used to run inline in `start()`, before the main loop and
-    before the buttons were opened — so for that long at every boot there
-    was no fall detection, no obstacle warning and no emergency button.
+  - Voice-stack loader (one-shot, exits): loads Whisper, the TTS voices,
+    the embedding matcher and LLM client, YOLO, the camera and OCR,
+    renders the boot clips, warms the LLM, then speaks the "ready"
+    greeting. `start()` opens only what safety needs — IMU, ultrasonics,
+    buttons, motors, the alert path — and returns in a few seconds; the
+    loop is running while all of this loads. Measured on the Pi, the
+    models took ~200 s to load from the SD card, and every second of it
+    used to sit in front of fall detection, obstacle warnings and the
+    emergency button, none of which needs a model. The LLM warmup was
+    the first thing moved off that path; this moves the rest. A PTT
+    press before the stack is ready gets the busy cue.
 
 Obstacle detection
 ------------------
@@ -631,7 +637,13 @@ class Announcer:
         cache_dir: Path,
         static_names: frozenset[str] = frozenset(),
     ):
+        # None until `attach_tts`: the announcer exists from the first
+        # second of startup, the engine arrives when the loader has it.
+        # Rendered clips play either way; only a cache miss waits.
         self._tts = tts
+        self._tts_ready = threading.Event()
+        if tts is not None:
+            self._tts_ready.set()
         # Searched in this order. See `voice/clips.py`: the first holds
         # the static messages and is never swept, the second fills itself
         # with templated text and is.
@@ -685,6 +697,28 @@ class Announcer:
         stop_playback()
         if self._thread.is_alive():
             self._thread.join(timeout=timeout_s)
+
+    def attach_tts(self, tts) -> None:
+        """Hand the worker its voice. Until then it can only replay clips."""
+        self._tts = tts
+        self._tts_ready.set()
+
+    def _await_tts(self) -> bool:
+        """Block until an engine is attached; False if stopped first.
+
+        Reached only on a cache miss. Everything the loop can say while
+        the voice stack loads — a fall, an emergency, a battery alert —
+        is a static message with a rendered clip, so in practice this
+        waits only on a fresh install, where the clip has not been
+        rendered yet.
+        """
+        if self._tts_ready.is_set():
+            return True
+        print("[announcer] no voice yet — holding speech until TTS loads", flush=True)
+        while not self._tts_ready.wait(timeout=0.2):
+            if self._stop.is_set():
+                return False
+        return True
 
     def say(self, text: str, language: str, critical: bool = False) -> None:
         """Queue `text` to be spoken. Returns immediately.
@@ -782,6 +816,8 @@ class Announcer:
                 # instead of 0.2-2.3 s of synthesis.
                 path = clips.find(text, language, self._message_dir, self._cache_dir)
                 if path is None:
+                    if not self._await_tts():
+                        return
                     name = clips.filename(text, language)
                     static = name in self._static_names
                     path = clips.render(
@@ -862,6 +898,13 @@ class App:
         # the event observes a reason that is already current.
         self._voice_cancel_reason: str = ""
         self._voice_thread: threading.Thread | None = None
+        # The voice-stack loader — see `_load_voice_stack`. `_voice_stack_ready`
+        # gates the PTT button; `_startup_error` carries a fatal load
+        # failure out to `run_app`, which exits non-zero on it.
+        self._loader_thread: threading.Thread | None = None
+        self._voice_stack_ready = threading.Event()
+        self._startup_error: Exception | None = None
+        self._safety_up_at = 0.0
 
         # Placeholders — filled in by start()
         self.gps_cache: GPSCache | None = None
@@ -1044,25 +1087,19 @@ class App:
         self.gps_cache.start()
         cached_gps = _CachedGPSAdapter(self.gps_cache)
 
-        self._stage("Loading Whisper models")
-        self.stt = self._open_stt()
-
-        self._stage("Loading TTS voices (Piper + MMS)")
-        self.tts = self._open_tts()
-
-        # Started as soon as TTS exists so anything that wants to speak
-        # from the loop has somewhere to put it, for the whole of startup.
-        self.announcer = Announcer(
-            self.tts, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR,
-            _static_clip_names(self.language.supported),
-        )
-        self.announcer.start()
-
         self.volume = self._open_volume()
         print(f"  Speaker volume {self.volume.current}%.", flush=True)
 
-        self._stage("Building intent parser (LLM warmup runs once the loop is up)")
-        self.parser = self._open_parser()
+        # Started now, with no voice behind it yet, so anything that wants
+        # to speak from the loop has somewhere to put it from the first
+        # second. The loader attaches the TTS engine the moment it exists;
+        # until then the announcer replays rendered clips and holds
+        # anything that would need synthesis.
+        self.announcer = Announcer(
+            None, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR,
+            _static_clip_names(self.language.supported),
+        )
+        self.announcer.start()
 
         self._stage("Checking cloud LLM fallback")
         self.cloud = self._try_open_cloud_answerer()
@@ -1172,22 +1209,11 @@ class App:
         self._stage("Opening magnetometer (QMC5883P compass)")
         self.magnetometer = self._try_open_magnetometer()
 
-        self._stage("Opening camera + YOLO detector")
-        self.camera = self._try_open_camera()
-        self.object_detector = self._try_open_detector()
-
-        self._stage("Opening Tesseract OCR")
-        self.ocr = self._try_open_ocr()
-
-        # Late-bind battery + camera + detector + ocr into the executor.
-        # They weren't ready at executor construction time; injecting
-        # them now lets vision.*/device.status work without a bigger
-        # startup reshuffle.
+        # Late-bind the battery into the executor: it was not open when
+        # the executor was built. The camera, detector and OCR are bound
+        # the same way by the loader once they exist.
         if self.executor is not None:
             self.executor._battery = self.battery
-            self.executor._camera = self.camera
-            self.executor._detector = self.object_detector
-            self.executor._ocr = self.ocr
 
         self._stage("Starting heartbeat sender")
         self.heartbeat_sender = PeriodicHeartbeatSender(
@@ -1201,34 +1227,119 @@ class App:
         )
         self.heartbeat_sender.start()
 
+        self._close_stage()
+        self._safety_up_at = time.monotonic() - self._started_at
         print(
-            f"Safety features up (language: {self.language.current}). Running "
-            f"fall-detection loop; voice commands follow once the LLM is warm. "
+            f"Safety features up in {self._safety_up_at:.0f}s (language: "
+            f"{self.language.current}). Running the fall-detection loop; voice "
+            f"commands follow once the models are loaded and the LLM is warm. "
             f"SIGINT/SIGTERM to stop.",
             flush=True,
         )
-        # The greeting waits for the warmup: "I will tell you when I am
-        # ready" (system.starting) is a promise about voice commands, which
-        # are what the user is waiting to use. Safety needs no announcement.
-        threading.Thread(
-            target=self._warm_up_nlu, name="nlu-warmup", daemon=True,
-        ).start()
-        # Now that TTS exists, make sure the next boot can speak at second
-        # zero. Deliberately last: it costs a synthesis per language and
-        # the user is already up and running by this point.
-        self._stage("Rendering boot clips + sweeping the clip cache")
-        self._render_boot_clips()
-        # Bound the clip cache once per boot. The announcer also sweeps
-        # every CLIP_CACHE_SWEEP_EVERY renders, which covers a device
-        # left running for weeks; this covers the ordinary case of one
-        # that is switched off at night and never reaches that count.
+        # Everything the voice interface needs loads on this thread while
+        # the loop runs — see `_load_voice_stack`. The "ready" greeting is
+        # spoken at its end, after the LLM warmup.
+        self._loader_thread = threading.Thread(
+            target=self._load_voice_stack, name="voice-stack", daemon=True,
+        )
+        self._loader_thread.start()
+
+    def _load_voice_stack(self) -> None:
+        """Load everything the voice interface needs, off the main loop.
+
+        Runs once, on the `voice-stack` thread started at the end of
+        `start()`, while the loop is already detecting falls and
+        obstacles and the emergency button already works. Nothing here
+        is needed for any of those: the obstacle feedback is haptic, the
+        alert path is telemetry and SMS, and the spoken confirmations
+        are static messages the announcer replays from clips.
+
+        Order: Whisper, then TTS — attached to the announcer the moment
+        it exists, so the device can synthesise as early as possible —
+        then the intent parser (the embedding model loads here), the
+        vision stack, and the boot clips. Then the LLM warmup, which
+        ends with the "ready" greeting and the battery level, exactly as
+        before.
+
+        A `_shutdown` between stages ends the load: a SIGTERM during a
+        two-minute boot should not open a camera it is about to close.
+
+        **A failure keeps the `_open_*` contract.** The runtime cannot do
+        its job without Whisper, TTS or the parser, and before this
+        thread existed their failure aborted `start()`. It still aborts:
+        the error is recorded, the loop is asked to stop, and `run_app`
+        re-raises it so the process exits non-zero and systemd restarts
+        it with the cause in the journal. The only difference is that
+        the safety features ran for the seconds before — which is more
+        than they did when the same failure stopped `start()` outright.
+        """
         try:
-            freed = clips.sweep(CLIP_CACHE_DIR, CLIP_CACHE_MAX_BYTES)
-            if freed:
-                print(f"  Swept {freed / 1e6:.1f} MB of cached speech.", flush=True)
+            self._stage("Loading Whisper models")
+            self.stt = self._open_stt()
+            if self._shutdown.is_set():
+                return
+
+            self._stage("Loading TTS voices (Piper + MMS)")
+            self.tts = self._open_tts()
+            self.announcer.attach_tts(self.tts)
+            if self._shutdown.is_set():
+                return
+
+            self._stage("Building intent parser (LLM warmup follows)")
+            self.parser = self._open_parser()
+            if self._shutdown.is_set():
+                return
+
+            self._stage("Opening camera + YOLO detector")
+            self.camera = self._try_open_camera()
+            self.object_detector = self._try_open_detector()
+
+            self._stage("Opening Tesseract OCR")
+            self.ocr = self._try_open_ocr()
+
+            # Late-bound, as the battery was in `start()`: the executor
+            # exists so the emergency intent and the buttons work, and
+            # vision.* simply reports unavailable until these land.
+            if self.executor is not None:
+                self.executor._camera = self.camera
+                self.executor._detector = self.object_detector
+                self.executor._ocr = self.ocr
+            if self._shutdown.is_set():
+                return
+
+            # Now that TTS exists, make sure the next boot can speak at
+            # second zero. It costs a synthesis per language on the first
+            # boot after a text edit and nothing afterwards.
+            self._stage("Rendering boot clips + sweeping the clip cache")
+            self._render_boot_clips()
+            # Bound the clip cache once per boot. The announcer also sweeps
+            # every CLIP_CACHE_SWEEP_EVERY renders, which covers a device
+            # left running for weeks; this covers the ordinary case of one
+            # that is switched off at night and never reaches that count.
+            try:
+                freed = clips.sweep(CLIP_CACHE_DIR, CLIP_CACHE_MAX_BYTES)
+                if freed:
+                    print(f"  Swept {freed / 1e6:.1f} MB of cached speech.", flush=True)
+            except Exception as exc:
+                print(f"[clips] startup sweep failed: {exc}", file=sys.stderr, flush=True)
         except Exception as exc:
-            print(f"[clips] startup sweep failed: {exc}", file=sys.stderr, flush=True)
+            print(f"[voice-stack] load failed: {exc}", file=sys.stderr, flush=True)
+            self._startup_error = exc
+            self._shutdown.set()
+            return
+
+        self._voice_stack_ready.set()
         self._print_startup_profile()
+        self._warm_up_nlu()
+
+    def wait_for_voice_stack(self, timeout_s: float) -> bool:
+        """Block until the loader thread has finished — models, warmup
+        and greeting included — or the timeout passes. Returns whether
+        the voice stack is ready. For tests and manual scripts; nothing
+        in the runtime waits on this."""
+        if self._loader_thread is not None:
+            self._loader_thread.join(timeout=timeout_s)
+        return self._voice_stack_ready.is_set()
 
     def _stage(self, label: str) -> None:
         """Announce a startup stage and time the one before it.
@@ -1268,7 +1379,8 @@ class App:
                 f"{len(rest)} stages under 1s, {sum(d for _, d in rest):.1f}s together"
             )
         print(
-            f"  Startup profile, {total:.1f}s from process start to the loop: "
+            f"  Startup profile: safety features up {self._safety_up_at:.1f}s "
+            f"after process start, voice stack ready {total:.1f}s: "
             + " · ".join(parts), flush=True,
         )
 
@@ -1331,6 +1443,12 @@ class App:
 
         # Cancel any in-flight voice cycle so the pipeline notices and exits.
         self._voice_cancel.set()
+
+        # A loader part-way through a model load cannot be interrupted;
+        # give it a moment to notice the shutdown between stages, then
+        # carry on. It is a daemon thread and the process is exiting.
+        if self._loader_thread is not None and self._loader_thread.is_alive():
+            self._loader_thread.join(timeout=2.0)
 
         # Before the telemetry drain: this aborts playback, so a worker
         # part-way through a long announcement doesn't hold up shutdown
@@ -2116,6 +2234,13 @@ The comparisons are inclusive, so a threshold names the percentage
         the user knows the mic is now live. Feedback runs BEFORE
         recording starts so the chime isn't captured in the audio.
         """
+        if not self._voice_stack_ready.is_set():
+            # Still loading. Answered rather than ignored — a button that
+            # produces nothing reads as broken — but with the busy cue,
+            # not a recording that nothing could yet transcribe.
+            print("[PTT] Voice stack still loading — press ignored.", flush=True)
+            self._play_cue(play_busy_cue)
+            return
         if self._voice_active.is_set():
             # Answer the press even though it is refused. A button that
             # produces nothing at all is indistinguishable from a button
@@ -3865,6 +3990,12 @@ def run_app(app: App) -> None:
     try:
         app.start()
         app.run()
+        # A model that failed to load on the voice-stack thread. Raised
+        # here, after the loop has stopped, so the exit is non-zero and
+        # systemd restarts the service with the cause in the journal —
+        # the same outcome as when the load failed inside `start()`.
+        if app._startup_error is not None:
+            raise app._startup_error
     except Exception as exc:
         print(f"Fatal error: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)
