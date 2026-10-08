@@ -78,6 +78,8 @@ How Claude collaborates on this thesis project.
 
    **Unit tests never touch the network.** Modules whose code makes HTTP calls stub `requests` with an autouse fixture — otherwise the suite passes or fails depending on whether the dev machine is online, and stalls for the timeout when it isn't.
 
+   **Nor the clock.** Retry backoff is a module constant or a constructor argument, never a literal inside the loop, and tests stub it to zero with an autouse fixture. A test that sleeps through a real backoff spends seconds asserting what a call counter already knows: four `test_auth` cases sat at 3.5 s each proving a 404 is *not* retried, and the suite went from 22 s to 52 s the day retries landed. Same objection as the network, different clock.
+
 ## Where things live
 
 ```

@@ -185,6 +185,55 @@ WALKING_STILL_HOLD_S = 2.0
 # after a failure retries instead of being ignored.
 EMERGENCY_REARM_S = 10.0
 
+# How long the wearer waits to be told whether an alert got through, and
+# how long the device keeps trying after telling them. Two separate
+# numbers, because they answer two different questions.
+#
+# They used to be one: the SMS leg ran to completion and only then was
+# anything spoken, so three 30-second modem timeouts meant 90 seconds of
+# silence after an emergency press — with the backend leg having already
+# succeeded on its first attempt, a second in. The information the user
+# needed existed immediately and was withheld while a dead modem was
+# given three chances to prove itself.
+#
+# The backend leg already had a deadline (`_BACKEND_WAIT_S` in
+# sms_alerts.py) with a comment arguing exactly this. The SMS leg had
+# none. This is the matching bound.
+SMS_REPORT_DEADLINE_S = 30.0
+
+# Gaps between attempts *before* the verdict is spoken. Four attempts in
+# about 1.6 s against a fast-failing modem; against one that times out,
+# the deadline above cuts it short first.
+#
+# Bounded by count as well as by time on purpose. A deadline alone would
+# mean a modem that fails instantly gets hammered sixty times in thirty
+# seconds, which is not persistence, it is a busy loop with a sleep in
+# it.
+SMS_ATTEMPT_DELAYS_S = (0.1, 0.5, 1.0)
+
+# After the verdict is spoken, delivery keeps being attempted in the
+# background for this long, silently. A guardian who gets the text four
+# minutes late can still act on it.
+#
+# Bounded, not forever, for three reasons. A stale emergency text is
+# actively harmful — one arriving forty minutes on reports a situation
+# that has already resolved, and two overlapping alerts can arrive out
+# of order. The persistent channel is the backend queue, which retries
+# indefinitely and is what the guardian dashboard reads. And by the time
+# both channels have failed the wearer has already been told to seek
+# help another way, so the device's job is to be honest, not to keep a
+# failing modem busy for an hour.
+#
+# Keep `emergency.delivery.*` in step with this: those messages promise
+# the user a retry window out loud, and for a while they promised one
+# that did not exist at all.
+SMS_RETRY_WINDOW_S = 300.0
+
+# Gap between background attempts, seconds, widening as hope fades.
+# Starts above the report deadline because anything faster was already
+# tried before the verdict was spoken.
+SMS_RETRY_BACKOFF_S = (15.0, 30.0, 60.0, 60.0, 60.0)
+
 # The "still working on it" blip played while a voice command is being
 # transcribed and classified.
 #
