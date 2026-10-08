@@ -800,8 +800,9 @@ class IntentExecutor:
     def _handle_vision_describe(self, result: IntentResult) -> str:
         """Capture a frame from the camera, run YOLO, describe what was found.
 
-        Total latency on Pi 5: ~50 ms capture + ~500-1000 ms YOLOv8n
-        inference. Runs on the voice thread so it doesn't block the
+        Latency on Pi 5: ~50 ms capture + ~70 ms YOLO26n NCNN inference
+        (extrapolated from published benchmarks — `detector_benchmark`
+        measures it on the device). Runs on the voice thread so it doesn't block the
         main polling loop. Fails gracefully when the camera or detector
         is missing (dev on Mac, hardware not wired).
         """

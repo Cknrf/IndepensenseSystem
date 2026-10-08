@@ -79,7 +79,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Critical announcements interrupt whatever is being said, including mid-synthesis
 
 **Computer Vision Awareness**
-- On-demand object detection (YOLOv8), falling back to the forward ultrasonic when the camera recognises nothing — "I can't identify what's in front of you, but something is about 40 centimetres away" rather than "I don't see anything I recognize" with an obstacle at arm's length
+- On-demand object detection (YOLO26n fine-tuned for Philippine streets — jeepney, tricycle, pedicab, kariton, open manholes, potholes, plus everyday indoor and outdoor objects), falling back to the forward ultrasonic when the camera recognises nothing — "I can't identify what's in front of you, but something is about 40 centimetres away" rather than "I don't see anything I recognize" with an obstacle at arm's length
 - OCR / text reading (Tesseract, English + Tagalog)
 - Scene description via voice command
 
@@ -144,7 +144,7 @@ That file contains:
 
 - **Language:** Python 3.13
 - **OS:** Raspberry Pi OS (Trixie / Debian 13) on device, macOS for development
-- **Computer Vision:** Ultralytics YOLOv8 (medium, Open Images V7 weights), Tesseract OCR
+- **Computer Vision:** YOLO26n fine-tuned on COCO + Philippine street datasets, run with NCNN; Tesseract OCR
 - **Voice:** faster-whisper (STT), Piper + Meta MMS-TTS (TTS), Ollama + Qwen 3 1.7B (NLU)
 - **Hardware Interface:** GPIO (gpiozero), I²C, UART
 - **Database:** handled by the backend repository
@@ -163,7 +163,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | Module | Purpose |
 |---|---|
 | `sensors/` | Sensor drivers: DYP-A22 ultrasonic, MPU6050 IMU, QMC5883P magnetometer, GPS via SIM7600 |
-| `vision/` | Camera capture, YOLOv8 object detection, Tesseract OCR |
+| `vision/` | Camera capture, NCNN object detection (fine-tuned YOLO26n), Tesseract OCR |
 | `voice/` | Push-to-talk flow, Whisper STT, Piper (English) + MMS (Tagalog) TTS behind one router, speaker volume |
 | `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching, help, saved places, volume), bilingual response catalogue, cloud LLM fallback |
 | `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing, remaining-distance, compass turn verification, and turn-to-face orientation logic |
@@ -266,7 +266,9 @@ After wiring a component (or after any hardware change), run its test to confirm
 | Component | Command |
 |---|---|
 | Camera capture only | `python -m indepensense.vision.tests.manual.capture_test` |
-| One-shot YOLO detection | `python -m indepensense.vision.tests.manual.detect_test` |
+| One-shot object detection | `python -m indepensense.vision.tests.manual.detect_test` |
+| Detector latency, memory, main-loop impact | `python -m indepensense.vision.tests.manual.detector_benchmark` (add `--threads 2 3 4`, `--camera`, `--csv`; run with the wearable running for real contention) |
+| Detector accuracy per class | `python -m indepensense.vision.tests.manual.detector_eval DATA.yaml --split test --sweep` (any YOLO-format labelled set; runs on a Mac too) |
 | Continuous detection (terminal, no GUI) | `python -m indepensense.vision.tests.manual.continuous_detect_test` |
 | Live camera + bounding boxes (GUI) | `python -m indepensense.vision.tests.manual.live_detect_test` |
 | Record short video clip | `python -m indepensense.vision.tests.manual.record_test` |

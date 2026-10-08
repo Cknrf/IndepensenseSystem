@@ -1,4 +1,4 @@
-"""Live camera + YOLO preview with bounding boxes.
+"""Live camera + object-detection preview with bounding boxes.
 
 Opens a window on the Pi's monitor showing the camera feed with
 real-time detection boxes drawn on top. Great for testing detection
@@ -11,7 +11,7 @@ active — cv2.imshow needs a display server.
 
 Prerequisites:
     pip install opencv-python           # the GUI variant, not the -headless one
-    # (ultralytics often installs opencv-python-headless, which has no GUI —
+    # (some packages pull in opencv-python-headless, which has no GUI —
     #  if you get a NULL/GUI error, install opencv-python explicitly)
 
 Run from repo root:
@@ -27,9 +27,10 @@ from indepensense.config import (
     CAMERA_HEIGHT,
     CAMERA_WIDTH,
     YOLO_CONFIDENCE_THRESHOLD,
-    YOLO_MODEL_PATH,
+    YOLO_MODEL_DIR,
+    YOLO_NUM_THREADS,
 )
-from indepensense.vision.detector import YOLOv8Detector
+from indepensense.vision.ncnn_detector import NCNNDetector
 from indepensense.vision.picamera import PiCamera
 
 
@@ -42,10 +43,11 @@ _STATS_COLOR = (0, 255, 255)     # yellow overlay in the corner
 def main():
     import cv2   # opencv-python (with GUI). Lazy import so tests still parse on machines without it.
 
-    print(f"Loading YOLOv8 model from {YOLO_MODEL_PATH}...")
-    detector = YOLOv8Detector(
-        model_path=YOLO_MODEL_PATH,
+    print(f"Loading NCNN model from {YOLO_MODEL_DIR}...")
+    detector = NCNNDetector(
+        model_dir=YOLO_MODEL_DIR,
         confidence_threshold=YOLO_CONFIDENCE_THRESHOLD,
+        num_threads=YOLO_NUM_THREADS,
     )
 
     print(f"Opening camera at {CAMERA_WIDTH}x{CAMERA_HEIGHT}...")

@@ -17,7 +17,14 @@ lgpio>=0.2
 # The Python packages install fine via pip, but the underlying C libraries
 # must be present:  sudo apt install -y libportaudio2 libsndfile1
 
-# YOLOv8 object detection.
+# Object detection — the NCNN runtime, called directly (vision/ncnn_detector.py).
+# Not ultralytics: every ultralytics backend imports torch and its own stack
+# even to run an NCNN model, which measured ~150 MB more resident memory
+# for the same detections. ultralytics is only needed to *train* the model,
+# which happens on a GPU machine (docs/object-detection-research.md).
+ncnn>=1.0.20250503
+
+# PyTorch, for MMS-TTS and the embedding model below (no longer for YOLO).
 #
 # Torch is pinned because recent torch wheels (~2.10+) ship with hard
 # dependencies on NVIDIA CUDA libraries (nvidia-cublas, nvidia-cudnn, ...) even
@@ -25,8 +32,10 @@ lgpio>=0.2
 # weight. 2.6.0 is the oldest aarch64 cp313 wheel available and should predate
 # the CUDA-deps-as-hard-requirements packaging change.
 torch==2.6.0
-torchvision==0.21.0
-ultralytics>=8.0
+
+# Process and memory sampling for tools/system_performance and the detector
+# benchmark. It used to arrive as an ultralytics dependency.
+psutil>=5.9
 
 # Tagalog text-to-speech: Meta MMS-TTS (`facebook/mms-tts-tgl`), a VITS
 # checkpoint run through transformers' `VitsModel`. It rides on the torch

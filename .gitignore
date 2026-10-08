@@ -54,6 +54,12 @@ var/traces/*
 !var/traces/*.csv
 
 # ML model weights (large binaries, downloaded on first run)
-models/
+models/*
 *.pt
 *.onnx
+
+# ...except the object detector, which is fine-tuned here and has nowhere to
+# be re-downloaded from. ~10 MB of NCNN files; also thesis evidence, like the
+# fall traces. `models/*` rather than `models/` for the same reason as
+# `var/*` above — git cannot re-include under an excluded directory.
+!models/detector/

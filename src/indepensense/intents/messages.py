@@ -17,12 +17,17 @@ On the Tagalog
 
 Three deliberate choices a reader should know about.
 
-**Object labels stay in English.** YOLO emits COCO class names
-("person", "traffic light"), and Manila speech code-switches freely —
-"Nakikita ko ang 2 tao at isang chair" is how people actually talk, while
-forcing "ilaw ng trapiko" for traffic light is stilted. `_TL_LABELS`
-translates a small set of high-frequency and safety-relevant nouns and
-everything else falls through to English on purpose, not by omission.
+**Object labels are named here, in both languages, for every class.**
+`OBJECT_LABELS` is keyed by the class names the detector was trained with
+and gives each its spoken English and Tagalog noun. It used to be a small
+Tagalog-only table over COCO names with everything else falling through to
+English — which silently stopped matching anything when the deployed model
+switched to Open Images and its capitalised names ("isang Person"). The
+vocabulary is now ours (we trained the model), so it is complete by
+construction and a unit test holds it to the committed model's class list.
+Code-switching is still the rule where it is how people talk: "traffic
+light", "stop sign" and "laptop" stay English in the Tagalog column on
+purpose, and "dyip", "traysikel" and "padyak" are the everyday words.
 
 **Tagalog nouns are not inflected for number.** English needs
 "a chair" / "2 chairs"; Tagalog uses the bare noun with a counter
@@ -814,30 +819,69 @@ MESSAGES: dict[str, dict[str, str]] = {
 }
 
 
-# Tagalog for a small set of frequently-seen and safety-relevant COCO
-# labels. Everything absent falls through to the English label, which is
-# natural in Filipino speech — see the module docstring.
-_TL_LABELS: dict[str, str] = {
-    "person": "tao",
-    "car": "kotse",
-    "bus": "bus",
-    "truck": "trak",
-    "motorcycle": "motorsiklo",
-    "bicycle": "bisikleta",
-    "dog": "aso",
-    "cat": "pusa",
-    "chair": "upuan",
-    "bench": "bangko",
-    "table": "mesa",
-    "door": "pinto",
-    "stairs": "hagdan",
-    "bottle": "bote",
-    "cup": "tasa",
-    "book": "libro",
-    "bag": "bag",
-    "tree": "puno",
-    "traffic light": "traffic light",
+# Spoken noun for every class the object detector can report, keyed by
+# the class name in the model's `metadata.yaml`. English is the singular;
+# `english_plural` inflects it. Tagalog is the bare noun — the counter
+# carries the number (see `count_label`).
+#
+# Where the key and the English word differ it is deliberate: the key is
+# the model's contract, the value is what a listener should hear —
+# `dining_table` is just a table to someone asking what is in front of
+# them, and "stairs" is spoken as "staircase" so that "a staircase" /
+# "2 staircases" inflect like any other noun.
+#
+# The Tagalog column wants a native speaker's review; regional words in
+# particular (the pedicab is "padyak" in Manila but "trisikad" in the
+# Visayas) are a choice for the deployment region, not a translation.
+OBJECT_LABELS: dict[str, dict[str, str]] = {
+    "person":        {"en": "person",          "tl": "tao"},
+    "bicycle":       {"en": "bicycle",         "tl": "bisikleta"},
+    "car":           {"en": "car",             "tl": "kotse"},
+    "motorcycle":    {"en": "motorcycle",      "tl": "motorsiklo"},
+    "bus":           {"en": "bus",             "tl": "bus"},
+    "truck":         {"en": "truck",           "tl": "trak"},
+    "traffic_light": {"en": "traffic light",   "tl": "traffic light"},
+    "stop_sign":     {"en": "stop sign",       "tl": "stop sign"},
+    "bench":         {"en": "bench",           "tl": "bangko"},
+    "dog":           {"en": "dog",             "tl": "aso"},
+    "cat":           {"en": "cat",             "tl": "pusa"},
+    "chair":         {"en": "chair",           "tl": "upuan"},
+    "couch":         {"en": "couch",           "tl": "sopa"},
+    "bed":           {"en": "bed",             "tl": "kama"},
+    "dining_table":  {"en": "table",           "tl": "mesa"},
+    "toilet":        {"en": "toilet",          "tl": "inodoro"},
+    "tv":            {"en": "television",      "tl": "telebisyon"},
+    "laptop":        {"en": "laptop",          "tl": "laptop"},
+    "cell_phone":    {"en": "phone",           "tl": "selpon"},
+    "bottle":        {"en": "bottle",          "tl": "bote"},
+    "cup":           {"en": "cup",             "tl": "tasa"},
+    "backpack":      {"en": "backpack",        "tl": "backpack"},
+    "umbrella":      {"en": "umbrella",        "tl": "payong"},
+    "potted_plant":  {"en": "plant",           "tl": "halaman"},
+    "fire_hydrant":  {"en": "fire hydrant",    "tl": "fire hydrant"},
+    "door":          {"en": "door",            "tl": "pinto"},
+    "stairs":        {"en": "staircase",       "tl": "hagdan"},
+    "jeepney":       {"en": "jeepney",         "tl": "dyip"},
+    "tricycle":      {"en": "tricycle",        "tl": "traysikel"},
+    "pedicab":       {"en": "pedicab",         "tl": "padyak"},
+    "pushcart":      {"en": "pushcart",        "tl": "kariton"},
+    "open_manhole":  {"en": "open manhole",    "tl": "bukas na manhole"},
+    "pothole":       {"en": "pothole",         "tl": "lubak"},
 }
+
+
+def object_label(class_name: str, language: str) -> str:
+    """Spoken noun for a detector class; the bare class name if it has none.
+
+    The fallback exists so an unlabelled class is spoken oddly rather than
+    dropped — the unit test against the deployed model's class list is
+    what keeps it from ever being reached.
+    """
+    entry = OBJECT_LABELS.get(class_name)
+    if entry is None:
+        print(f"[messages] no spoken label for detector class {class_name!r}", file=sys.stderr)
+        return class_name.replace("_", " ")
+    return entry.get(language, entry[FALLBACK_LANGUAGE])
 
 
 # --- Tagalog numerals -------------------------------------------------------
@@ -977,7 +1021,7 @@ def tagalog_counter(value: int | float) -> str:
 # Vowels that take "an" instead of "a" in English.
 _ENGLISH_VOWELS = "aeiou"
 
-# COCO labels whose English plural is irregular.
+# English nouns in `OBJECT_LABELS` (and beyond) whose plural is irregular.
 _IRREGULAR_PLURALS: dict[str, str] = {
     "person": "people",
     "child": "children",
@@ -1011,9 +1055,10 @@ def count_label(label: str, count: int, language: str) -> str:
     linked to it ("dalawang upuan"). This is why scene description cannot
     share a single pluraliser across languages.
     """
+    noun = object_label(label, language)
     if language == "tl":
-        return f"{tagalog_counter(count)} {_TL_LABELS.get(label, label)}"
-    return english_plural(label, count)
+        return f"{tagalog_counter(count)} {noun}"
+    return english_plural(noun, count)
 
 
 def round_speech_distance(m: float) -> int:

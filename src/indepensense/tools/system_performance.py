@@ -47,8 +47,8 @@ Output columns:
     top_proc  — process using most CPU right now
 
 Prerequisites:
-    psutil is required. It is normally installed as a transitive
-    dependency of ultralytics; if you get ImportError, install with:
+    psutil is required; it is listed in requirements-pi.txt. If you get
+    ImportError, install with:
         pip install psutil
 """
 import argparse

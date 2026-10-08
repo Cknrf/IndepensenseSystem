@@ -570,11 +570,13 @@ MOCK_ULTRASONIC_PERIOD_S = 5.0
 
 # Raspberry Pi Camera Module 3.
 #
-# 1280×720 gives YOLO ~4× more pixels per object than 640×480 — noticeably
-# better detection of small items (mouse, phone, cables) at the cost of
-# ~2× slower inference. For the wearable's on-demand vision.describe this
-# tradeoff is fine (~1.5 s YOLO time invisible next to STT+LLM+TTS chain).
-# Drop back to 640×480 if you need higher preview FPS.
+# 1280×720 is for OCR: Tesseract reads the full frame, and small print
+# needs the pixels. The object detector does not benefit — it letterboxes
+# every frame to its fixed input square (`imgsz` in the model's
+# metadata.yaml, 640), so a 1280×720 frame reaches the network as 640×360
+# of content either way, and the extra resolution only costs a resize.
+# Drop to 640×480 if you need higher preview FPS and can live without
+# fine print.
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS = 15
@@ -607,31 +609,38 @@ BATTERY_LOG_DIR = PROJECT_ROOT / "data" / "battery"
 # was launched from, and this is working data rather than source.
 MAG_SWEEP_DIR = PROJECT_ROOT / "data" / "calibration"
 
-# YOLOv8 object detection.
+# Object detection — YOLO26n fine-tuned on COCO + Philippine street data,
+# run as an NCNN export. Full rationale, the alternatives and their numbers:
+# docs/object-detection-research.md.
 #
-# The `-oiv7` suffix picks the variant trained on Open Images V7 (600
-# classes) instead of the default COCO (80 classes) — 7.5× more object
-# types recognized, including doors, stairs, windows, and many things
-# COCO omits that matter for an assistive wearable.
+# Was yolov8m-oiv7 (Open Images, 601 classes) through PyTorch: ~1.2 s per
+# detection on the Pi (extrapolated), +377 MB, and its hierarchical labels
+# spoke "Wheel" and "Tire" next to every vehicle. Neither it nor stock COCO
+# knows a jeepney — COCO calls one a truck. This model was trained with our
+# own class names, which are the keys of `messages.OBJECT_LABELS`.
 #
-# Model size progression (all use OIV7 weights):
-#   yolov8n  ~3 M params   ~300 ms   good for people/furniture
-#   yolov8s  ~11 M params  ~950 ms   adds keyboards, bottles
-#   yolov8m  ~26 M params  ~1500-2000 ms   adds smaller items, fewer false positives
-#   yolov8l  ~44 M params  ~3-5 s (borderline unusable on Pi CPU)
+# The directory is the NCNN export (`model.ncnn.param`, `model.ncnn.bin`,
+# `metadata.yaml`) and is committed — a fine-tuned model has nowhere to be
+# re-downloaded from.
+YOLO_MODEL_DIR = PROJECT_ROOT / "models" / "detector" / "yolo26n-ph_640_ncnn_model"
+# Chosen from `detector_eval --sweep` on the held-out Philippine test split
+# (3,984 images, micro over all classes, box level):
 #
-# yolov8m is the practical ceiling on Pi 5 CPU. For on-demand
-# vision.describe the ~2 s inference is acceptable next to the ~5 s
-# STT+LLM+TTS chain. Continuous testing at this size is painful
-# (~0.5 FPS) but production doesn't run continuously.
+#     conf   0.15   0.20   0.25   0.30   0.40
+#     P      0.715  0.762  0.800  0.833  0.878
+#     R      0.736  0.695  0.658  0.624  0.551
+#     F1     0.725  0.727  0.722  0.713  0.677
 #
-# Ultralytics auto-downloads the weights (~52 MB) on first use.
-YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "yolov8m-oiv7.pt"
-# 0.3 (was 0.5) — more permissive so small/uncertain objects like a
-# distant mouse or partially-occluded cable don't get silently filtered.
-# Trade-off: more false positives. Watch the continuous_detect_test
-# output for hallucinations; if they return, dial back up to 0.4.
-YOLO_CONFIDENCE_THRESHOLD = 0.3
+# F1 is flat from 0.15 to 0.25; 0.25 keeps it within 0.005 of the peak at
+# precision 0.80. Precision is weighted over recall because a wrong noun
+# spoken to a blind user costs more than a missed one — and the forward
+# ultrasonic still reports an unrecognised obstacle.
+YOLO_CONFIDENCE_THRESHOLD = 0.25
+# Three of the Pi's four cores. Detection runs on the voice thread while the
+# 100 Hz main loop keeps polling sensors; leaving a core free for it costs
+# some inference speed and is not yet measured on the device — compare
+# with 4 using `detector_benchmark --threads 3 4` while the app runs.
+YOLO_NUM_THREADS = 3
 
 # Tesseract OCR — reads printed text via `vision.read` intent.
 # `OCR_LANGUAGES` maps our language codes to Tesseract language

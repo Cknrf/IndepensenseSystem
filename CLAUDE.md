@@ -44,7 +44,7 @@ How Claude collaborates on this thesis project.
 
    `app_mock.py` is development-only and never imported by production: `deploy/systemd/indepensense.service` starts `indepensense.app`. The separation is structural, not a runtime flag, so a misconfigured flag can never substitute a fake sensor on the real device.
 
-3. **Pi-only libraries are imported lazily, inside the function that needs them.** `serial`, `smbus2`, `gpiozero`, `picamera2`, `ultralytics`, `pytesseract`, `faster_whisper`, `piper`, `transformers`, `torch`, `sentence_transformers` — never at module top level. This is what lets the real drivers be imported, introspected, and unit-tested on a Mac where those packages don't exist. Follow the existing comment style:
+3. **Pi-only libraries are imported lazily, inside the function that needs them.** `serial`, `smbus2`, `gpiozero`, `picamera2`, `ncnn`, `pytesseract`, `faster_whisper`, `piper`, `transformers`, `torch`, `sentence_transformers` — never at module top level. This is what lets the real drivers be imported, introspected, and unit-tested on a Mac where those packages don't exist. Follow the existing comment style:
    ```python
    import serial  # lazy: only resolvable on the Pi
    ```
@@ -68,7 +68,11 @@ How Claude collaborates on this thesis project.
 
    Adding an intent means deciding which side it falls on. `parse_bank` enforces it: an open-span intent given its own section in `prompts/nlu_examples.md` fails on load rather than silently becoming answerable.
 
-8. **Tests nested per module:**
+8. **The object detector is a fine-tuned YOLO26n run through `ncnn` directly — ultralytics is a training tool, not a runtime dependency.** Every ultralytics backend imports torch and its own stack even to run an NCNN model (~150 MB more resident for the same detections), so `vision/ncnn_detector.py` does the letterbox, decode and NMS itself. Don't reintroduce `ultralytics` on the Pi.
+
+   The model's class names *are* the keys of `messages.OBJECT_LABELS`: it was trained with our names (`jeepney`, `open_manhole`, `dining_table`), not mapped afterwards. Retraining means the new `metadata.yaml` names must all have labels in every language — a unit test reads the committed model and enforces it. The model directory is committed (`models/detector/`, a `.gitignore` exception) because a fine-tuned model has nowhere to be re-downloaded from. Why this model and not stock COCO, Open Images or an open-vocabulary detector: `docs/object-detection-research.md`.
+
+9. **Tests nested per module:**
    - `src/indepensense/<module>/tests/unit/` — pytest, no hardware, must pass on a Mac
    - `src/indepensense/<module>/tests/manual/` — human-run scripts that need real hardware
 

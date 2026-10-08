@@ -1,0 +1,51 @@
+description: Ultralytics YOLO26n model trained on data/unified/val.yaml
+author: Ultralytics
+date: '2026-10-08T14:03:55.390539'
+version: 8.4.72
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: person
+  1: bicycle
+  2: car
+  3: motorcycle
+  4: bus
+  5: truck
+  6: traffic_light
+  7: stop_sign
+  8: bench
+  9: dog
+  10: cat
+  11: chair
+  12: couch
+  13: bed
+  14: dining_table
+  15: toilet
+  16: tv
+  17: laptop
+  18: cell_phone
+  19: bottle
+  20: cup
+  21: backpack
+  22: umbrella
+  23: potted_plant
+  24: fire_hydrant
+  25: door
+  26: stairs
+  27: jeepney
+  28: tricycle
+  29: pedicab
+  30: pushcart
+  31: open_manhole
+  32: pothole
+args:
+  batch: 1
+  half: false
+channels: 3
+end2end: false

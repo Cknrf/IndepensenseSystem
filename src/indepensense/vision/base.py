@@ -9,7 +9,7 @@ class Frame:
     `image` is a numpy ndarray with shape (H, W, 3), dtype uint8. The channel
     order depends on the driver — picamera2 with `format="RGB888"` actually
     returns BGR-ordered numpy data (libcamera convention), which happens to
-    match what OpenCV and YOLOv8 expect natively.
+    is what `NCNNDetector` expects (it converts to RGB while resizing).
 
     Typed as Any so this module imports cleanly without numpy installed.
     """

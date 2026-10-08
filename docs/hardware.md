@@ -660,7 +660,7 @@ Ribbon cable to the **CAM/DISP 0** connector. The Pi 5 has two; either
 works, but `picamera2` enumerates 0 first and nothing here selects a
 camera index, so use 0.
 
-Feeds two on-demand intents — `vision.describe` (YOLOv8) and
+Feeds two on-demand intents — `vision.describe` (YOLO26n, NCNN) and
 `vision.read` (Tesseract OCR). Neither runs continuously; both fire only
 when a voice command asks, which is what keeps the power and thermal cost
 acceptable.
@@ -681,8 +681,10 @@ python -m indepensense.vision.tests.manual.record_test
 python -m indepensense.vision.tests.manual.continuous_detect_test   # slow by design
 ```
 
-Resolution and model size are `CAMERA_WIDTH` / `CAMERA_HEIGHT` and
-`YOLO_MODEL_PATH` in `indepensense.config`.
+Resolution and model are `CAMERA_WIDTH` / `CAMERA_HEIGHT` and
+`YOLO_MODEL_DIR` in `indepensense.config`. `detector_benchmark` measures
+detection latency and memory on the device; `detector_eval` measures
+per-class accuracy on a labelled image set.
 
 ## SIM7600G-H 4G dongle (cellular + GPS) — USB
 

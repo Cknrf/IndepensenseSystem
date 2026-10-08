@@ -23,9 +23,10 @@ from indepensense.config import (
     CAMERA_HEIGHT,
     CAMERA_WIDTH,
     YOLO_CONFIDENCE_THRESHOLD,
-    YOLO_MODEL_PATH,
+    YOLO_MODEL_DIR,
+    YOLO_NUM_THREADS,
 )
-from indepensense.vision.detector import YOLOv8Detector
+from indepensense.vision.ncnn_detector import NCNNDetector
 from indepensense.vision.picamera import PiCamera
 
 
@@ -33,10 +34,11 @@ _STATS_EVERY_N_FRAMES = 10
 
 
 def main():
-    print(f"Loading YOLOv8 model from {YOLO_MODEL_PATH}...")
-    detector = YOLOv8Detector(
-        model_path=YOLO_MODEL_PATH,
+    print(f"Loading NCNN model from {YOLO_MODEL_DIR}...")
+    detector = NCNNDetector(
+        model_dir=YOLO_MODEL_DIR,
         confidence_threshold=YOLO_CONFIDENCE_THRESHOLD,
+        num_threads=YOLO_NUM_THREADS,
     )
     print(f"Opening camera at {CAMERA_WIDTH}x{CAMERA_HEIGHT}...")
     camera = PiCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS)

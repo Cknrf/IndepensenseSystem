@@ -89,11 +89,24 @@ def test_tagalog_does_not_inflect_nouns():
     assert messages.count_label("person", 4, "tl") == "apat na tao"
 
 
-def test_untranslated_labels_fall_through_to_english():
-    """Deliberate: Manila speech code-switches, and forcing a Tagalog
-    coinage for every COCO class would sound worse than the English word.
-    The counter is still Tagalog — only the noun code-switches."""
-    assert messages.count_label("skateboard", 2, "tl") == "dalawang skateboard"
+def test_class_key_and_spoken_noun_can_differ():
+    """The key is the model's contract; the value is what a listener hears."""
+    assert messages.count_label("dining_table", 1, "en") == "a table"
+    assert messages.count_label("stairs", 2, "en") == "2 staircases"
+    assert messages.count_label("open_manhole", 1, "en") == "an open manhole"
+    assert messages.count_label("jeepney", 2, "tl") == "dalawang dyip"
+
+
+def test_unlabelled_class_is_spoken_not_dropped():
+    """A class missing from `OBJECT_LABELS` is a bug the model-coverage test
+    catches; if one slips through, saying its name beats saying nothing.
+    The counter is still Tagalog."""
+    assert messages.count_label("hot_air_balloon", 2, "tl") == "dalawang hot air balloon"
+
+
+def test_every_label_has_every_language():
+    for key, entry in messages.OBJECT_LABELS.items():
+        assert set(entry) == set(messages.MESSAGES["vision.i_see"]), key
 
 
 def test_join_uses_the_right_conjunction():
@@ -453,3 +466,15 @@ def test_the_boot_clips_are_static():
     placeholder values available to fill in."""
     from indepensense.app import _BOOT_CLIPS
     assert set(_BOOT_CLIPS) <= set(messages.static_keys())
+
+
+def test_every_class_the_deployed_detector_can_report_has_a_spoken_label():
+    """Reads the committed model's own class list, so retraining with a new
+    class fails here instead of on the device, where the class would be
+    spoken as its raw key."""
+    from indepensense.config import YOLO_MODEL_DIR
+    from indepensense.vision.ncnn_detector import read_metadata
+
+    names, _ = read_metadata(YOLO_MODEL_DIR)
+    missing = [n for n in names if n not in messages.OBJECT_LABELS]
+    assert not missing, f"detector classes without a spoken label: {missing}"

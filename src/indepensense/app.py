@@ -265,7 +265,8 @@ from indepensense.config import (
     VOLUME_STEP_PERCENT,
     WHISPER_INITIAL_PROMPTS,
     YOLO_CONFIDENCE_THRESHOLD,
-    YOLO_MODEL_PATH,
+    YOLO_MODEL_DIR,
+    YOLO_NUM_THREADS,
     WHISPER_MODEL_DIR,
     WHISPER_MODELS,
 )
@@ -313,7 +314,7 @@ from indepensense.telemetry.sms_alerts import (
     AlertDelivery,
     SMSAlertNotifier,
 )
-from indepensense.vision.detector import YOLOv8Detector
+from indepensense.vision.ncnn_detector import NCNNDetector
 from indepensense.vision.ocr import TesseractOCR
 from indepensense.vision.picamera import PiCamera
 from indepensense.voice.audio import (
@@ -907,7 +908,7 @@ class App:
         # overwrites the other (this bug bit us in commit history — the
         # fall detector was shadowed, so the main loop tried to call
         # YOLO.process(reading) and crashed with AttributeError).
-        self.object_detector: YOLOv8Detector | None = None
+        self.object_detector: NCNNDetector | None = None
         self.ocr: TesseractOCR | None = None
 
         # Navigation monitor: tracks user progress against the active route
@@ -3663,11 +3664,12 @@ class App:
             )
             return None
 
-    def _try_open_detector(self) -> YOLOv8Detector | None:
+    def _try_open_detector(self) -> NCNNDetector | None:
         try:
-            return YOLOv8Detector(
-                model_path=YOLO_MODEL_PATH,
+            return NCNNDetector(
+                model_dir=YOLO_MODEL_DIR,
                 confidence_threshold=YOLO_CONFIDENCE_THRESHOLD,
+                num_threads=YOLO_NUM_THREADS,
             )
         except Exception as exc:
             print(
