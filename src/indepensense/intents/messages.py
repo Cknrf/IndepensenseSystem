@@ -136,9 +136,20 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "I can only speak English and Tagalog.",
         "tl": "Ingles at Tagalog lamang ang kaya kong gamitin.",
     },
+    # "fully ready", because this lands after two minutes in which the
+    # device has already been talking and its safety features have already
+    # been running. A bare "ready" invites the question of what the last
+    # two minutes were; "fully" marks the boundary the user is waiting for
+    # — the point at which voice commands answer.
+    #
+    # Tagalog says it by reduplication (`handang-handa`) rather than with
+    # an adverb. "Ganap nang handa" would be the literal parallel and is
+    # correct, but reads as written Tagalog; this is what someone would
+    # actually say out loud, which is the register the rest of the
+    # catalogue uses.
     "language.greeting": {
-        "en": "IndepenSense is ready. I am speaking English.",
-        "tl": "Handa na ang Indepensensya. Tagalog ang ginagamit ko.",
+        "en": "IndepenSense is now fully ready. I am speaking English.",
+        "tl": "Handang-handa na ang Indepensensya. Tagalog ang ginagamit ko.",
     },
     # Spoken from a pre-rendered file at the very first line of `start()`,
     # before any model is loaded — see `config.STARTUP_AUDIO_DIR`. It has
