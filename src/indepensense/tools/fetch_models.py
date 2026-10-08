@@ -13,6 +13,24 @@ loads by path:
     models/embeddings/multilingual-e5-small/   sentence-transformers
     models/voices/mms-tts-tgl/             MMS-TTS (transformers)
 
+**Why Whisper is downloaded float16 and quantised at load, not stored
+int8.** The driver runs int8, so the Hub's float16 checkpoint is twice
+the bytes the SD card has to deliver at boot (484 MB for `small`
+against ~237 MB int8). Converting OpenAI's original checkpoint with
+`ct2-transformers-converter --quantization int8` was tried on the Pi
+(ctranslate2 4.8.0, transformers 5.17, numpy 2.2): the converter warned
+`invalid value encountered in cast` on every model and the `tiny` it
+produced transcribed recorded commands as a run of `!` — NaN rows from
+quantising all-zero weights in Python, which the C++ load path handles
+and the converter does not. Not worth ~10 s of boot. Revisit only with
+a converter release that quantises cleanly, and re-run the transcript
+comparison before trusting it.
+
+**The embedding model stays float32 for a related reason.** Saving it
+float16 halves the file, but loading then costs a dtype conversion that
+outweighs the bytes saved: a full matcher build measured 15.9 s from
+float32 and 17.4 s from float16, cold, on the Pi.
+
 Piper's English voice is not on the Hub and is not fetched here —
 `python -m piper.download_voices` handles it (see docs/voice.md).
 

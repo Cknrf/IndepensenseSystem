@@ -20,8 +20,8 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 | TTS voice (Tagalog) | `facebook/mms-tts-tgl` (~145 MB), natively trained |
 | TTS voice (Tagalog) licence | CC-BY-NC 4.0 — academic use only |
 | STT engine | faster-whisper (CTranslate2 backend) |
-| STT model (English) | `tiny` (~75 MB), `int8` quantized |
-| STT model (Tagalog) | `small` (~460 MB), `int8` quantized |
+| STT model (English) | `tiny` (~75 MB), `int8` quantized at load |
+| STT model (Tagalog) | `small` (~460 MB), `int8` quantized at load |
 | Active language | Tagalog by default (`DEFAULT_LANGUAGE`), switchable at runtime by voice — see below |
 | Models stored at | `models/voices/`, `models/whisper/`, `models/embeddings/` (gitignored; fetched once by `tools/fetch_models.py`, loaded by path, never resolved from the Hub at runtime) |
 | Test artifacts at | `data/test/voice/` |
@@ -216,6 +216,12 @@ model on every boot, and a wait for the timeout on a boot with no
 network. A directory path is loaded as is. A missing directory fails
 startup with an error naming the tool, rather than silently downloading
 over the SIM link in the field.
+
+The files are the Hub's float16 CTranslate2 checkpoints, quantised to
+int8 at load. Storing them int8 would halve the bytes the SD card has to
+deliver at boot, and was tried: the Python converter produced NaN rows
+and a `tiny` that transcribed recorded commands as `!!!!`. The reasoning
+and measurements are in the docstring of `tools/fetch_models.py`.
 
 ## Test it
 

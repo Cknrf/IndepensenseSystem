@@ -8,7 +8,10 @@ set, so a larger model is needed for acceptable accuracy).
 
 `int8` quantization is used because the Pi 5 has no GPU. It roughly halves
 memory and doubles CPU throughput vs `float16`, with negligible accuracy
-cost at these model sizes.
+cost at these model sizes. The files on disk are the Hub's float16
+checkpoints, quantised at load: storing them int8 would halve what the SD
+card delivers at boot, but the Python converter produced NaN rows — see
+`tools/fetch_models.py` for the measurement.
 
 Models are loaded from directories under `config.WHISPER_MODEL_DIR`, laid
 out by `tools/fetch_models.py`, never resolved from the Hugging Face Hub
