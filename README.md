@@ -221,7 +221,14 @@ The system runs on macOS using the mock drivers — no hardware required for dev
 
 ```bash
 pip install -r requirements-pi.txt
+python -m indepensense.tools.fetch_models     # Whisper, e5, MMS — once, with network
+python -m piper.download_voices en_US-lessac-medium   # from models/voices/
 ```
+
+The runtime loads every model from a directory under `models/` and never
+resolves a Hugging Face repo id at startup, so the wearable starts the
+same with or without a network — and a model that was never fetched is a
+startup error naming the tool, not a download over the SIM link.
 
 External services (Ollama, GraphHopper, Photon) are installed and configured via systemd — see the linked docs.
 
@@ -348,6 +355,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | Render every fixed message to audio — run after editing `intents/messages.py` | `python -m indepensense.tools.render_messages` — ~4 min, ~15 MB into `data/audio/messages/` (measured: 122 clips, 247 s) |
 | List what would be rendered, without loading a voice (works on a Mac) | `python -m indepensense.tools.render_messages --dry-run` |
 | Re-render everything, e.g. after changing a voice model | `python -m indepensense.tools.render_messages --force` |
+| Fetch every Hub-hosted model into `models/` — once after install, and after changing `WHISPER_MODELS`, `NLU_EMBEDDING_MODEL` or `MMS_VOICE_REPOS` | `python -m indepensense.tools.fetch_models` (`--dry-run` lists without network, `--force` refetches) |
 
 Optional: anything missing is synthesised on demand, and a fixed message
 synthesised that way is kept permanently — so skipping this costs latency

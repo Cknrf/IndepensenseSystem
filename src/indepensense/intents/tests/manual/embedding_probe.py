@@ -71,12 +71,13 @@ Requires `pip install sentence-transformers` (pulls torch). On the Pi
 that is already satisfied by `requirements-pi.txt`.
 """
 import argparse
+from pathlib import Path
 import time
 
 from indepensense.config import (
     NLU_EMBEDDING_BANK_PATH,
     NLU_EMBEDDING_MARGIN_THRESHOLD,
-    NLU_EMBEDDING_MODEL,
+    NLU_EMBEDDING_MODEL_DIR,
     NLU_EMBEDDING_SCORE_THRESHOLD,
 )
 from indepensense.intents.embeddings import (
@@ -331,7 +332,8 @@ def _pct(part: int, whole: int) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--model", default=NLU_EMBEDDING_MODEL)
+    ap.add_argument("--model", default=NLU_EMBEDDING_MODEL_DIR, type=str,
+                    help="directory laid out by tools.fetch_models")
     ap.add_argument("--bank", default=NLU_EMBEDDING_BANK_PATH, type=str)
     ap.add_argument("--score", type=float, default=NLU_EMBEDDING_SCORE_THRESHOLD)
     ap.add_argument("--margin", type=float, default=NLU_EMBEDDING_MARGIN_THRESHOLD)
@@ -353,7 +355,6 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    from pathlib import Path
     bank_path = Path(args.bank)
 
     print(f"\nExample bank: {bank_path}")
@@ -386,7 +387,7 @@ def main() -> None:
 
     t0 = time.time()
     matcher = EmbeddingMatcher(
-        model_name=args.model,
+        model_path=Path(args.model),
         bank_path=bank_path,
         score_threshold=args.score,
         margin_threshold=args.margin,

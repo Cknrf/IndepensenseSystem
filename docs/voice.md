@@ -23,7 +23,7 @@ Both run entirely on the Pi 5 CPU — no cloud, no internet. This matches the
 | STT model (English) | `tiny` (~75 MB), `int8` quantized |
 | STT model (Tagalog) | `small` (~460 MB), `int8` quantized |
 | Active language | Tagalog by default (`DEFAULT_LANGUAGE`), switchable at runtime by voice — see below |
-| Models stored at | `models/voices/`, `models/whisper/` (gitignored, downloaded on demand) |
+| Models stored at | `models/voices/`, `models/whisper/`, `models/embeddings/` (gitignored; fetched once by `tools/fetch_models.py`, loaded by path, never resolved from the Hub at runtime) |
 | Test artifacts at | `data/test/voice/` |
 | Audio device | NEWMSNR Ear Clip Earphones Wired Long Wear — one USB Audio Class headset, mic + speaker |
 | Speaker volume | `wpctl` on the default PipeWire sink, 20-100%, persisted to `var/volume` |
@@ -139,16 +139,16 @@ To browse other available voices: `python3 -m piper.download_voices --list`.
 
 Downloaded as a local snapshot rather than resolved from the Hub at
 runtime, so a Pi with no network still starts and the model in use is the
-one that was tested:
+one that was tested. The fetch tool does it, alongside the Whisper and
+embedding models:
 
 ```bash
-cd <project-root>/models/voices
-pip install huggingface_hub          # if not already present
-python3 -c "
-from huggingface_hub import snapshot_download
-snapshot_download('facebook/mms-tts-tgl', local_dir='mms-tts-tgl')
-"
+cd <project-root>
+python -m indepensense.tools.fetch_models
 ```
+
+The repo is `config.MMS_VOICE_REPOS["tl"]`; the tool skips the
+`pytorch_model.bin` duplicate of the safetensors weights.
 
 After both downloads:
 
@@ -200,15 +200,22 @@ run-on breath. `MmsTTS` splits on sentence boundaries and inserts 250 ms
 of real silence between them, which is the phrasing espeak-ng gives Piper
 for free.
 
-## Whisper models — automatic on first use
+## Whisper models — fetched once, loaded by path
 
-`faster-whisper` downloads its models on first instantiation. Our driver
-passes `download_root=models/whisper/` so the weights land in the project's
-models directory (gitignored) rather than `~/.cache/`.
+Each configured size lives in its own directory, `models/whisper/<size>/`,
+laid out by:
 
-First run of any voice test will pause for ~2-4 minutes while it downloads
-both configured models (~75 MB `tiny` + ~460 MB `small`). Subsequent runs
-are instant — models are loaded from local disk.
+```bash
+python -m indepensense.tools.fetch_models
+```
+
+The driver loads that directory by path. It used to be handed the model
+*name* and let `faster-whisper` resolve it, which asks the Hub for the
+current revision before using the local copy — a network round trip per
+model on every boot, and a wait for the timeout on a boot with no
+network. A directory path is loaded as is. A missing directory fails
+startup with an error naming the tool, rather than silently downloading
+over the SIM link in the field.
 
 ## Test it
 
@@ -601,12 +608,12 @@ For a different Piper voice for an existing language, edit the path in
 `PIPER_VOICES` and download the matching `.onnx` + `.onnx.json` pair.
 
 To add a new language, add an entry to both `PIPER_VOICES` and
-`WHISPER_MODELS` in `indepensense.config`, and download the Piper voice.
-The new Whisper model auto-downloads on next run.
+`WHISPER_MODELS` in `indepensense.config`, download the Piper voice, and
+run `python -m indepensense.tools.fetch_models` for the Whisper model.
 
 To upgrade a Whisper model (`tiny` → `base` → `small` → `medium` → `large-v3`),
-edit the value in `WHISPER_MODELS` for the target language. The new model
-auto-downloads on next run.
+edit the value in `WHISPER_MODELS` for the target language and run the
+fetch tool again; the old size's directory can then be deleted.
 
 
 ## Who is allowed to speak

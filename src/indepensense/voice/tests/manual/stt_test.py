@@ -6,8 +6,8 @@ Run from repo root with:
 Without an argument, transcribes the most recent file in VOICE_TEST_DIR —
 useful as a TTS->STT roundtrip check after running tts_test.py.
 
-First run downloads all configured Whisper models into WHISPER_MODEL_DIR
-(~75 MB for tiny, ~140 MB for base).
+Needs the configured Whisper models under WHISPER_MODEL_DIR — fetch them
+once with `python -m indepensense.tools.fetch_models`.
 """
 import sys
 import time
