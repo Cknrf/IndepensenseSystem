@@ -126,7 +126,7 @@ class OllamaIntentParser:
         if warmup:
             self.warm_up(warmup_timeout_s)
 
-    def warm_up(self, timeout_s: float) -> None:
+    def warm_up(self, timeout_s: float) -> bool:
         """Prime the model AND the system-prompt KV cache before real use.
 
         Uses the *same* system prompt real queries will use, so Ollama's
@@ -135,7 +135,9 @@ class OllamaIntentParser:
         queries.
 
         Failures are non-fatal — they will surface again on the next real
-        query and the parser handles them there.
+        query and the parser handles them there. Returns whether the
+        request succeeded, for `tools/warm_nlu.py`, whose exit status is
+        how `systemctl status ollama-warmup` reports the outcome.
         """
         import time as _time
         import requests
@@ -145,14 +147,19 @@ class OllamaIntentParser:
         try:
             # Built by the same method as a real query, so the warmed prefix
             # is the one queries reuse — in either request style.
-            requests.post(self._url, json=self._payload("ok", 32), timeout=timeout_s)
+            response = requests.post(
+                self._url, json=self._payload("ok", 32), timeout=timeout_s,
+            )
+            response.raise_for_status()
             print(f"  Warmup done in {_time.time() - t0:.1f}s.", flush=True)
+            return True
         except requests.RequestException as exc:
             print(
                 f"  Warmup failed after {_time.time() - t0:.1f}s: {exc}. "
                 f"Continuing anyway.",
                 file=sys.stderr,
             )
+            return False
 
     def _payload(self, transcript: str, num_predict: int) -> dict:
         """The request body, in whichever style this parser was built for."""

@@ -6,31 +6,31 @@ Requires=ollama.service
 
 [Service]
 Type=oneshot
-# `Type=oneshot` disables the start timeout by default, and the
-# ExecStartPre below is an unbounded `until` loop. Together that means a
-# model which never appears leaves this unit "starting" forever — and
-# `indepensense.service` is ordered `After=` this one, so the wearable
-# never starts either. Observed: a missing model held this unit for five
-# hours with no error, and only the fact that indepensense.service wasn't
-# installed yet hid the consequence.
+User=cknrf
+Group=cknrf
+WorkingDirectory=/home/cknrf/Desktop/thesis/IndepensenseSystem
+# `Type=oneshot` disables the start timeout by default, and the tool's
+# catalogue wait used to be an unbounded `until` loop. Together that
+# meant a model which never appeared left this unit "starting" forever
+# — and when `indepensense.service` was ordered `After=` this one, the
+# wearable never started either. Observed: a missing model held this
+# unit for five hours with no error.
 #
-# Past this, fail and let indepensense start anyway: a wearable that comes
-# up with a cold model is slow on its first voice command, which beats one
-# that never comes up at all.
+# Past this, fail and let the wearable carry on: it re-warms the model
+# itself at the end of its own load, so a failure here costs the user
+# that time, not the voice interface.
 #
 # This budget covers the WHOLE unit start — waiting for the model to be
-# catalogued plus loading it — so it must exceed the script's own waits
-# or systemd kills curl while curl still believes it has time, which
-# reads as a mysterious truncation rather than a timeout. 180 here;
-# 60 + 120 in the script.
-TimeoutStartSec=180
-# The model name is NOT written here. It used to be — `qwen3:1.7b`, in
-# two places — while `config.NLU_MODEL` chose between that and `qwen3:4b`
-# via `NLU_LARGE_MODEL`. Flipping that switch left this unit waiting for
-# a model nobody had pulled and then pinning the wrong one. The script
-# reads `config.NLU_MODEL`, so the switch cannot disagree with the
-# deployment any more. See the header of ollama-warmup.sh.
-ExecStart=/bin/bash /home/cknrf/Desktop/thesis/IndepensenseSystem/deploy/systemd/ollama-warmup.sh
+# catalogued plus loading and prefilling it — so it must exceed the
+# tool's own waits (60 s catalogue + NLU_WARMUP_TIMEOUT_S, 90 s for the
+# 1.7B model) or systemd kills the tool while it still believes it has
+# time, which reads as a mysterious truncation rather than a timeout.
+TimeoutStartSec=240
+# The tool, not a shell script with curl: it sends the parser's own
+# warmup request, so the system-prompt prefix Ollama caches is the one
+# every real query reuses. The model name comes from `config.NLU_MODEL`
+# the same way — see the tool's docstring.
+ExecStart=/home/cknrf/Desktop/thesis/IndepensenseSystem/.venv/bin/python -m indepensense.tools.warm_nlu
 RemainAfterExit=yes
 
 [Install]
