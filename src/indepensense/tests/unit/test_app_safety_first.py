@@ -21,6 +21,7 @@ import pytest
 from indepensense import app as app_module
 from indepensense.app import Announcer, run_app
 from indepensense.app_mock import MockApp
+from indepensense.intents import messages
 from indepensense.voice.mock import MockSTT, MockTTS
 
 
@@ -128,39 +129,109 @@ def test_a_shutdown_during_the_load_does_not_wait_for_it(held):
     assert app.tts is None, "the loader carried on after the shutdown"
 
 
-def test_a_model_that_fails_to_load_stops_the_runtime(monkeypatch):
+def test_a_transient_load_failure_is_retried(monkeypatch):
+    """Most load failures are a bad read or a moment of memory pressure,
+    and a retry is cheaper than the restart that used to be the only
+    recovery — it keeps whatever already loaded."""
     app = MockApp()
+    attempts = []
+    real = app._open_stt
 
-    def broken():
-        raise FileNotFoundError("Whisper 'small' for 'tl' not found")
+    def flaky():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("transient read error")
+        return real()
 
-    monkeypatch.setattr(app, "_open_stt", broken)
+    monkeypatch.setattr(app, "_open_stt", flaky)
     try:
         app.start()
 
-        assert app.wait_for_voice_stack(timeout_s=3.0) is False
-        assert app._shutdown.is_set(), "the loop was left running without a voice"
+        assert app.wait_for_voice_stack(timeout_s=5.0) is True
+        assert len(attempts) == 2
+        assert not app._voice_degraded.is_set()
+    finally:
+        app.stop()
+
+
+def test_a_retry_keeps_what_already_loaded(monkeypatch):
+    """Whisper is two minutes on the device. Re-loading it because TTS
+    failed would make the retry cost more than the restart it replaces."""
+    app = MockApp()
+    stt_loads = []
+    real_stt, real_tts = app._open_stt, app._open_tts
+    tts_calls = []
+
+    monkeypatch.setattr(app, "_open_stt", lambda: (stt_loads.append(1), real_stt())[1])
+
+    def flaky_tts():
+        tts_calls.append(1)
+        if len(tts_calls) == 1:
+            raise OSError("transient")
+        return real_tts()
+
+    monkeypatch.setattr(app, "_open_tts", flaky_tts)
+    try:
+        app.start()
+
+        assert app.wait_for_voice_stack(timeout_s=5.0) is True
+        assert len(stt_loads) == 1, "re-loaded Whisper on the retry"
+    finally:
+        app.stop()
+
+
+def test_a_persistent_failure_degrades_instead_of_stopping_the_loop(monkeypatch):
+    """The decision this replaced: exiting handed systemd a restart loop
+    in which safety was up for eight seconds out of every ninety. Fall
+    detection, obstacle warnings and the emergency button do not need a
+    voice, and losing them is the worse outcome."""
+    app = MockApp()
+    monkeypatch.setattr(
+        app, "_open_stt",
+        lambda: (_ for _ in ()).throw(FileNotFoundError("no model")),
+    )
+    try:
+        app.start()
+
+        assert app.wait_for_voice_stack(timeout_s=5.0) is False
+        assert app._voice_degraded.is_set()
+        assert not app._shutdown.is_set(), "tore down a working safety loop"
         assert isinstance(app._startup_error, FileNotFoundError)
     finally:
         app.stop()
 
 
-def test_run_app_exits_non_zero_when_a_model_failed_to_load(monkeypatch, tmp_path):
-    """The `_open_*` contract survives the move off the main thread: a
-    missing model still fails the process, so systemd restarts it with
-    the error in the journal rather than leaving a voiceless wearable."""
+def test_degrading_still_reports_ready_to_systemd(monkeypatch, notify_socket):
+    """Under `Type=notify` a unit that never reports is killed at
+    `TimeoutStartSec`. Staying quiet would turn a degraded device into a
+    dead one fifteen minutes later."""
     app = MockApp()
-    monkeypatch.setattr(app_module, "VOICE_TEST_DIR", tmp_path)
+    monkeypatch.setattr(
+        app, "_open_stt",
+        lambda: (_ for _ in ()).throw(FileNotFoundError("no model")),
+    )
+    try:
+        app.start()
+        app.wait_for_voice_stack(timeout_s=5.0)
 
-    def broken():
-        raise FileNotFoundError("no model")
+        assert any("READY=1" in m for m in notify_socket()), "never reported ready"
+    finally:
+        app.stop()
 
-    monkeypatch.setattr(app, "_open_stt", broken)
 
-    with pytest.raises(SystemExit) as exited:
-        run_app(app)
+def test_a_degraded_ptt_press_says_so_rather_than_sounding_busy(monkeypatch):
+    """The busy cue means "wait", and waiting will not help. Someone
+    pressing every ten seconds would be answered by a sound that lies."""
+    app = MockApp()
+    said, cues = [], []
+    monkeypatch.setattr(app, "_announce", lambda text, **kw: said.append(text))
+    monkeypatch.setattr(app, "_play_cue", lambda cue: cues.append(cue))
+    app._voice_degraded.set()
 
-    assert exited.value.code == 1
+    app._on_ptt_press()
+
+    assert cues == []
+    assert said == [messages.get("system.voice_unavailable", "en")]
 
 
 # --- the announcer without a voice --------------------------------------------

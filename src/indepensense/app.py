@@ -149,6 +149,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from indepensense.config import (
+    VOICE_STACK_LOAD_ATTEMPTS,
+    VOICE_STACK_RETRY_DELAY_S,
     BACKEND_URL,
     BATTERY_CHECK_INTERVAL_S,
     BATTERY_EMPTY_RAW_PERCENT,
@@ -934,6 +936,10 @@ class App:
         self._loader_thread: threading.Thread | None = None
         self._voice_stack_ready = threading.Event()
         self._startup_error: Exception | None = None
+        # Set when every load attempt failed and the runtime is
+        # carrying on without speech. Distinct from
+        # `_voice_stack_ready`, which stays clear either way.
+        self._voice_degraded = threading.Event()
         self._safety_up_at = 0.0
 
         # Placeholders — filled in by start()
@@ -1275,6 +1281,85 @@ class App:
         self._loader_thread.start()
 
     def _load_voice_stack(self) -> None:
+        """Load the voice stack, retrying, then degrade rather than exit.
+
+        `_open_stt`, `_open_tts` and `_open_parser` keep their contract —
+        the runtime cannot do its job without them — but the cost of
+        enforcing it changed when safety moved in front of the voice
+        stack. The same failure used to abort `start()` with nothing yet
+        running; now it would tear down a fall detector that has been
+        working for a minute, and with `Restart=on-failure` a failure
+        that *keeps* happening becomes a loop where safety is up for
+        eight seconds out of every ninety. A corrupt model file is the
+        obvious way to get there, and this unit's SD card was measured
+        returning different bytes than were written to it.
+
+        So two faults are separated. A transient one — a bad read, a
+        moment of memory pressure — is retried, and a retry is cheaper
+        than a restart because it keeps whatever already loaded. A
+        persistent one degrades: the loop keeps running, the safety
+        features keep working, and the wearer is told that voice
+        commands are not available.
+
+        Degrading still reports READY to systemd. Under `Type=notify` a
+        unit that never reports is killed at `TimeoutStartSec`, so
+        staying quiet would turn a degraded device into a dead one
+        fifteen minutes later.
+        """
+        for attempt in range(1, VOICE_STACK_LOAD_ATTEMPTS + 1):
+            try:
+                self._load_voice_stack_once()
+                return
+            except Exception as exc:
+                if self._shutdown.is_set():
+                    return                       # a SIGTERM, not a failure
+                print(
+                    f"[voice-stack] load attempt {attempt} of "
+                    f"{VOICE_STACK_LOAD_ATTEMPTS} failed: {exc}",
+                    file=sys.stderr, flush=True,
+                )
+                self._startup_error = exc
+                if attempt < VOICE_STACK_LOAD_ATTEMPTS:
+                    if self._shutdown.wait(VOICE_STACK_RETRY_DELAY_S):
+                        return
+        self._degrade_to_safety_only()
+
+    def _degrade_to_safety_only(self) -> None:
+        """Keep the safety features running without a voice. Never raises.
+
+        Reached only after every load attempt failed. What survives is
+        everything that does not need speech: fall detection, obstacle
+        warnings, the emergency button, guardian alerts and SMS. What
+        does not is voice commands, navigation, and scene description.
+
+        The wearer is told, and can be even when TTS is what failed —
+        the message is static, so the announcer replays it from a clip
+        the way `_play_startup_notice` does before any engine exists.
+        A device that quietly stops answering is one whose user keeps
+        pressing a button in an emergency.
+        """
+        self._voice_degraded.set()
+        print(
+            "[voice-stack] giving up after "
+            f"{VOICE_STACK_LOAD_ATTEMPTS} attempts — running safety-only. "
+            "Fall detection, obstacle warnings and the emergency button "
+            "still work; voice commands do not.",
+            file=sys.stderr, flush=True,
+        )
+        _notify_systemd(
+            "READY=1\nSTATUS=degraded: safety features only, voice stack failed"
+        )
+        self._print_startup_profile()
+        try:
+            self._announce(
+                messages.get("system.voice_unavailable", self.language.current),
+                critical=True,
+            )
+        except Exception as exc:
+            print(f"[voice-stack] could not announce degradation: {exc}",
+                  file=sys.stderr, flush=True)
+
+    def _load_voice_stack_once(self) -> None:
         """Load everything the voice interface needs, off the main loop.
 
         Runs once, on the `voice-stack` thread started at the end of
@@ -1305,18 +1390,21 @@ class App:
         """
         try:
             self._stage("Loading Whisper models")
-            self.stt = self._open_stt()
+            if self.stt is None:        # may survive a failed attempt
+                self.stt = self._open_stt()
             if self._shutdown.is_set():
                 return
 
             self._stage("Loading TTS voices (Piper + MMS)")
-            self.tts = self._open_tts()
+            if self.tts is None:        # may survive a failed attempt
+                self.tts = self._open_tts()
             self.announcer.attach_tts(self.tts)
             if self._shutdown.is_set():
                 return
 
             self._stage("Building intent parser (LLM warmup follows)")
-            self.parser = self._open_parser()
+            if self.parser is None:        # may survive a failed attempt
+                self.parser = self._open_parser()
             if self._shutdown.is_set():
                 return
 
@@ -1352,11 +1440,9 @@ class App:
                     print(f"  Swept {freed / 1e6:.1f} MB of cached speech.", flush=True)
             except Exception as exc:
                 print(f"[clips] startup sweep failed: {exc}", file=sys.stderr, flush=True)
-        except Exception as exc:
-            print(f"[voice-stack] load failed: {exc}", file=sys.stderr, flush=True)
-            self._startup_error = exc
-            self._shutdown.set()
-            return
+        except Exception:
+            self._close_stage()
+            raise
 
         self._voice_stack_ready.set()
         self._print_startup_profile()
@@ -2269,6 +2355,17 @@ The comparisons are inclusive, so a threshold names the percentage
         the user knows the mic is now live. Feedback runs BEFORE
         recording starts so the chime isn't captured in the audio.
         """
+        if self._voice_degraded.is_set():
+            # Not loading — never going to load. The busy cue means
+            # "wait", and waiting will not help, so someone pressing
+            # again every ten seconds would be answered honestly by a
+            # sound that lies. Say it instead; the clip plays even when
+            # TTS is what failed.
+            print("[PTT] Voice stack unavailable — press answered.", flush=True)
+            self._announce(
+                messages.get("system.voice_unavailable", self.language.current),
+            )
+            return
         if not self._voice_stack_ready.is_set():
             # Still loading. Answered rather than ignored — a button that
             # produces nothing reads as broken — but with the busy cue,
@@ -4025,11 +4122,19 @@ def run_app(app: App) -> None:
     try:
         app.start()
         app.run()
-        # A model that failed to load on the voice-stack thread. Raised
-        # here, after the loop has stopped, so the exit is non-zero and
-        # systemd restarts the service with the cause in the journal —
-        # the same outcome as when the load failed inside `start()`.
-        if app._startup_error is not None:
+        # A model that failed to load on the voice-stack thread, where
+        # the retries did not save it and the runtime did not choose to
+        # carry on. Raised here, after the loop has stopped, so the exit
+        # is non-zero and systemd restarts the service with the cause in
+        # the journal.
+        #
+        # Not raised when the loader degraded on purpose: `_startup_error`
+        # still holds the last failure for the journal, but the process
+        # ran deliberately and to completion with its safety features
+        # working. Exiting then would hand systemd a restart loop and
+        # take fall detection down with it — which is the outcome
+        # degrading exists to avoid.
+        if app._startup_error is not None and not app._voice_degraded.is_set():
             raise app._startup_error
     except Exception as exc:
         print(f"Fatal error: {exc}", file=sys.stderr, flush=True)

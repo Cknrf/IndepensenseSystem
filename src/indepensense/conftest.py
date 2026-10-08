@@ -34,6 +34,20 @@ def credential() -> DeviceCredential:
 
 
 @pytest.fixture(autouse=True)
+def _no_voice_stack_retry_delay(monkeypatch):
+    """Zero the wait between voice-stack load attempts.
+
+    Three attempts five seconds apart is right on the device and is ten
+    seconds of nothing in a test that is asserting the *outcome* of a
+    failed load. Same rule as the telemetry backoff stubs: a unit test
+    must not sleep through a schedule that exists to pace real hardware.
+    """
+    app = sys.modules.get("indepensense.app")
+    if app is not None:
+        monkeypatch.setattr(app, "VOICE_STACK_RETRY_DELAY_S", 0.0, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_clip_directories(tmp_path, monkeypatch):
     """Keep rendered speech out of the developer's `data/` directory.
 
