@@ -928,6 +928,9 @@ class App:
         self._low_battery_alerted = self._load_low_battery_latch()
         self._critical_battery_alerted = self._load_latch(CRITICAL_BATTERY_STATE_PATH)
         self._last_battery_check = 0.0
+        # Overwritten by `start()`; defaulted here so a test that
+        # drives the warmup directly does not trip over it.
+        self._started_at = time.monotonic()
 
         # Latest compass heading, refreshed at HEADING_CHECK_INTERVAL_S.
         # None until the first successful read (and stays None when no
@@ -987,6 +990,12 @@ class App:
     # ---------------------------------------------------------------- lifecycle
 
     def start(self) -> None:
+        # Stamped so the end of startup can report how long it took.
+        # Without it the only measurable marker was the NLU warmup, which
+        # is neither the beginning nor the end of what the user waits
+        # through — the figure had to be reconstructed by subtracting
+        # journal timestamps by hand.
+        self._started_at = time.monotonic()
         print("Initialising IndepenSense runtime...", flush=True)
         self._report_audio_devices()
 
@@ -3341,6 +3350,18 @@ The comparisons are inclusive, so a threshold names the percentage
                 warm(NLU_WARMUP_TIMEOUT_S)
             except Exception as exc:
                 print(f"[nlu-warmup] failed: {exc}", file=sys.stderr, flush=True)
+        # The number the user actually experiences: power-on to the
+        # moment voice commands answer. `system.starting` promises a
+        # duration out loud, so a measurement that has to be
+        # reconstructed from journal timestamps is one nobody checks —
+        # and the promise drifted to 2.8x reality before anyone did.
+        elapsed = time.monotonic() - self._started_at
+        print(
+            f"IndepenSense fully ready in {elapsed:.0f}s "
+            f"(from process start; add the boot and systemd queue before it "
+            f"for what the user waits through).",
+            flush=True,
+        )
         self._speak_greeting()
         # After the greeting, not during startup.
         #
