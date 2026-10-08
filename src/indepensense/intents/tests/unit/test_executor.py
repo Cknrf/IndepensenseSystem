@@ -10,7 +10,9 @@ import pytest
 from indepensense.intents.base import CloudAnswer, Intent, IntentResult
 from indepensense.intents.executor import IntentExecutor
 from indepensense.language import LanguageState
+from indepensense.intents import messages
 from indepensense.navigation.monitor import NavigationMonitor
+from indepensense.power.base import BatteryReading
 from indepensense.routing.base import Coordinate, GeocodingResult
 from indepensense.routing.mock import MockGeocoder, MockRouter
 from indepensense.routing.places import SavedPlaces
@@ -1537,3 +1539,75 @@ def test_locating_without_a_label_asks_again(places):
     )
 
     assert "didn't hear" in response.lower()
+
+
+# --- the battery status never claims a time remaining ------------------------
+#
+# The gauge offers `time_to_empty_min` and it is not good enough to say
+# out loud: it derives from the same state-of-charge reading that needed
+# `BATTERY_EMPTY_RAW_PERCENT` to become usable, and it swings by tens of
+# minutes with load. "About 2 hours remaining" sounds measured, and
+# someone deciding whether to set out will act on it.
+#
+# The field is kept on the reading and still logged, so the estimate can
+# be evaluated against real discharges later. These tests stop it being
+# spoken again in the meantime.
+
+class _BatteryStub:
+    def __init__(self, time_to_empty_min: int, percentage: int = 42):
+        self._reading = BatteryReading(
+            voltage_mv=13928,
+            current_ma=-377,
+            percentage=percentage,
+            remaining_mah=1200,
+            charging_state="discharging",
+            cell_voltages_mv=(3455, 3530, 3495, 3447),
+            time_to_empty_min=time_to_empty_min,
+            time_to_full_min=0,
+            timestamp=0.0,
+        )
+
+    def read(self):
+        return self._reading
+
+    def close(self):
+        pass
+
+
+def _status(minutes: int) -> str:
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(),
+        battery=_BatteryStub(minutes),
+    )
+    return executor.execute(
+        IntentResult(Intent.DEVICE_STATUS, {"status_field": "battery"})
+    )
+
+
+def test_a_multi_hour_estimate_is_not_spoken():
+    answer = _status(150)      # 2 h 30 m
+
+    assert "hour" not in answer.lower()
+    assert "42" in answer
+
+
+def test_a_sub_hour_estimate_is_not_spoken():
+    answer = _status(45)
+
+    assert "minute" not in answer.lower()
+    assert "45" not in answer, "spoke the minutes-remaining figure"
+
+
+def test_the_percentage_is_still_reported():
+    """Removing the estimate must not remove the number the user needs."""
+    answer = _status(150)
+
+    assert answer == messages.get("battery.level", "en", percent=42)
+
+
+def test_the_answer_does_not_depend_on_the_estimate():
+    """Same reading, different gauge estimate, same sentence — the
+    estimate no longer reaches the user at all."""
+    assert _status(0) == _status(300)

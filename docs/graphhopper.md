@@ -112,10 +112,13 @@ graphhopper:
   graph.encoded_values: "foot_access, hike_rating, foot_priority, country, road_class, foot_road_access, mtb_rating, foot_average_speed"
 
   # Pedestrian profile (GH 9+ uses custom_model_files, the legacy
-  # `vehicle: foot` syntax is rejected as of GH 11)
+  # `vehicle: foot` syntax is rejected as of GH 11). The second file is
+  # ours, merged on top of the built-in one — see "The foot model adds
+  # two rules" below for what it does and how to install it.
+  custom_models.directory: custom_models
   profiles:
     - name: foot
-      custom_model_files: [foot.json]
+      custom_model_files: [foot.json, indepensense_foot.json]
 
   profiles_ch:
     - profile: foot
@@ -131,12 +134,17 @@ server:
       bind_host: 0.0.0.0
 ```
 
-## The foot model adds one rule to GraphHopper's default
+## The foot model adds two rules to GraphHopper's default
 
-`deploy/graphhopper/service_roads.json` is the whole of it:
+`deploy/graphhopper/indepensense_foot.json` is the whole of it:
 
 ```json
-{ "priority": [ { "if": "road_class == SERVICE", "multiply_by": "0.6" } ] }
+{
+  "priority": [
+    { "if": "road_class == SERVICE", "multiply_by": "0.6" },
+    { "if": "road_class == TRUNK",   "multiply_by": "3" }
+  ]
+}
 ```
 
 It is **layered on** the bundled foot model rather than replacing it.
@@ -144,7 +152,7 @@ It is **layered on** the bundled foot model rather than replacing it.
 same pattern the bundled model's own header documents
 (`[foot.json, foot_elevation.json]`). So upstream improvements to
 `foot.json` still arrive on a GraphHopper upgrade, and the diff that is
-ours stays one line.
+ours stays two lines.
 
 Copying the stock model into a local `foot.json` was tried first and
 GraphHopper refuses it outright:
@@ -191,7 +199,8 @@ Route B: the same origin -> a Jollibee 2.0 km east.
 | `trunk` excluded at import | 3.5 km, start snapped 230 m off | — |
 | profile as GraphHopper ships it | 1.57 km / 17 instr | 3.85 km / 21 instr |
 | + `service` x 0.6 | 1.44 km / 5 | 3.85 km / 21 |
-| **+ `trunk` x 1.5 (shipped)** | **1.44 km / 5** | **2.52 km / 5** |
+| + `trunk` x 1.5 | 1.44 km / 5 | 2.52 km / 5 |
+| **+ `trunk` x 3 (shipped)** | **1.44 km / 5** | **2.52 km / 5** |
 | Google Maps | 1.4 km / ~4 | — |
 | OSRM (fossgis_osrm_foot) | 1.4 km / ~4 | 2.5 km / 5 |
 
@@ -204,16 +213,34 @@ abandoning the corridor rather than weaving along it. Same cause
 appears once the alternative is a *network* of ordinary roads rather
 than short stubs. Multiplying `trunk` back up fixes that.
 
-`trunk` x 1.5, 2.0 and 3.0 produce identical routes on both journeys, so
-the effect saturates; 1.5 is the smallest value that works and a larger
-one would only risk over-attracting to highways somewhere untested.
+`trunk` x 1.5, 2.0 and 3.0 produce identical routes on both journeys,
+and 1.5 shipped first on that basis. **It was not enough.** Both
+journeys are short, and on a short trip a side-street detour costs more
+than the trunk penalty saves, so the router stays on the highway even
+under a weak boost. Over 5-8 km there is room for the detour to pay, and
+at 1.5 it does. To the Jollibee by JP Laurel / Ayala, 7.3 km:
+
+```
+trunk x 1.5 :  174 m of JP Laurel, ~4.6 km of residential streets,
+               a track and a footpath, then back to the highway
+               -> 7.31 km / 25 instructions
+trunk x 3   :  3975 m of JP Laurel, 2145 m of Ayala Highway
+               -> 6.50 km / 8 instructions
+```
+
+The reason 1.5 falls short is the size of what it multiplies:
+`foot_priority` scores `trunk` as REACH_DESTINATION, one step above
+excluded, so 1.5 times it is still a road the router uses only when
+nothing else goes there. 3 is the smallest value that holds the long
+routes; 4 and above produce the same routes, so it saturates there.
 
 Ten destinations around Lipa, to check it was not tuned to one journey
 (`routing/tests/manual/model_compare.py`):
 
 ```
-service x 0.6 :  10 routes, -0.48 km total, -57 instructions, none worse
-trunk   x 1.5 :  10 routes, -1.27 km total,  -3 instructions, none worse
+service x 0.6        :  10 routes, -0.48 km total, -57 instructions, none worse
+trunk   x 1.5        :  10 routes, -1.27 km total,  -3 instructions, none worse
+trunk   x 1.5 -> x 3 :  12 routes, -4.55 km total, -89 instructions, none worse
 ```
 
 The second round moves little on average — eight of ten routes are
@@ -221,10 +248,21 @@ unchanged — because it only bites where a long stretch of highway
 competes with a parallel network. That is exactly the case it was added
 for, and it is the case a wearer hits walking along a national road.
 
+The third round was run against a different set, because the first ten
+resolve each name to its *nearest* match and so are all short walks:
+the nearest of each landmark type taken from the OSM extract, plus two
+fixed points 4-7 km out. The seven destinations under 2.5 km are
+unchanged. The five between 4.3 and 7.8 km each lose 0.8-1.1 km and
+17-19 instructions — SM City Lipa 7.15 km / 29 -> 6.23 km / 10, Lipa
+City Hall 7.82 km / 32 -> 6.77 km / 11. Measured on a Batangas-only
+extract on a laptop, with the same config; it reproduced route A
+exactly, and the rebuilt contraction hierarchy returned the same routes
+as the request-level model.
+
 Distance fell slightly, so the straighter routes are not being bought
 with extra walking.
 
-Verified in production afterwards — graph rebuilt, contraction
+Round two (`trunk` x 1.5) was verified in production afterwards — graph rebuilt, contraction
 hierarchies on, no request-level model — at **1.4 km / 17 min with the
 start snapped 7 m from the requested point**, against 1.4 km / 19 min
 from both Google and OSRM. The rebuild is also self-evidencing: the
@@ -235,7 +273,7 @@ for the previous weighting, so the model demonstrably took effect.
 
 ```bash
 mkdir -p ~/graphhopper/custom_models
-cp ~/Desktop/thesis/IndepensenseSystem/deploy/graphhopper/service_roads.json \
+cp ~/Desktop/thesis/IndepensenseSystem/deploy/graphhopper/indepensense_foot.json \
    ~/graphhopper/custom_models/
 ```
 
@@ -250,10 +288,10 @@ with the profile listing both files, built-in first:
 ```yaml
   profiles:
     - name: foot
-      custom_model_files: [foot.json, service_roads.json]
+      custom_model_files: [foot.json, indepensense_foot.json]
 ```
 
-`foot.json` still resolves from inside the JAR; `service_roads.json`
+`foot.json` still resolves from inside the JAR; `indepensense_foot.json`
 comes from the directory above and is merged on top.
 
 **This needs a graph rebuild.** The weighting is baked into the

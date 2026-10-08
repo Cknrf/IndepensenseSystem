@@ -3,12 +3,22 @@
 Holds one Whisper model per language code and picks which one to use per
 transcription call. This lets us mix model sizes across languages — for
 example, `tiny` for English (fast, accurate on English-only training data)
-and `base` for Tagalog (Tagalog is underrepresented in Whisper's training
+and `small` for Tagalog (Tagalog is underrepresented in Whisper's training
 set, so a larger model is needed for acceptable accuracy).
 
 `int8` quantization is used because the Pi 5 has no GPU. It roughly halves
 memory and doubles CPU throughput vs `float16`, with negligible accuracy
-cost at these model sizes.
+cost at these model sizes. The files on disk are the Hub's float16
+checkpoints, quantised at load: storing them int8 would halve what the SD
+card delivers at boot, but the Python converter produced NaN rows — see
+`tools/fetch_models.py` for the measurement.
+
+Models are loaded from directories under `config.WHISPER_MODEL_DIR`, laid
+out by `tools/fetch_models.py`, never resolved from the Hugging Face Hub
+by name. Given a name, faster-whisper asks the Hub for the current
+revision before using its local copy — a round trip per model on every
+boot, and a wait for the timeout on a boot with no network. A directory
+path is loaded as is.
 """
 from pathlib import Path
 
@@ -19,15 +29,21 @@ class FasterWhisperSTT:
     def __init__(
         self,
         models: dict[str, str],
-        model_dir: Path | None = None,
+        model_dir: Path,
         compute_type: str = "int8",
     ):
-        """Load one model per language code.
+        """Load one model per language code from `model_dir/<size>/`.
 
         `models` maps language codes (e.g. "en", "tl") to Whisper model
-        sizes ("tiny", "base", "small", "medium", "large-v3"). Loading a
-        model takes several seconds, so we do it once at construction and
+        sizes ("tiny", "base", "small", "medium", "large-v3"); each size
+        is a CTranslate2 model directory under `model_dir`. Loading a
+        model takes seconds, so we do it once at construction and
         select per call.
+
+        A missing directory is a `FileNotFoundError` naming the fetch
+        step, not a download: the wearable must start in the field with
+        no network, so the only acceptable time to need the Hub is the
+        one deliberate run of `fetch_models` after installation.
 
         The first language in the dict is the default when `transcribe` is
         called without an explicit `language` argument.
@@ -37,15 +53,18 @@ class FasterWhisperSTT:
         if not models:
             raise ValueError("FasterWhisperSTT requires at least one model")
 
-        kwargs: dict = {"compute_type": compute_type, "device": "cpu"}
-        if model_dir is not None:
-            model_dir.mkdir(parents=True, exist_ok=True)
-            kwargs["download_root"] = str(model_dir)
-
         self._models: dict[str, object] = {}
         self._sizes: dict[str, str] = dict(models)
         for language, size in models.items():
-            self._models[language] = WhisperModel(size, **kwargs)
+            path = model_dir / size
+            if not path.is_dir():
+                raise FileNotFoundError(
+                    f"Whisper '{size}' for '{language}' not found at {path}. "
+                    f"Fetch it once with: python -m indepensense.tools.fetch_models"
+                )
+            self._models[language] = WhisperModel(
+                str(path), device="cpu", compute_type=compute_type,
+            )
 
         self._default_language = next(iter(models))
 

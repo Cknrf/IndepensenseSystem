@@ -16,10 +16,21 @@ class SMSResult:
 
     `detail` carries the failure reason for logging — a modem error
     string, a timeout note. Empty on success.
+
+    `retryable` says whether trying again could plausibly work. A
+    timeout or a refused send might; a modem that ModemManager cannot
+    see at all will not, and retrying it burns an emergency's time
+    budget on something that cannot succeed. Only the driver knows which
+    it was — by the time the caller sees a failure, the distinction is
+    gone — so the driver is what sets this.
+
+    Defaults to True so a sender that does not classify its failures
+    keeps the old behaviour: retried, not silently abandoned.
     """
     number: str
     sent: bool
     detail: str = ""
+    retryable: bool = True
 
 
 class SMSSender(Protocol):

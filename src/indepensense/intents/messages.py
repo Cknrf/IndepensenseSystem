@@ -141,14 +141,45 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "I can only speak English and Tagalog.",
         "tl": "Ingles at Tagalog lamang ang kaya kong gamitin.",
     },
+    # "fully ready", because this lands after two minutes in which the
+    # device has already been talking and its safety features have already
+    # been running. A bare "ready" invites the question of what the last
+    # two minutes were; "fully" marks the boundary the user is waiting for
+    # — the point at which voice commands answer.
+    #
+    # Tagalog says it by reduplication (`handang-handa`) rather than with
+    # an adverb. "Ganap nang handa" would be the literal parallel and is
+    # correct, but reads as written Tagalog; this is what someone would
+    # actually say out loud, which is the register the rest of the
+    # catalogue uses.
     "language.greeting": {
-        "en": "IndepenSense is ready. I am speaking English.",
-        "tl": "Handa na ang Indepensensya. Tagalog ang ginagamit ko.",
+        "en": "IndepenSense is now fully ready. I am speaking English.",
+        "tl": "Handang-handa na ang Indepensensya. Tagalog ang ginagamit ko.",
     },
     # Spoken from a pre-rendered file at the very first line of `start()`,
     # before any model is loaded — see `config.STARTUP_AUDIO_DIR`. It has
     # to name the wait explicitly: a blind user cannot see a progress
     # indicator, and two silent minutes reads as a device that never woke.
+    # Spoken when the voice stack failed every load attempt and the
+    # device is carrying on with safety only.
+    #
+    # Static, and that is load-bearing: TTS may be the thing that
+    # failed, so this has to be replayable from a rendered clip with no
+    # engine at all — the same path `system.starting` uses before any
+    # model exists.
+    #
+    # It names what still works rather than only what does not. A user
+    # told "voice commands are unavailable" and nothing else cannot know
+    # whether the device will still call for help if they fall, which is
+    # the one thing they most need to know.
+    "system.voice_unavailable": {
+        "en": "Voice commands are not available on this start-up. Fall "
+              "detection, obstacle warnings and the emergency button are "
+              "still working.",
+        "tl": "Hindi gumagana ang mga utos sa boses sa pagbukas na ito. "
+              "Gumagana pa rin ang pagtukoy ng pagkahulog, ang babala sa "
+              "harang, at ang pangemergency na butones.",
+    },
     "system.starting": {
         "en": "IndepenSense is starting up. This takes about two minutes. "
               "I will tell you when I am ready.",
@@ -578,6 +609,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Naipadala ko na ang alerto sa iyong tagapag-alaga.",
     },
 
+    # --- guardian status messages ------------------------------------------------
+    "guardian.status_ok": {
+        "en": "Letting your guardian know you're fine.",
+        "tl": "Ipinapaalam ko sa iyong tagapag-alaga na ikaw ay maayos.",
+    },
+
     # --- emergency delivery outcomes ---------------------------------------
     # One per combination of (backend reached, SMS reached). The wearer is
     # told which channel failed rather than a generic "something went
@@ -589,29 +626,55 @@ MESSAGES: dict[str, dict[str, str]] = {
     # The success cases (both channels, or the dashboard on a unit with no
     # SMS) reuse `emergency.sent` — the sentence was always correct, it was
     # just being said too early, before anything had been delivered.
+    # No modem at all, as distinct from a text that failed to send.
+    #
+    # `sms_failed` promises the system will keep retrying, and with a
+    # modem ModemManager cannot see there is nothing to retry with — the
+    # driver reports that case as non-retryable and the background window
+    # is skipped entirely. Saying the retry sentence anyway would be the
+    # device telling a frightened user that help is still on its way when
+    # nothing further will be attempted.
+    #
+    # So this one promises nothing. It names the cause in words the
+    # wearer can act on — the phone connection, not "the modem" — and
+    # repeats the instruction from `all_failed`, because calling someone
+    # directly is then the only channel left.
+    "emergency.delivery.sms_no_modem": {
+        "en": "Your guardian was notified on the website, but the phone "
+              "connection is unavailable so no text could be sent. Please "
+              "also call for help if possible.",
+        "tl": "Naabisuhan online sa website ang iyong tagapag-alaga, pero "
+              "walang koneksyon sa telepono kaya walang text na naipadala. "
+              "Kung posible, tumawag din para sa tulong.",
+    },
     "emergency.delivery.sms_failed": {
-        "en": "Your guardian was notified online, but the text message "
-              "did not go through.",
-        "tl": "Naabisuhan online ang iyong tagapag-alaga, pero hindi "
-              "naipadala ang text message.",
+        "en": "Your guardian was notified on the website, but the text "
+              "message did not go through. The system will keep retrying "
+              "the text for the next few minutes.",
+        "tl": "Naabisuhan online sa website ang iyong tagapag-alaga, pero "
+              "hindi maipadala ang text message. Patuloy na susubukang "
+              "ipadala ng sistema ang text sa susunod na ilang minuto.",
     },
     "emergency.delivery.no_number": {
-        "en": "Your guardian was notified online, but no phone number is "
-              "saved for a text message.",
-        "tl": "Naabisuhan online ang iyong tagapag-alaga, pero walang "
-              "naka-save na numero para sa text message.",
+        "en": "Your guardian was notified on the website, but no phone "
+              "number is saved for a text message. The system will keep "
+              "retrying.",
+        "tl": "Naabisuhan online sa website ang iyong tagapag-alaga, pero "
+              "walang naka-save na numero. Patuloy na susubukan ng sistema.",
     },
     "emergency.delivery.backend_failed": {
-        "en": "I sent a text message to your guardian, but I could not "
-              "reach the guardian dashboard.",
-        "tl": "Nakapagpadala ako ng text sa iyong tagapag-alaga, pero "
-              "hindi ko maabot ang guardian dashboard.",
+        "en": "I sent a text message to your guardian, but could not reach "
+              "the website. The system will keep retrying.",
+        "tl": "Nakapagpadala ako ng text sa iyong tagapag-alaga, pero hindi "
+              "ko maabot ang website. Patuloy na susubukan ng sistema.",
     },
     "emergency.delivery.all_failed": {
-        "en": "I could not reach your guardian at all. Please call for "
-              "help another way.",
-        "tl": "Hindi ko talaga maabot ang iyong tagapag-alaga. Pakihingi "
-              "po ng tulong sa ibang paraan.",
+        "en": "The system could not reach your guardian right now. It will "
+              "keep retrying for the next few minutes. Please also call for "
+              "help if possible.",
+        "tl": "Hindi agad maabot ng sistema ang iyong tagapag-alaga. Patuloy "
+              "itong susubukan sa susunod na ilang minuto. Kung posible, "
+              "tumawag din para sa tulong.",
     },
 
     # --- battery ------------------------------------------------------------
@@ -630,14 +693,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "battery.level": {
         "en": "Battery is at {percent} percent.",
         "tl": "Ang baterya ay {percent} porsyento.",
-    },
-    "battery.level_with_hours": {
-        "en": "Battery is at {percent} percent, about {hours} hours and {minutes} minutes remaining.",
-        "tl": "Ang baterya ay {percent} porsyento, mga {hours} oras at {minutes} minuto pa ang natitira.",
-    },
-    "battery.level_with_minutes": {
-        "en": "Battery is at {percent} percent, about {minutes} minutes remaining.",
-        "tl": "Ang baterya ay {percent} porsyento, mga {minutes} minuto pa ang natitira.",
     },
 
     # --- GPS status ---------------------------------------------------------

@@ -65,7 +65,7 @@ import math
 import threading
 import time
 
-from indepensense.power.base import BatteryReading
+from indepensense.power.base import DISCHARGE_CURRENT_MA, BatteryReading
 
 
 _ADDR = 0x2D
@@ -162,13 +162,23 @@ class WaveshareUPSHatE:
         remaining_mah = bat[6] | (bat[7] << 8)
 
         # Time-to-empty/full share bytes 8-11 depending on state; only
-        # one is meaningful at a time. Use the fuel-gauge-reported
-        # `charging_state` (authoritative) to decide which is valid,
-        # rather than deriving from the current sign (which can flicker
-        # near zero during idle transitions).
+        # one is meaningful at a time, and the state decides which.
+        #
+        # That used to key off `charging_state` alone, on the grounds
+        # that it is authoritative and the current sign "can flicker near
+        # zero during idle transitions". The flicker caution is real; the
+        # authority was not. `_parse_status` returns "idle" as a
+        # fall-through for a status byte with no recognised bit set, and
+        # this HAT never sets its discharging bit — so a pack losing
+        # 377 mA reported "idle", and time-to-empty was zeroed on every
+        # read of a discharging pack. Same root cause as the low-battery
+        # warning that could not fire; see `BatteryReading.is_discharging`.
         time_to_empty_min = bat[8] | (bat[9] << 8)
         time_to_full_min = bat[10] | (bat[11] << 8)
-        is_discharging = charging_state == "discharging"
+        is_discharging = (
+            charging_state == "discharging"
+            or current_ma <= DISCHARGE_CURRENT_MA
+        )
         is_charging = charging_state in ("charging", "fast_charging")
 
         cell_voltages_mv = (

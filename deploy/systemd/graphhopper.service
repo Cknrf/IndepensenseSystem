@@ -2,7 +2,13 @@
 Description=GraphHopper routing engine (IndepenSense)
 Documentation=https://github.com/cknrf/IndepensenseSystem
 Wants=network-online.target
-After=network-online.target
+# After the wearable, not before it. `indepensense.service` is
+# `Type=notify` and reports started once its voice stack is loaded, so
+# this unit's ~0.9 GB graph load no longer competes with Whisper and the
+# TTS voices for the SD card — measured on the Pi, a second reader
+# nearly tripled the Whisper load. Routing is only reachable through a
+# voice command, so nothing can ask for it before this starts anyway.
+After=network-online.target indepensense.service
 
 [Service]
 Type=simple
@@ -12,6 +18,14 @@ WorkingDirectory=/home/cknrf/graphhopper
 ExecStart=/usr/bin/java -Xmx2g -jar graphhopper-web-11.0.jar server config.yml
 Restart=on-failure
 RestartSec=15
+# Below the wearable in both queues. The ordering above keeps this load
+# off the card while the voice stack loads; the priorities cover what
+# ordering cannot — a restart of this unit while the wearable is busy.
+# The I/O class only takes effect under the bfq scheduler; see
+# deploy/udev/README.md.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 # GraphHopper writes routing logs to stdout — let journald collect them.
 StandardOutput=journal
 StandardError=journal

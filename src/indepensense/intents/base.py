@@ -23,6 +23,7 @@ class Intent(Enum):
     NAVIGATION_LOCATION = "navigation.location"
     NAVIGATION_PROGRESS = "navigation.progress"
     EMERGENCY_TRIGGER = "emergency.trigger"
+    GUARDIAN_STATUS_OK = "guardian.status_ok"
     DEVICE_STATUS = "device.status"
     SYSTEM_TIME = "system.time"
     VISION_DESCRIBE = "vision.describe"

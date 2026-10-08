@@ -185,6 +185,77 @@ WALKING_STILL_HOLD_S = 2.0
 # after a failure retries instead of being ignored.
 EMERGENCY_REARM_S = 10.0
 
+# How long the wearer waits to be told whether an alert got through, and
+# how long the device keeps trying after telling them. Two separate
+# numbers, because they answer two different questions.
+#
+# They used to be one: the SMS leg ran to completion and only then was
+# anything spoken, so three 30-second modem timeouts meant 90 seconds of
+# silence after an emergency press — with the backend leg having already
+# succeeded on its first attempt, a second in. The information the user
+# needed existed immediately and was withheld while a dead modem was
+# given three chances to prove itself.
+#
+# The backend leg already had a deadline (`_BACKEND_WAIT_S` in
+# sms_alerts.py) with a comment arguing exactly this. The SMS leg had
+# none. This is the matching bound.
+# How hard to try loading the voice stack before giving up on it and
+# running safety-only.
+#
+# Whisper, TTS and the parser are `_open_*`: the runtime cannot do its
+# job without them. That used to mean aborting `start()`, which cost
+# nothing because nothing was running yet. Now safety is live within
+# about eight seconds and the voice stack loads behind it, so the same
+# failure tears down a working fall detector a minute later — and with
+# `Restart=on-failure` a *persistent* failure becomes a loop in which
+# safety is up for eight seconds out of every ninety.
+#
+# A corrupt model file is the obvious way to get there, and is no longer
+# hypothetical: the SD card in this unit was measured writing 400 MB and
+# reading back different bytes.
+#
+# So: retry, because most load failures are transient and a restart
+# would have fixed them. Then degrade rather than exit, because fall
+# detection, obstacle warnings and the emergency button do not need a
+# voice, and losing them is a worse outcome than losing speech.
+VOICE_STACK_LOAD_ATTEMPTS = 3
+VOICE_STACK_RETRY_DELAY_S = 5.0
+
+SMS_REPORT_DEADLINE_S = 30.0
+
+# Gaps between attempts *before* the verdict is spoken. Four attempts in
+# about 1.6 s against a fast-failing modem; against one that times out,
+# the deadline above cuts it short first.
+#
+# Bounded by count as well as by time on purpose. A deadline alone would
+# mean a modem that fails instantly gets hammered sixty times in thirty
+# seconds, which is not persistence, it is a busy loop with a sleep in
+# it.
+SMS_ATTEMPT_DELAYS_S = (0.1, 0.5, 1.0)
+
+# After the verdict is spoken, delivery keeps being attempted in the
+# background for this long, silently. A guardian who gets the text four
+# minutes late can still act on it.
+#
+# Bounded, not forever, for three reasons. A stale emergency text is
+# actively harmful — one arriving forty minutes on reports a situation
+# that has already resolved, and two overlapping alerts can arrive out
+# of order. The persistent channel is the backend queue, which retries
+# indefinitely and is what the guardian dashboard reads. And by the time
+# both channels have failed the wearer has already been told to seek
+# help another way, so the device's job is to be honest, not to keep a
+# failing modem busy for an hour.
+#
+# Keep `emergency.delivery.*` in step with this: those messages promise
+# the user a retry window out loud, and for a while they promised one
+# that did not exist at all.
+SMS_RETRY_WINDOW_S = 300.0
+
+# Gap between background attempts, seconds, widening as hope fades.
+# Starts above the report deadline because anything faster was already
+# tried before the verdict was spoken.
+SMS_RETRY_BACKOFF_S = (15.0, 30.0, 60.0, 60.0, 60.0)
+
 # The "still working on it" blip played while a voice command is being
 # transcribed and classified.
 #
@@ -708,6 +779,19 @@ PIPER_VOICES = {
 MMS_VOICES = {
     "tl": PROJECT_ROOT / "models" / "voices" / "mms-tts-tgl",
 }
+# Where `tools/fetch_models.py` gets each MMS voice from. Only the tool
+# reads this; the runtime loads the directory above and never sees a
+# repo id.
+MMS_VOICE_REPOS = {
+    "tl": "facebook/mms-tts-tgl",
+}
+
+# Each Whisper size is a directory under here — `models/whisper/small/`
+# and so on — laid out once by `tools/fetch_models.py`. The driver loads
+# the directory by path and never resolves a model name through the Hub,
+# for the same reason the MMS voice is a local snapshot: a wearable that
+# starts in the field cannot depend on huggingface.co answering, and the
+# Hub check cost a round trip per model on every boot.
 WHISPER_MODEL_DIR = PROJECT_ROOT / "models" / "whisper"
 
 # Whisper model size per language. English uses `tiny` because it's accurate
@@ -1122,6 +1206,12 @@ NLU_WARMUP_TIMEOUT_S = 180.0 if NLU_LARGE_MODEL else 90.0
 # 2 points of coverage and cost the first wrong answer — not a trade
 # worth making on a device where a wrong action is worse than no action.
 NLU_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+# The repo id above is only what `tools/fetch_models.py` downloads. The
+# matcher loads this directory by path. Resolving the repo id at startup
+# asked the Hub for the current revision and probed ten files the repo
+# does not have — measured at ~8 s per boot, and a timeout with no
+# network.
+NLU_EMBEDDING_MODEL_DIR = PROJECT_ROOT / "models" / "embeddings" / "multilingual-e5-small"
 NLU_EMBEDDING_BANK_PATH = PROJECT_ROOT / "prompts" / "nlu_examples.md"
 NLU_EMBEDDING_SCORE_THRESHOLD = 0.86
 NLU_EMBEDDING_MARGIN_THRESHOLD = 0.02

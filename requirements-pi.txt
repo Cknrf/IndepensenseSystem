@@ -54,9 +54,10 @@ transformers>=4.33
 # rather than adding a second inference runtime, so the marginal cost is
 # the 118M-parameter checkpoint (~470 MB fp32) and nothing else.
 #
-# Weights download on first construction and are cached under
-# ~/.cache/huggingface. Pull them once with network available before the
-# wearable is expected to work offline.
+# Weights are fetched once by `python -m indepensense.tools.fetch_models`
+# into models/embeddings/ and loaded from there by path — the runtime
+# never resolves the repo id, so it starts the same with or without a
+# network.
 sentence-transformers>=3.0
 
 # Tesseract OCR — printed-text reader for the `vision.read` intent.

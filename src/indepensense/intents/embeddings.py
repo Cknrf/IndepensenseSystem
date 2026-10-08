@@ -282,7 +282,7 @@ class EmbeddingMatcher:
 
     def __init__(
         self,
-        model_name: str,
+        model_path: Path,
         bank_path: Path,
         score_threshold: float,
         margin_threshold: float,
@@ -293,7 +293,7 @@ class EmbeddingMatcher:
         if not self._entries:
             raise ValueError(f"example bank {bank_path} is empty")
 
-        self._model = self._load_model(model_name)
+        self._model = self._load_model(model_path)
         self._vectors = self._encode([e.text for e in self._entries])
 
     def match(self, transcript: str) -> Match | None:
@@ -365,12 +365,25 @@ class EmbeddingMatcher:
     # -------------------------------------------------------------- internals
 
     @staticmethod
-    def _load_model(model_name: str):
+    def _load_model(model_path: Path):
+        """Load the encoder from a local directory, never from the Hub.
+
+        A directory path is loaded as is. A repo id would be resolved
+        against huggingface.co first — the current revision, then a probe
+        for every optional file sentence-transformers knows about, ten of
+        which this repo lacks — on every boot, whether or not the modem
+        is up. `tools/fetch_models.py` lays the directory out once.
+        """
         # lazy: torch + sentence-transformers are Pi-only (requirements-pi.txt)
         from sentence_transformers import SentenceTransformer
 
-        print(f"  Loading embedding model {model_name}...", flush=True)
-        return SentenceTransformer(model_name)
+        if not model_path.is_dir():
+            raise FileNotFoundError(
+                f"embedding model not found at {model_path}. Fetch it once "
+                f"with: python -m indepensense.tools.fetch_models"
+            )
+        print(f"  Loading embedding model from {model_path}...", flush=True)
+        return SentenceTransformer(str(model_path))
 
     def _encode(self, texts: list[str]):
         return self._model.encode(
@@ -381,7 +394,7 @@ class EmbeddingMatcher:
 
 
 def build_matcher(
-    model_name: str,
+    model_path: Path,
     bank_path: Path,
     score_threshold: float,
     margin_threshold: float,
@@ -399,7 +412,7 @@ def build_matcher(
     """
     try:
         return EmbeddingMatcher(
-            model_name=model_name,
+            model_path=model_path,
             bank_path=bank_path,
             score_threshold=score_threshold,
             margin_threshold=margin_threshold,

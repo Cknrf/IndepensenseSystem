@@ -28,6 +28,10 @@ How Claude collaborates on this thesis project.
    voice thread (one per PTT press), gpiozero button callbacks, per-event warning-pattern threads under a mutex, heartbeat sender, telemetry retry worker, the 1 Hz GPS cache thread, and the **announcer** — one long-lived worker owning every piece of speech that originates on the main loop.
    The rule is **never block the main loop**, not "never use threads". Adding a *new* long-lived thread is a structural change — propose it first. No asyncio; the thread set is small and each one has a single clear job. See the module docstring at the top of `app.py` for the authoritative description.
 
+   **Startup is safety first.** `start()` opens only what fall detection, obstacle warnings and the emergency alert need — IMU, ultrasonics, buttons, motors, the telemetry and SMS path — and returns in a few seconds; the loop is running while the one-shot `voice-stack` thread loads Whisper, TTS, the parser and the vision stack, then warms the LLM and speaks the greeting. The models took ~200 s to load from the SD card and every second of it used to sit in front of the safety features, none of which needs a model. Consequences to keep: a PTT press before the stack is ready answers with the busy cue; the announcer exists from the first second with no voice and holds a cache miss until TTS is attached, so static messages must stay pre-rendered; and a model that fails to load still fails the process — the loader records the error, stops the loop, and `run_app` exits non-zero — because the `_open_*` contract did not move with the thread.
+
+   The deploy side mirrors it: `indepensense.service` is `Type=notify` and reports started when the voice stack is loaded, GraphHopper and Photon are ordered after it so their graph and index stay off the SD card while the models load, and `ollama-warmup.service` runs `tools/warm_nlu.py`, which sends the parser's own warmup request so the system-prompt prefix Ollama caches is the one every query reuses. Measurements and the reasoning are in `deploy/systemd/README.md`; a change to the warmup request belongs in `OllamaIntentParser`, never in the unit.
+
    **Anything the main loop wants to say goes through `_announce()`.** It appends and returns. Navigation cues used to synthesise and play inline, which stopped fall detection and obstacle polling for ~3–4 s during every turn instruction — the loop sat inside `sd.play(blocking=True)`. Motor and buzzer patterns are the same hazard for a smaller amount: every driver's `pulse`/`beep` sleeps for the pattern's duration, so they go through `_spawn_haptic()`. Neither may be called inline from `run()`.
 
    Two sub-steps run on the **voice thread** and block only it: destination confirmation and turn-to-face orientation. Both are bounded, both abort on an emergency press, and both borrow the PTT button and hand it back in a `finally`.
@@ -48,6 +52,8 @@ How Claude collaborates on this thesis project.
    ```python
    import serial  # lazy: only resolvable on the Pi
    ```
+
+   **Models load from directories under `models/`, laid out once by `tools/fetch_models.py`. Nothing resolves a Hugging Face repo id at runtime.** Whisper and the embedding model used to be handed a name and let their libraries resolve it, which asks the Hub for the current revision before touching the local copy — measured at ~8 s per boot for the embedding model alone, and a wait for the timeout on a boot with no network. A directory path is loaded as is, so startup is the same with the modem up, down or absent, and the weights in use are the ones that were tested. The cost is that a model never fetched is a startup error naming the tool rather than a download, which is the right failure for a device that must come up in the field.
 
 4. **Drivers own protocol knowledge.** Parsing, checksums, register maps, and unit conversion live in the driver, not in tests or callers. Tests verify the driver; callers consume clean values. Document register addresses and datasheet sections in the driver's docstring, as `mpu6050.py` does.
 
@@ -81,6 +87,8 @@ How Claude collaborates on this thesis project.
    A new hardware component isn't done until it has a manual test, and that test is listed in the README's Manual Verification Tests table. The fabricator uses those commands to verify wiring without writing Python.
 
    **Unit tests never touch the network.** Modules whose code makes HTTP calls stub `requests` with an autouse fixture — otherwise the suite passes or fails depending on whether the dev machine is online, and stalls for the timeout when it isn't.
+
+   **Nor the clock.** Retry backoff is a module constant or a constructor argument, never a literal inside the loop, and tests stub it to zero with an autouse fixture. A test that sleeps through a real backoff spends seconds asserting what a call counter already knows: four `test_auth` cases sat at 3.5 s each proving a 404 is *not* retried, and the suite went from 22 s to 52 s the day retries landed. Same objection as the network, different clock.
 
 ## Where things live
 

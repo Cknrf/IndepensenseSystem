@@ -47,11 +47,17 @@ well-scoped background threads for I/O concerns:
   - GPS cache thread: polls SIM7600 GPS at 1 Hz, exposes latest fix to
     all consumers (executor, heartbeat, fall alerts) without serial
     port contention.
-  - NLU warmup thread (one-shot, exits): loads the LLM and prefills its
-    system prompt, then speaks the "ready" greeting. 56-87 s for 1.7B on
-    the Pi. It used to run inline in `start()`, before the main loop and
-    before the buttons were opened — so for that long at every boot there
-    was no fall detection, no obstacle warning and no emergency button.
+  - Voice-stack loader (one-shot, exits): loads Whisper, the TTS voices,
+    the embedding matcher and LLM client, YOLO, the camera and OCR,
+    renders the boot clips, warms the LLM, then speaks the "ready"
+    greeting. `start()` opens only what safety needs — IMU, ultrasonics,
+    buttons, motors, the alert path — and returns in a few seconds; the
+    loop is running while all of this loads. Measured on the Pi, the
+    models took ~200 s to load from the SD card, and every second of it
+    used to sit in front of fall detection, obstacle warnings and the
+    emergency button, none of which needs a model. The LLM warmup was
+    the first thing moved off that path; this moves the rest. A PTT
+    press before the stack is ready gets the busy cue.
 
 Obstacle detection
 ------------------
@@ -133,6 +139,7 @@ acceptable — it logs, returns None, and every caller handles None.
 import faulthandler
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -142,6 +149,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from indepensense.config import (
+    VOICE_STACK_LOAD_ATTEMPTS,
+    VOICE_STACK_RETRY_DELAY_S,
     BACKEND_URL,
     BATTERY_CHECK_INTERVAL_S,
     BATTERY_EMPTY_RAW_PERCENT,
@@ -207,7 +216,7 @@ from indepensense.config import (
     NLU_COMPACT_PREFILL,
     NLU_EMBEDDING_BANK_PATH,
     NLU_EMBEDDING_MARGIN_THRESHOLD,
-    NLU_EMBEDDING_MODEL,
+    NLU_EMBEDDING_MODEL_DIR,
     NLU_EMBEDDING_SCORE_THRESHOLD,
     NLU_MODEL,
     NLU_PROMPT_PATH,
@@ -308,6 +317,7 @@ from indepensense.telemetry.nestjs_client import NestJSTelemetryClient
 from indepensense.telemetry.null import NullTelemetryClient
 from indepensense.telemetry.sms_alerts import (
     SMS_FAILED,
+    SMS_NO_MODEM,
     SMS_NO_NUMBER,
     SMS_SENT,
     SMS_UNAVAILABLE,
@@ -366,6 +376,35 @@ def _static_clip_names(languages) -> frozenset[str]:
         for key in messages.static_keys()
         for language in languages
     )
+
+
+def _notify_systemd(state: str) -> None:
+    """Tell systemd how startup is going, if it is listening. Never raises.
+
+    `indepensense.service` is `Type=notify`: systemd counts it started
+    only when it receives `READY=1`, which the voice-stack loader sends
+    once the models are in RAM. GraphHopper and Photon are ordered
+    `After=` the service, so that one datagram is what keeps their 1.4 GB
+    of graph and index off the SD card while the models load — measured
+    on the Pi, one other process reading from the card turned a 36 s
+    Whisper load into 103 s. `STATUS=` lines show up in `systemctl
+    status` so a headless device can be asked what it is doing.
+
+    One datagram on a unix socket, written out rather than taken from a
+    library: the protocol is that small. Off systemd — on the Mac, or run
+    by hand — `NOTIFY_SOCKET` is unset and this is a no-op.
+    """
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address:
+        return
+    if address.startswith("@"):               # abstract-namespace socket
+        address = "\0" + address[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(address)
+            sock.sendall(state.encode())
+    except OSError as exc:
+        print(f"[systemd] notify failed: {exc}", file=sys.stderr, flush=True)
 
 
 # Clips rendered at the end of every boot, rather than by the
@@ -631,7 +670,13 @@ class Announcer:
         cache_dir: Path,
         static_names: frozenset[str] = frozenset(),
     ):
+        # None until `attach_tts`: the announcer exists from the first
+        # second of startup, the engine arrives when the loader has it.
+        # Rendered clips play either way; only a cache miss waits.
         self._tts = tts
+        self._tts_ready = threading.Event()
+        if tts is not None:
+            self._tts_ready.set()
         # Searched in this order. See `voice/clips.py`: the first holds
         # the static messages and is never swept, the second fills itself
         # with templated text and is.
@@ -685,6 +730,28 @@ class Announcer:
         stop_playback()
         if self._thread.is_alive():
             self._thread.join(timeout=timeout_s)
+
+    def attach_tts(self, tts) -> None:
+        """Hand the worker its voice. Until then it can only replay clips."""
+        self._tts = tts
+        self._tts_ready.set()
+
+    def _await_tts(self) -> bool:
+        """Block until an engine is attached; False if stopped first.
+
+        Reached only on a cache miss. Everything the loop can say while
+        the voice stack loads — a fall, an emergency, a battery alert —
+        is a static message with a rendered clip, so in practice this
+        waits only on a fresh install, where the clip has not been
+        rendered yet.
+        """
+        if self._tts_ready.is_set():
+            return True
+        print("[announcer] no voice yet — holding speech until TTS loads", flush=True)
+        while not self._tts_ready.wait(timeout=0.2):
+            if self._stop.is_set():
+                return False
+        return True
 
     def say(self, text: str, language: str, critical: bool = False) -> None:
         """Queue `text` to be spoken. Returns immediately.
@@ -782,6 +849,8 @@ class Announcer:
                 # instead of 0.2-2.3 s of synthesis.
                 path = clips.find(text, language, self._message_dir, self._cache_dir)
                 if path is None:
+                    if not self._await_tts():
+                        return
                     name = clips.filename(text, language)
                     static = name in self._static_names
                     path = clips.render(
@@ -862,6 +931,17 @@ class App:
         # the event observes a reason that is already current.
         self._voice_cancel_reason: str = ""
         self._voice_thread: threading.Thread | None = None
+        # The voice-stack loader — see `_load_voice_stack`. `_voice_stack_ready`
+        # gates the PTT button; `_startup_error` carries a fatal load
+        # failure out to `run_app`, which exits non-zero on it.
+        self._loader_thread: threading.Thread | None = None
+        self._voice_stack_ready = threading.Event()
+        self._startup_error: Exception | None = None
+        # Set when every load attempt failed and the runtime is
+        # carrying on without speech. Distinct from
+        # `_voice_stack_ready`, which stays clear either way.
+        self._voice_degraded = threading.Event()
+        self._safety_up_at = 0.0
 
         # Placeholders — filled in by start()
         self.gps_cache: GPSCache | None = None
@@ -928,6 +1008,13 @@ class App:
         self._low_battery_alerted = self._load_low_battery_latch()
         self._critical_battery_alerted = self._load_latch(CRITICAL_BATTERY_STATE_PATH)
         self._last_battery_check = 0.0
+        # Overwritten by `start()`; defaulted here so a test that
+        # drives the warmup directly does not trip over it.
+        self._started_at = time.monotonic()
+        # Per-stage startup timing — see `_stage`.
+        self._stage_label: str | None = None
+        self._stage_started = 0.0
+        self._stage_durations: list[tuple[str, float]] = []
 
         # Latest compass heading, refreshed at HEADING_CHECK_INTERVAL_S.
         # None until the first successful read (and stays None when no
@@ -987,16 +1074,24 @@ class App:
     # ---------------------------------------------------------------- lifecycle
 
     def start(self) -> None:
+        # Stamped so the end of startup can report how long it took.
+        # Without it the only measurable marker was the NLU warmup, which
+        # is neither the beginning nor the end of what the user waits
+        # through — the figure had to be reconstructed by subtracting
+        # journal timestamps by hand.
+        self._started_at = time.monotonic()
         print("Initialising IndepenSense runtime...", flush=True)
+        self._stage("Enumerating audio devices")
         self._report_audio_devices()
 
         # Before anything slow: tell the user the device is awake. Startup
         # is 2-3 minutes and every second of it is silent otherwise, which
         # to somebody who cannot see the terminal is indistinguishable from
         # a wearable that failed to boot.
+        self._stage("Playing startup notice")
         self._play_startup_notice()
 
-        print("  Opening MPU6050...", flush=True)
+        self._stage("Opening MPU6050")
         self.imu = self._open_imu()
         # Thresholds passed explicitly. They were previously left to the
         # constructor's defaults, which happened to match `config.py` —
@@ -1018,7 +1113,7 @@ class App:
             still_hold_s=WALKING_STILL_HOLD_S,
         )
 
-        print("  Opening GPS...", flush=True)
+        self._stage("Opening GPS")
         # The cache owns the device, so it is wired to consumers whether
         # or not the first open succeeds: its backoff picks the receiver
         # up whenever it appears, and `latest_fix()` answers None until
@@ -1029,42 +1124,36 @@ class App:
         self.gps_cache.start()
         cached_gps = _CachedGPSAdapter(self.gps_cache)
 
-        print("  Loading Whisper models...", flush=True)
-        self.stt = self._open_stt()
+        self.volume = self._open_volume()
+        print(f"  Speaker volume {self.volume.current}%.", flush=True)
 
-        print("  Loading TTS voices (Piper + MMS)...", flush=True)
-        self.tts = self._open_tts()
-
-        # Started as soon as TTS exists so anything that wants to speak
-        # from the loop has somewhere to put it, for the whole of startup.
+        # Started now, with no voice behind it yet, so anything that wants
+        # to speak from the loop has somewhere to put it from the first
+        # second. The loader attaches the TTS engine the moment it exists;
+        # until then the announcer replays rendered clips and holds
+        # anything that would need synthesis.
         self.announcer = Announcer(
-            self.tts, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR,
+            None, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR,
             _static_clip_names(self.language.supported),
         )
         self.announcer.start()
 
-        self.volume = self._open_volume()
-        print(f"  Speaker volume {self.volume.current}%.", flush=True)
-
-        print("  Connecting to Ollama (warmup runs once the loop is up)...", flush=True)
-        self.parser = self._open_parser()
-
-        print("  Checking cloud LLM fallback...", flush=True)
+        self._stage("Checking cloud LLM fallback")
         self.cloud = self._try_open_cloud_answerer()
 
-        print("  Connecting to GraphHopper + Photon...", flush=True)
+        self._stage("Connecting to GraphHopper + Photon")
         router = self._open_router()
         geocoder = self._open_geocoder()
 
         self.places = self._open_saved_places()
         print(f"  {len(self.places)} saved place(s).", flush=True)
 
-        print("  Loading device credential...", flush=True)
+        self._stage("Loading device credential")
         self.credential = self._load_credential()
         if self.credential is not None:
             print(f"  Device {self.credential.device_id}", flush=True)
 
-        print(f"  Building buffered telemetry to {BACKEND_URL}...", flush=True)
+        self._stage(f"Building buffered telemetry to {BACKEND_URL}")
         telemetry_client = self._open_telemetry_client()
         self.buffered = BufferedTelemetryClient(
             telemetry_client,
@@ -1077,7 +1166,7 @@ class App:
         # battery, and the emergency intent inside the executor — gets
         # SMS without any of them knowing about it. Heartbeats pass
         # straight through. See `telemetry/sms_alerts.py`.
-        print("  Fetching guardian contacts...", flush=True)
+        self._stage("Fetching guardian contacts")
         self.guardians = GuardianDirectory(
             base_url=BACKEND_URL,
             credential=self.credential,
@@ -1088,7 +1177,7 @@ class App:
         self.guardians.refresh()
 
         if SMS_ENABLED:
-            print("  Opening SMS sender (mmcli)...", flush=True)
+            self._stage("Opening SMS sender (mmcli)")
             self.sms = self._try_open_sms()
         # Built even without SMS. The buffered client's True only means
         # "queued", so without a delivery report the executor answered
@@ -1130,7 +1219,7 @@ class App:
             reports_delivery=reports_delivery,
         )
 
-        print("  Opening buttons...", flush=True)
+        self._stage("Opening buttons")
         self.ptt_button = self._try_open_button(PTT_BUTTON_GPIO, "PTT")
         self.emergency_button = self._try_open_button(EMERGENCY_BUTTON_GPIO, "Emergency")
         self.repeat_button = self._try_open_button(REPEAT_BUTTON_GPIO, "Repeat")
@@ -1141,40 +1230,29 @@ class App:
         if self.repeat_button is not None:
             self.repeat_button.on("pressed", self._on_repeat_press)
 
-        print("  Opening buzzer + vibration motors...", flush=True)
+        self._stage("Opening buzzer + vibration motors")
         self.buzzer = self._try_open_buzzer()
         self.front_motor = self._try_open_motor(VIBRATION_FRONT_GPIO, "front")
         self.right_motor = self._try_open_motor(VIBRATION_RIGHT_GPIO, "right")
         self.left_motor = self._try_open_motor(VIBRATION_LEFT_GPIO, "left")
 
-        print("  Opening ultrasonic sensors...", flush=True)
+        self._stage("Opening ultrasonic sensors")
         self.top_sensor = self._try_open_ultrasonic(DYP_A22_TOP_PORT, "TOP")
         self.bottom_sensor = self._try_open_ultrasonic(DYP_A22_BOTTOM_PORT, "BOTTOM")
 
-        print("  Opening UPS HAT (battery)...", flush=True)
+        self._stage("Opening UPS HAT (battery)")
         self.battery = self._try_open_battery()
 
-        print("  Opening magnetometer (QMC5883P compass)...", flush=True)
+        self._stage("Opening magnetometer (QMC5883P compass)")
         self.magnetometer = self._try_open_magnetometer()
 
-        print("  Opening camera + YOLO detector...", flush=True)
-        self.camera = self._try_open_camera()
-        self.object_detector = self._try_open_detector()
-
-        print("  Opening Tesseract OCR...", flush=True)
-        self.ocr = self._try_open_ocr()
-
-        # Late-bind battery + camera + detector + ocr into the executor.
-        # They weren't ready at executor construction time; injecting
-        # them now lets vision.*/device.status work without a bigger
-        # startup reshuffle.
+        # Late-bind the battery into the executor: it was not open when
+        # the executor was built. The camera, detector and OCR are bound
+        # the same way by the loader once they exist.
         if self.executor is not None:
             self.executor._battery = self.battery
-            self.executor._camera = self.camera
-            self.executor._detector = self.object_detector
-            self.executor._ocr = self.ocr
 
-        print("  Starting heartbeat sender...", flush=True)
+        self._stage("Starting heartbeat sender")
         self.heartbeat_sender = PeriodicHeartbeatSender(
             telemetry=self.buffered,
             gps=cached_gps,
@@ -1186,32 +1264,247 @@ class App:
         )
         self.heartbeat_sender.start()
 
+        self._close_stage()
+        self._safety_up_at = time.monotonic() - self._started_at
         print(
-            f"Safety features up (language: {self.language.current}). Running "
-            f"fall-detection loop; voice commands follow once the LLM is warm. "
+            f"Safety features up in {self._safety_up_at:.0f}s (language: "
+            f"{self.language.current}). Running the fall-detection loop; voice "
+            f"commands follow once the models are loaded and the LLM is warm. "
             f"SIGINT/SIGTERM to stop.",
             flush=True,
         )
-        # The greeting waits for the warmup: "I will tell you when I am
-        # ready" (system.starting) is a promise about voice commands, which
-        # are what the user is waiting to use. Safety needs no announcement.
-        threading.Thread(
-            target=self._warm_up_nlu, name="nlu-warmup", daemon=True,
-        ).start()
-        # Now that TTS exists, make sure the next boot can speak at second
-        # zero. Deliberately last: it costs a synthesis per language and
-        # the user is already up and running by this point.
-        self._render_boot_clips()
-        # Bound the clip cache once per boot. The announcer also sweeps
-        # every CLIP_CACHE_SWEEP_EVERY renders, which covers a device
-        # left running for weeks; this covers the ordinary case of one
-        # that is switched off at night and never reaches that count.
+        # Everything the voice interface needs loads on this thread while
+        # the loop runs — see `_load_voice_stack`. The "ready" greeting is
+        # spoken at its end, after the LLM warmup.
+        self._loader_thread = threading.Thread(
+            target=self._load_voice_stack, name="voice-stack", daemon=True,
+        )
+        self._loader_thread.start()
+
+    def _load_voice_stack(self) -> None:
+        """Load the voice stack, retrying, then degrade rather than exit.
+
+        `_open_stt`, `_open_tts` and `_open_parser` keep their contract —
+        the runtime cannot do its job without them — but the cost of
+        enforcing it changed when safety moved in front of the voice
+        stack. The same failure used to abort `start()` with nothing yet
+        running; now it would tear down a fall detector that has been
+        working for a minute, and with `Restart=on-failure` a failure
+        that *keeps* happening becomes a loop where safety is up for
+        eight seconds out of every ninety. A corrupt model file is the
+        obvious way to get there, and this unit's SD card was measured
+        returning different bytes than were written to it.
+
+        So two faults are separated. A transient one — a bad read, a
+        moment of memory pressure — is retried, and a retry is cheaper
+        than a restart because it keeps whatever already loaded. A
+        persistent one degrades: the loop keeps running, the safety
+        features keep working, and the wearer is told that voice
+        commands are not available.
+
+        Degrading still reports READY to systemd. Under `Type=notify` a
+        unit that never reports is killed at `TimeoutStartSec`, so
+        staying quiet would turn a degraded device into a dead one
+        fifteen minutes later.
+        """
+        for attempt in range(1, VOICE_STACK_LOAD_ATTEMPTS + 1):
+            try:
+                self._load_voice_stack_once()
+                return
+            except Exception as exc:
+                if self._shutdown.is_set():
+                    return                       # a SIGTERM, not a failure
+                print(
+                    f"[voice-stack] load attempt {attempt} of "
+                    f"{VOICE_STACK_LOAD_ATTEMPTS} failed: {exc}",
+                    file=sys.stderr, flush=True,
+                )
+                self._startup_error = exc
+                if attempt < VOICE_STACK_LOAD_ATTEMPTS:
+                    if self._shutdown.wait(VOICE_STACK_RETRY_DELAY_S):
+                        return
+        self._degrade_to_safety_only()
+
+    def _degrade_to_safety_only(self) -> None:
+        """Keep the safety features running without a voice. Never raises.
+
+        Reached only after every load attempt failed. What survives is
+        everything that does not need speech: fall detection, obstacle
+        warnings, the emergency button, guardian alerts and SMS. What
+        does not is voice commands, navigation, and scene description.
+
+        The wearer is told, and can be even when TTS is what failed —
+        the message is static, so the announcer replays it from a clip
+        the way `_play_startup_notice` does before any engine exists.
+        A device that quietly stops answering is one whose user keeps
+        pressing a button in an emergency.
+        """
+        self._voice_degraded.set()
+        print(
+            "[voice-stack] giving up after "
+            f"{VOICE_STACK_LOAD_ATTEMPTS} attempts — running safety-only. "
+            "Fall detection, obstacle warnings and the emergency button "
+            "still work; voice commands do not.",
+            file=sys.stderr, flush=True,
+        )
+        _notify_systemd(
+            "READY=1\nSTATUS=degraded: safety features only, voice stack failed"
+        )
+        self._print_startup_profile()
         try:
-            freed = clips.sweep(CLIP_CACHE_DIR, CLIP_CACHE_MAX_BYTES)
-            if freed:
-                print(f"  Swept {freed / 1e6:.1f} MB of cached speech.", flush=True)
+            self._announce(
+                messages.get("system.voice_unavailable", self.language.current),
+                critical=True,
+            )
         except Exception as exc:
-            print(f"[clips] startup sweep failed: {exc}", file=sys.stderr, flush=True)
+            print(f"[voice-stack] could not announce degradation: {exc}",
+                  file=sys.stderr, flush=True)
+
+    def _load_voice_stack_once(self) -> None:
+        """Load everything the voice interface needs, off the main loop.
+
+        Runs once, on the `voice-stack` thread started at the end of
+        `start()`, while the loop is already detecting falls and
+        obstacles and the emergency button already works. Nothing here
+        is needed for any of those: the obstacle feedback is haptic, the
+        alert path is telemetry and SMS, and the spoken confirmations
+        are static messages the announcer replays from clips.
+
+        Order: Whisper, then TTS — attached to the announcer the moment
+        it exists, so the device can synthesise as early as possible —
+        then the intent parser (the embedding model loads here), the
+        vision stack, and the boot clips. Then the LLM warmup, which
+        ends with the "ready" greeting and the battery level, exactly as
+        before.
+
+        A `_shutdown` between stages ends the load: a SIGTERM during a
+        two-minute boot should not open a camera it is about to close.
+
+        **A failure keeps the `_open_*` contract.** The runtime cannot do
+        its job without Whisper, TTS or the parser, and before this
+        thread existed their failure aborted `start()`. It still aborts:
+        the error is recorded, the loop is asked to stop, and `run_app`
+        re-raises it so the process exits non-zero and systemd restarts
+        it with the cause in the journal. The only difference is that
+        the safety features ran for the seconds before — which is more
+        than they did when the same failure stopped `start()` outright.
+        """
+        try:
+            self._stage("Loading Whisper models")
+            if self.stt is None:        # may survive a failed attempt
+                self.stt = self._open_stt()
+            if self._shutdown.is_set():
+                return
+
+            self._stage("Loading TTS voices (Piper + MMS)")
+            if self.tts is None:        # may survive a failed attempt
+                self.tts = self._open_tts()
+            self.announcer.attach_tts(self.tts)
+            if self._shutdown.is_set():
+                return
+
+            self._stage("Building intent parser (LLM warmup follows)")
+            if self.parser is None:        # may survive a failed attempt
+                self.parser = self._open_parser()
+            if self._shutdown.is_set():
+                return
+
+            self._stage("Opening camera + YOLO detector")
+            self.camera = self._try_open_camera()
+            self.object_detector = self._try_open_detector()
+
+            self._stage("Opening Tesseract OCR")
+            self.ocr = self._try_open_ocr()
+
+            # Late-bound, as the battery was in `start()`: the executor
+            # exists so the emergency intent and the buttons work, and
+            # vision.* simply reports unavailable until these land.
+            if self.executor is not None:
+                self.executor._camera = self.camera
+                self.executor._detector = self.object_detector
+                self.executor._ocr = self.ocr
+            if self._shutdown.is_set():
+                return
+
+            # Now that TTS exists, make sure the next boot can speak at
+            # second zero. It costs a synthesis per language on the first
+            # boot after a text edit and nothing afterwards.
+            self._stage("Rendering boot clips + sweeping the clip cache")
+            self._render_boot_clips()
+            # Bound the clip cache once per boot. The announcer also sweeps
+            # every CLIP_CACHE_SWEEP_EVERY renders, which covers a device
+            # left running for weeks; this covers the ordinary case of one
+            # that is switched off at night and never reaches that count.
+            try:
+                freed = clips.sweep(CLIP_CACHE_DIR, CLIP_CACHE_MAX_BYTES)
+                if freed:
+                    print(f"  Swept {freed / 1e6:.1f} MB of cached speech.", flush=True)
+            except Exception as exc:
+                print(f"[clips] startup sweep failed: {exc}", file=sys.stderr, flush=True)
+        except Exception:
+            self._close_stage()
+            raise
+
+        self._voice_stack_ready.set()
+        self._print_startup_profile()
+        # Started, as far as systemd is concerned: the sidecars ordered
+        # after this service may now read their data from the card.
+        _notify_systemd("READY=1\nSTATUS=voice stack ready, warming the LLM")
+        self._warm_up_nlu()
+        _notify_systemd("STATUS=fully ready")
+
+    def wait_for_voice_stack(self, timeout_s: float) -> bool:
+        """Block until the loader thread has finished — models, warmup
+        and greeting included — or the timeout passes. Returns whether
+        the voice stack is ready. For tests and manual scripts; nothing
+        in the runtime waits on this."""
+        if self._loader_thread is not None:
+            self._loader_thread.join(timeout=timeout_s)
+        return self._voice_stack_ready.is_set()
+
+    def _stage(self, label: str) -> None:
+        """Announce a startup stage and time the one before it.
+
+        Every "Opening X..." line in `start()` goes through here. One
+        total at the end said *that* startup was slow; it could not say
+        *which* load was slow, and the answer had to be reconstructed by
+        subtracting journal timestamps — which this device's clock makes
+        unreliable, because NTP steps it mid-boot (one boot showed 311 s
+        on the journal for 253 s on the monotonic clock). Measured here,
+        on the monotonic clock, the figure is right on every boot and
+        the profile is one line in the journal rather than an afternoon.
+        """
+        self._close_stage()
+        self._stage_label, self._stage_started = label, time.monotonic()
+        print(f"  {label}...", flush=True)
+        _notify_systemd(f"STATUS={label}")
+
+    def _close_stage(self) -> None:
+        if self._stage_label is not None:
+            self._stage_durations.append(
+                (self._stage_label, time.monotonic() - self._stage_started)
+            )
+            self._stage_label = None
+
+    def _print_startup_profile(self) -> None:
+        """One line: the stages worth a second each, costliest first."""
+        self._close_stage()
+        total = time.monotonic() - self._started_at
+        slow = sorted(
+            (d for d in self._stage_durations if d[1] >= 1.0),
+            key=lambda d: d[1], reverse=True,
+        )
+        rest = [d for d in self._stage_durations if d[1] < 1.0]
+        parts = [f"{label} {secs:.1f}s" for label, secs in slow]
+        if rest:
+            parts.append(
+                f"{len(rest)} stages under 1s, {sum(d for _, d in rest):.1f}s together"
+            )
+        print(
+            f"  Startup profile: safety features up {self._safety_up_at:.1f}s "
+            f"after process start, voice stack ready {total:.1f}s: "
+            + " · ".join(parts), flush=True,
+        )
 
     def run(self) -> None:
         """Main 100 Hz sensor loop. Blocks until shutdown.
@@ -1272,6 +1565,12 @@ class App:
 
         # Cancel any in-flight voice cycle so the pipeline notices and exits.
         self._voice_cancel.set()
+
+        # A loader part-way through a model load cannot be interrupted;
+        # give it a moment to notice the shutdown between stages, then
+        # carry on. It is a daemon thread and the process is exiting.
+        if self._loader_thread is not None and self._loader_thread.is_alive():
+            self._loader_thread.join(timeout=2.0)
 
         # Before the telemetry drain: this aborts playback, so a worker
         # part-way through a long announcement doesn't hold up shutdown
@@ -1413,13 +1712,22 @@ class App:
 
         Two tiers, and they notify different people:
 
-          - `LOW_BATTERY_PERCENT` (15%) — guardians get the HTTP alert and
+          - `LOW_BATTERY_PERCENT` (30%) — guardians get the HTTP alert and
             an SMS, and the wearer is told to charge soon. Until this
             existed only the guardians knew; the person actually carrying
             the device found out when it died.
-          - `CRITICAL_BATTERY_PERCENT` (5%) — spoken only, and critical so
-            it interrupts. No second guardian alert: they were told at 15%
-            over two channels and a repeat says nothing they can act on.
+          - `CRITICAL_BATTERY_PERCENT` (20%) — spoken only, and critical
+            so it interrupts. No second guardian alert: they were told at
+            30% over two channels and a repeat says nothing they can act on.
+
+The comparisons are inclusive, so a threshold names the percentage
+        the wearer is warned *at*: 30% fires, and the spoken warning says
+        "30 percent". They were strict until a bench test sat at exactly
+        30% in silence — correct by the code, indefensible to explain, and
+        it made the constant mean "one below the number written here".
+
+        Firing also requires `is_discharging`: a device on mains is not
+        going flat, whatever the gauge says.
 
         Each tier owns an independent latch so neither can clear the other.
         """
@@ -1461,8 +1769,15 @@ class App:
 
         # Hysteresis: only fire if we haven't already alerted, and we're
         # below the fire threshold. Clear the latch once we recover
-        # above the recovery threshold (typically higher — e.g. 20% —
-        # so quick sags near 15% don't retrigger).
+        # above the recovery threshold (higher — 35% against a 30% fire —
+        # so quick sags near the threshold don't retrigger).
+        #
+        # The latch is persisted to disk, so one that fired in an earlier
+        # run is still set at startup and suppresses the warning until the
+        # pack recovers past 35%. That is deliberate — a reboot is not a
+        # reason to re-warn about the same discharge — but it does mean a
+        # latch set while the device had no working audio stays silent
+        # afterwards. `var/low_battery_alerted` is the file to delete.
         if self._low_battery_alerted:
             if pct >= LOW_BATTERY_RECOVERY_PERCENT:
                 print(
@@ -1471,7 +1786,7 @@ class App:
                 )
                 self._set_low_battery_latch(False)
         else:
-            if pct < LOW_BATTERY_PERCENT and reading.is_discharging:
+            if pct <= LOW_BATTERY_PERCENT and reading.is_discharging:
                 print(
                     f"[battery] {pct}% — firing LOW_BATTERY alert",
                     flush=True,
@@ -1494,7 +1809,7 @@ class App:
                 )
                 self._set_critical_battery_latch(False)
         else:
-            gauge_critical = pct < CRITICAL_BATTERY_PERCENT and reading.is_discharging
+            gauge_critical = pct <= CRITICAL_BATTERY_PERCENT and reading.is_discharging
             if gauge_critical or voltage_critical:
                 print(
                     f"[battery] critical, warning the wearer — "
@@ -2041,6 +2356,24 @@ class App:
         the user knows the mic is now live. Feedback runs BEFORE
         recording starts so the chime isn't captured in the audio.
         """
+        if self._voice_degraded.is_set():
+            # Not loading — never going to load. The busy cue means
+            # "wait", and waiting will not help, so someone pressing
+            # again every ten seconds would be answered honestly by a
+            # sound that lies. Say it instead; the clip plays even when
+            # TTS is what failed.
+            print("[PTT] Voice stack unavailable — press answered.", flush=True)
+            self._announce(
+                messages.get("system.voice_unavailable", self.language.current),
+            )
+            return
+        if not self._voice_stack_ready.is_set():
+            # Still loading. Answered rather than ignored — a button that
+            # produces nothing reads as broken — but with the busy cue,
+            # not a recording that nothing could yet transcribe.
+            print("[PTT] Voice stack still loading — press ignored.", flush=True)
+            self._play_cue(play_busy_cue)
+            return
         if self._voice_active.is_set():
             # Answer the press even though it is refused. A button that
             # produces nothing at all is indistinguishable from a button
@@ -2214,9 +2547,13 @@ class App:
     # repeating a sentence the wearer heard moments ago.
     _DELIVERY_MESSAGES = {
         (True, SMS_FAILED):      "emergency.delivery.sms_failed",
+        # Distinct from SMS_FAILED: nothing will be retried, so the
+        # sentence must not promise a retry. See `SMS_NO_MODEM`.
+        (True, SMS_NO_MODEM):    "emergency.delivery.sms_no_modem",
         (True, SMS_NO_NUMBER):   "emergency.delivery.no_number",
         (False, SMS_SENT):       "emergency.delivery.backend_failed",
         (False, SMS_FAILED):     "emergency.delivery.all_failed",
+        (False, SMS_NO_MODEM):   "emergency.delivery.all_failed",
         (False, SMS_NO_NUMBER):  "emergency.delivery.all_failed",
         (False, SMS_UNAVAILABLE): "emergency.delivery.all_failed",
     }
@@ -2637,7 +2974,7 @@ class App:
             print(f"[feedback] chime error: {exc}", file=sys.stderr, flush=True)
 
     def _play_emergency_feedback(self) -> None:
-        """Emergency feedback: 3 fast buzzer beeps + all-motor pulse.
+        """Emergency feedback: 3 bursts of rapid beeps + all-motor pulse.
 
         **The only thing in the runtime that sounds the buzzer**, and
         both ways an emergency can arise go through it — the button, via
@@ -2654,7 +2991,10 @@ class App:
         would leave a bystander unable to tell an awning from an
         emergency.
 
-        Blocking for roughly 0.7 s, so every caller spawns it rather than
+        Three repetitions with gaps prevent desensitization and improve
+        recognition of the alert as urgent rather than incidental.
+
+        Blocking for roughly 2.9 s, so every caller spawns it rather than
         calling it inline.
         """
         with self._warning_lock:
@@ -2666,7 +3006,10 @@ class App:
                 print(f"[feedback] motor-ack error: {exc}", file=sys.stderr, flush=True)
             try:
                 if self.buzzer is not None:
-                    self.buzzer.beep(times=3, duration_s=0.1, gap_s=0.06)
+                    for i in range(3):
+                        self.buzzer.beep(times=3, duration_s=0.1, gap_s=0.06)
+                        if i < 2:  # Don't sleep after the last burst
+                            time.sleep(0.5)
             except Exception as exc:
                 print(f"[feedback] buzzer error: {exc}", file=sys.stderr, flush=True)
 
@@ -3300,7 +3643,7 @@ class App:
                        critical=True)
 
     def _warm_up_nlu(self) -> None:
-        """Warm the LLM off the main thread, then say the device is ready.
+        """Warm the LLM off the main thread, then greet and report charge.
 
         Never raises: a warmup that fails or times out degrades the first
         voice command, exactly as it did inline, and the greeting is still
@@ -3315,7 +3658,61 @@ class App:
                 warm(NLU_WARMUP_TIMEOUT_S)
             except Exception as exc:
                 print(f"[nlu-warmup] failed: {exc}", file=sys.stderr, flush=True)
+        # The number the user actually experiences: power-on to the
+        # moment voice commands answer. `system.starting` promises a
+        # duration out loud, so a measurement that has to be
+        # reconstructed from journal timestamps is one nobody checks —
+        # and the promise drifted to 2.8x reality before anyone did.
+        elapsed = time.monotonic() - self._started_at
+        print(
+            f"IndepenSense fully ready in {elapsed:.0f}s "
+            f"(from process start; add the boot and systemd queue before it "
+            f"for what the user waits through).",
+            flush=True,
+        )
         self._speak_greeting()
+        # After the greeting, not during startup.
+        #
+        # This used to be called the moment the HAT was opened, which put
+        # it on the announcer thread while the main thread was loading
+        # YOLO, the camera stack and Tesseract. Playback writes 512-frame
+        # blocks and `stream.write` blocks; a thread starved of the GIL by
+        # a torch import misses its deadline and the output underruns, so
+        # the sentence arrived as "battery" ... gap ... "32 percent". The
+        # same sentence spoken from a voice command, with the device idle,
+        # plays cleanly — the message was never the problem, the moment
+        # was.
+        #
+        # The order is better anyway: a charge level is something the
+        # wearer acts on when setting off, and the greeting is what tells
+        # them they can.
+        self._announce_battery_status()
+
+    def _announce_battery_status(self) -> None:
+        """Announce battery percentage right after startup. Never raises.
+
+        The user needs to know if the device is ready to go or needs
+        charging before heading out. Spoken right after the greeting, once
+        model loading is finished and the audio path is quiet — see the
+        call site for why that matters. Best-effort: a missing battery
+        handler is no reason to fail startup.
+        """
+        if self.battery is None:
+            return
+        try:
+            reading = self.battery.read()
+        except Exception as exc:
+            print(f"[battery-startup] read error: {exc}", file=sys.stderr, flush=True)
+            return
+        if reading is None:
+            return
+
+        pct = reading.percentage
+        if reading.is_charging:
+            msg = messages.get("battery.charging", self.language.current, percent=pct)
+        else:
+            msg = messages.get("battery.level", self.language.current, percent=pct)
+        self._announce(msg)
 
     def _speak_greeting(self) -> None:
         """Announce readiness in the active language. Never raises.
@@ -3433,7 +3830,7 @@ class App:
         command — which is the cost this whole layer exists to remove.
         """
         return build_matcher(
-            model_name=NLU_EMBEDDING_MODEL,
+            model_path=NLU_EMBEDDING_MODEL_DIR,
             bank_path=NLU_EMBEDDING_BANK_PATH,
             score_threshold=NLU_EMBEDDING_SCORE_THRESHOLD,
             margin_threshold=NLU_EMBEDDING_MARGIN_THRESHOLD,
@@ -3727,6 +4124,20 @@ def run_app(app: App) -> None:
     try:
         app.start()
         app.run()
+        # A model that failed to load on the voice-stack thread, where
+        # the retries did not save it and the runtime did not choose to
+        # carry on. Raised here, after the loop has stopped, so the exit
+        # is non-zero and systemd restarts the service with the cause in
+        # the journal.
+        #
+        # Not raised when the loader degraded on purpose: `_startup_error`
+        # still holds the last failure for the journal, but the process
+        # ran deliberately and to completion with its safety features
+        # working. Exiting then would hand systemd a restart loop and
+        # take fall detection down with it — which is the outcome
+        # degrading exists to avoid.
+        if app._startup_error is not None and not app._voice_degraded.is_set():
+            raise app._startup_error
     except Exception as exc:
         print(f"Fatal error: {exc}", file=sys.stderr, flush=True)
         sys.exit(1)

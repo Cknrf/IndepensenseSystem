@@ -810,6 +810,10 @@ def _start_and_press(app, monkeypatch):
     monkeypatch.setattr(app, "_announce",
                         lambda text, critical=False: spoken.append(text))
     app.start()
+    # The voice stack loads on its own thread and ends with the greeting
+    # and the battery level. Waiting for it makes the spoken order these
+    # tests assert deterministic: battery first, then the alert.
+    assert app.wait_for_voice_stack(timeout_s=5.0)
     app.emergency_button.press()
     return spoken
 
@@ -845,7 +849,9 @@ def test_with_no_modem_but_a_reachable_backend_it_confirms_the_alert_was_sent(
         assert _wait_for(lambda: len(app.buffered._inner.alerts) == 1)
         sent = messages.get("emergency.sent", lang)
         assert _wait_for(lambda: sent in spoken), f"heard {spoken!r}"
-        assert spoken == [messages.get("emergency.sending", lang), sent], spoken
+        # Battery announcement happens at startup, so it comes first.
+        battery_msg = messages.get("battery.level", lang, percent=100)
+        assert spoken == [battery_msg, messages.get("emergency.sending", lang), sent], spoken
     finally:
         app._shutdown.set()
         app.stop()

@@ -18,6 +18,7 @@ from indepensense.telemetry.guardians import GuardianDirectory
 from indepensense.telemetry.mock import MockTelemetryClient
 from indepensense.telemetry.null import NullTelemetryClient
 from indepensense.telemetry.sms_alerts import (
+    SMS_NO_MODEM,
     SMS_FAILED,
     SMS_NO_NUMBER,
     SMS_SENT,
@@ -120,12 +121,22 @@ def test_one_bad_number_does_not_stop_the_others(tmp_path):
 
 
 def test_a_raising_sender_does_not_stop_the_others(tmp_path):
+    """A driver bug on one recipient must not cost the others.
+
+    The call count is deliberately not asserted. It used to be `== 2`,
+    one attempt per number, and that was the contract before retries
+    existed — the assertion then failed for a reason that had nothing to
+    do with what the test is named after. What matters is that both
+    numbers were attempted and both were counted as failed; how many
+    times each was retried is the retry policy's business, and tested
+    where that policy lives.
+    """
     class _Exploding:
         def __init__(self):
-            self.calls = 0
+            self.numbers = []
 
         def send(self, number, text):
-            self.calls += 1
+            self.numbers.append(number)
             raise RuntimeError("driver bug")
 
         def close(self):
@@ -138,8 +149,9 @@ def test_a_raising_sender_does_not_stop_the_others(tmp_path):
         SMS_EVENT_TYPES,
     )
     notifier.send_alert(_alert())
-    assert _wait_until(lambda: sender.calls == 2)
-    assert notifier.sms_failed_count == 2
+
+    assert _wait_until(lambda: notifier.sms_failed_count == 2)
+    assert set(sender.numbers) == {"+639171234567", "+639281234567"}
 
 
 @pytest.mark.parametrize(
@@ -415,3 +427,161 @@ def test_an_unprovisioned_unit_does_not_claim_the_dashboard_was_reached(tmp_path
         buffered.close(drain_timeout_s=0.1)
     assert delivery.backend_ok is False
     assert delivery.sms == SMS_FAILED
+
+
+# --- the three knobs ---------------------------------------------------------
+#
+# The SMS leg used to run to completion before anything was spoken, so
+# three 30-second modem timeouts meant 90 seconds of silence after an
+# emergency press — with the backend already succeeded a second in. The
+# deadline bounds *telling the user*; the retry window bounds *trying*;
+# retryability decides which failures are worth either.
+
+class _Recording:
+    """A sender whose outcome can change between rounds."""
+
+    def __init__(self, results):
+        # results: list of (sent, retryable) consumed per call, last repeats.
+        self._results = list(results)
+        self.calls = []
+
+    def send(self, number, text):
+        from indepensense.messaging.base import SMSResult
+        self.calls.append(number)
+        sent, retryable = (
+            self._results.pop(0) if len(self._results) > 1 else self._results[0]
+        )
+        return SMSResult(number, sent, "" if sent else "nope", retryable=retryable)
+
+    def close(self):
+        pass
+
+
+def _notifier(tmp_path, sender, received=None, **kwargs):
+    kwargs.setdefault("report_deadline_s", 5.0)
+    kwargs.setdefault("attempt_delays_s", (0.0,))
+    kwargs.setdefault("retry_window_s", 0.0)
+    kwargs.setdefault("retry_backoff_s", ())
+    kwargs.setdefault("sleep", lambda _s: None)
+    return SMSAlertNotifier(
+        MockTelemetryClient(), sender, _directory(tmp_path, "09171234567"),
+        SMS_EVENT_TYPES,
+        on_delivery=(lambda e, d: received.append(d)) if received is not None else None,
+        **kwargs,
+    )
+
+
+def test_a_modem_that_is_gone_is_not_retried(tmp_path):
+    """`retryable=False` is the driver saying another attempt cannot
+    help. Three attempts against an absent modem cost ninety seconds to
+    learn what the first one already knew."""
+    sender = _Recording([(False, False)])
+    notifier = _notifier(tmp_path, sender, attempt_delays_s=(0.0, 0.0, 0.0))
+
+    notifier.send_alert(_alert())
+
+    assert _wait_until(lambda: notifier.sms_failed_count == 1)
+    assert len(sender.calls) == 1, f"retried an absent modem: {sender.calls}"
+
+
+def test_a_transient_failure_is_retried(tmp_path):
+    """The distinction only earns its keep if the other side still is."""
+    sender = _Recording([(False, True)])
+    notifier = _notifier(tmp_path, sender, attempt_delays_s=(0.0, 0.0, 0.0))
+
+    notifier.send_alert(_alert())
+
+    assert _wait_until(lambda: notifier.sms_failed_count == 1)
+    assert len(sender.calls) == 4, f"expected 4 attempts, got {sender.calls}"
+
+
+def test_an_absent_modem_is_reported_as_its_own_state(tmp_path):
+    """Not SMS_FAILED. The two need different things said: one is
+    followed by a retry window the wearer is told about, the other is
+    not, and promising a retry that will not happen is the lie this
+    whole delivery report exists to remove."""
+    received = []
+    notifier = _notifier(tmp_path, _Recording([(False, False)]), received)
+
+    notifier.send_alert(_alert())
+
+    assert _wait_until(lambda: len(received) == 1)
+    assert received[0].sms == SMS_NO_MODEM
+
+
+def test_a_transient_failure_is_still_reported_as_failed(tmp_path):
+    received = []
+    notifier = _notifier(tmp_path, _Recording([(False, True)]), received)
+
+    notifier.send_alert(_alert())
+
+    assert _wait_until(lambda: len(received) == 1)
+    assert received[0].sms == SMS_FAILED
+
+
+def test_the_verdict_does_not_wait_for_the_retry_window(tmp_path):
+    """The point of the whole change. The wearer hears the outcome on
+    the deadline, and delivery carries on behind it."""
+    received = []
+    notifier = _notifier(
+        tmp_path, _Recording([(False, True)]), received,
+        retry_window_s=60.0, retry_backoff_s=(0.0, 0.0),
+    )
+
+    notifier.send_alert(_alert())
+
+    assert _wait_until(lambda: len(received) == 1), "verdict waited for the window"
+
+
+def test_delivery_keeps_being_attempted_after_the_verdict(tmp_path):
+    """The messages promise "the system will keep retrying the text".
+    Nothing honoured that until now — the fan-out returned and the alert
+    was abandoned."""
+    received = []
+    sender = _Recording([(False, True)])
+    notifier = _notifier(
+        tmp_path, sender, received,
+        retry_window_s=60.0, retry_backoff_s=(0.0, 0.0, 0.0),
+    )
+
+    notifier.send_alert(_alert())
+    assert _wait_until(lambda: len(received) == 1)
+
+    assert _wait_until(lambda: len(sender.calls) > 1), "gave up at the verdict"
+
+
+def test_a_late_success_is_not_announced(tmp_path):
+    """The wearer is mid-emergency and was told to seek help another
+    way. A second announcement minutes later is noise; the guardian —
+    who is the one that matters — has the text either way."""
+    received = []
+    sender = _Recording([(False, True), (True, True)])
+    notifier = _notifier(
+        tmp_path, sender, received,
+        retry_window_s=60.0, retry_backoff_s=(0.0, 0.0),
+    )
+
+    notifier.send_alert(_alert())
+    assert _wait_until(lambda: len(received) == 1)
+    assert _wait_until(lambda: sender.calls.count("+639171234567") > 1)
+
+    time.sleep(0.05)
+    assert len(received) == 1, "spoke again after a late success"
+
+
+def test_the_retry_window_is_bounded(tmp_path):
+    """A text arriving forty minutes on describes a situation that has
+    already resolved. The channel that retries indefinitely is the
+    backend queue, not this one."""
+    sender = _Recording([(False, True)])
+    notifier = _notifier(
+        tmp_path, sender, retry_window_s=0.0, retry_backoff_s=(0.0, 0.0, 0.0),
+    )
+
+    notifier.send_alert(_alert())
+    assert _wait_until(lambda: notifier.sms_failed_count == 1)
+    time.sleep(0.05)
+    settled = len(sender.calls)
+    time.sleep(0.05)
+
+    assert len(sender.calls) == settled, "still retrying past the window"

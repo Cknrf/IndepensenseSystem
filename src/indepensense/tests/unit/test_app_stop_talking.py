@@ -53,6 +53,9 @@ def app(monkeypatch):
     instance = MockApp()
     instance.announcer = _SpyAnnouncer()
     instance.executor = _SpyExecutor()
+    # These tests never call `start()`: stand in for the loader having
+    # finished, or every PTT press is refused as "still loading".
+    instance._voice_stack_ready.set()
     # Motor ack would otherwise sleep; it is covered elsewhere.
     monkeypatch.setattr(instance, "_play_button_ack", lambda: None)
     return instance

@@ -127,11 +127,26 @@ def test_alert_fires_below_the_threshold(app):
     assert app._low_battery_alerted is True
 
 
-def test_no_alert_at_or_above_the_threshold(app):
-    """The comparison is `pct < LOW_BATTERY_PERCENT`, so exactly 15% is
-    not low. Pinned so a refactor can't flip it unnoticed."""
+def test_the_alert_fires_at_the_threshold_itself(app):
+    """The comparison is `pct <= LOW_BATTERY_PERCENT`, so the constant
+    names the percentage the wearer is warned *at* — 30% fires, and the
+    spoken warning says "30 percent".
+
+    It was strict until a bench test sat at exactly 30% in silence. That
+    was correct by the code and impossible to defend out loud, and it
+    made the constant mean "one below the number written here"."""
     app.battery.reading = _reading(LOW_BATTERY_PERCENT)
     _check_now(app)
+
+    assert len(_low_battery_alerts(app)) == 1
+
+
+def test_no_alert_above_the_threshold(app):
+    """One point clear is still healthy. Pinned so a refactor can't widen
+    the band unnoticed."""
+    app.battery.reading = _reading(LOW_BATTERY_PERCENT + 1)
+    _check_now(app)
+
     assert _low_battery_alerts(app) == []
 
 

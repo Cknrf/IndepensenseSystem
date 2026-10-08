@@ -48,7 +48,7 @@ for f in $(grep -oE '[A-Za-z0-9_]+\.json' config.yml | sort -u); do
     sed 's/^/      /' "custom_models/$f"
 done
 
-say "Stopping services (the app Requires= graphhopper, so it stops too)"
+say "Stopping services"
 sudo systemctl stop indepensense graphhopper ollama || true
 
 say "Removing the old graph"

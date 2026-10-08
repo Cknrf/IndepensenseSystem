@@ -2,11 +2,62 @@
 Description=IndepenSense wearable runtime
 Documentation=https://github.com/cknrf/IndepensenseSystem
 Wants=network-online.target
-After=network-online.target ollama.service ollama-warmup.service graphhopper.service photon.service
-Requires=ollama.service graphhopper.service photon.service
+# Ordered after Ollama only. GraphHopper and Photon are ordered after
+# *this* unit instead — see their files — because the SD card is the
+# bottleneck at boot and they are the two biggest things reading it.
+#
+# Measured on the Pi: the card delivers 24 MB/s, boot pulls ~4.5 GB
+# through it, and one other process streaming from the card turned a
+# 36 s Whisper load into 103 s. Routing and geocoding are only reachable
+# through a voice command, so nothing is lost by loading their 1.4 GB
+# after the voice stack is in RAM rather than alongside it.
+#
+# That ordering works because this unit is `Type=notify`: systemd counts
+# it started when the app sends `READY=1`, which the voice-stack loader
+# does once the models are loaded (`app._notify_systemd`). Until then
+# the two sidecars wait. If the app's models fail to load, the process
+# exits non-zero and `Restart=` brings it back; the sidecars start on the
+# attempt that succeeds.
+#
+# Deliberately NOT ordered after `ollama-warmup.service`. That unit is
+# `Type=oneshot` — started only when its tool exits, up to three minutes
+# — and what sat behind it was the "IndepenSense is starting up" clip,
+# the one thing that tells a user who cannot see a screen that the
+# device is alive. The warmup runs in parallel instead; the app re-warms
+# the model itself at the end of its own load, which costs ~3 s when the
+# unit got there first and does the full work when it did not.
+After=network-online.target ollama.service
+# `Wants=`, not `Requires=`. Ordering only — a failure in any of these
+# must not keep the wearable off.
+#
+# Under `Requires=`, a GraphHopper that failed to start took the whole
+# device with it: no fall detection, no obstacle warnings, no emergency
+# button, because the routing engine was unhappy. That is the wrong
+# trade for a safety device. Routing, geocoding and voice are features;
+# noticing that the wearer has fallen over is the reason it exists.
+#
+# Safe because nothing here is touched during startup. `_open_router`
+# and `_open_geocoder` only store a URL, and `_open_parser` constructs
+# the Ollama client with `warmup=False` precisely so that `start()` does
+# not block on the LLM. The first *request* to a dead service fails, and
+# every caller already handles that — it is why the GraphHopper client
+# reports the server's own error text.
+#
+# `Requires=` also propagated stops: `systemctl stop graphhopper` used to
+# stop the wearable too. Nothing depends on that any more —
+# `deploy/graphhopper/rebuild.sh` names `indepensense` explicitly.
+Wants=ollama.service graphhopper.service photon.service
 
 [Service]
-Type=simple
+# `notify`: started means "the voice stack is loaded", not "python ran".
+# `STATUS=` lines from every startup stage show in `systemctl status`.
+Type=notify
+NotifyAccess=main
+# The models take two to three minutes to load from the SD card, and a
+# slower card or a cold page cache can stretch that. Well above it, so
+# systemd never kills a service that is merely loading. A genuine
+# failure does not wait this long — the loader exits non-zero itself.
+TimeoutStartSec=15min
 User=cknrf
 Group=cknrf
 # Serial ports (GPS on ttyUSB1), I²C (MPU6050), and GPIO (buttons + buzzer + motors).

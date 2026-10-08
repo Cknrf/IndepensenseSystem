@@ -91,7 +91,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - A soft blip while the device is working. Transcription plus local classification is 3-7 s of silence on a Pi, which is indistinguishable from a device that has died; a command answered faster than 1.5 s never blips at all
 - Speech and commands can both be interrupted — the repeat button stops the wearable mid-sentence (which matters when OCR is reading a menu) and cancels a command still being transcribed or classified, so a question asked by mistake can be taken back without waiting out the answer. Every press answers with a short tone, because silence is also what a dead device sounds like
 - Spoken help, so a user who cannot read a manual can ask what the device does
-- Speaks as soon as it is powered on — startup takes 2-3 minutes, and a pre-rendered announcement plays before any model loads so silence is never mistaken for a device that failed to boot
+- Speaks as soon as it is powered on — a pre-rendered announcement plays before any model loads so silence is never mistaken for a device that failed to boot. Fall detection, obstacle warnings and the emergency button are live within seconds; the voice models load behind them and a second announcement says when voice commands work
 - Voice shutdown, gated behind a spoken question and a confirming button press
 - Speaker volume by voice, with a floor the user cannot go below
 
@@ -221,7 +221,14 @@ The system runs on macOS using the mock drivers — no hardware required for dev
 
 ```bash
 pip install -r requirements-pi.txt
+python -m indepensense.tools.fetch_models     # Whisper, e5, MMS — once, with network
+python -m piper.download_voices en_US-lessac-medium   # from models/voices/
 ```
+
+The runtime loads every model from a directory under `models/` and never
+resolves a Hugging Face repo id at startup, so the wearable starts the
+same with or without a network — and a model that was never fetched is a
+startup error naming the tool, not a download over the SIM link.
 
 External services (Ollama, GraphHopper, Photon) are installed and configured via systemd — see the linked docs.
 
@@ -242,6 +249,7 @@ After wiring a component (or after any hardware change), run its test to confirm
 | DYP-A22 top only | `python -m indepensense.sensors.tests.manual.single_dyp_test` | Prints live distance in cm |
 | DYP-A22 top + bottom | `python -m indepensense.sensors.tests.manual.dual_dyp_test` | Prints both distances side by side |
 | MPU6050 IMU | `python -m indepensense.sensors.tests.manual.single_mpu6050_test` | Prints accel + gyro readings |
+| **Why the low-battery warning did not fire** | `python -m indepensense.power.tests.manual.battery_alert_gates` | Prints all four gates the alert passes through — percentage vs. the strict threshold, `is_discharging`, the on-disk latch, and whether the HAT reads at all — because a device that is silent looks identical whichever one is closed. Read-only; safe while the app runs |
 | QMC5883P magnetometer | `python -m indepensense.sensors.tests.manual.single_magnetometer_test` | Prints calibrated field, magnitude, and heading |
 | Magnetometer mount axes — which sensor axis ends up vertical, and which way round the other two go | `python -m indepensense.sensors.tests.manual.magnetometer_axes` | Two passes: turn on the spot (the quiet axis is vertical), then turn right (heading must increase). Measures what `docs/hardware.md` previously asked you to eyeball off a live readout. Needs **no compass** — the half it cannot determine without a known bearing is reported rather than guessed. Audible, so one person can turn the vest away from the screen |
 | Magnetometer calibration | `python -m indepensense.sensors.tests.manual.magnetometer_calibrate` | Sweep producing hard-iron offsets + soft-iron scales, paced as six faces: 10 s spinning at each, then a 5-second 5-4-3-2-1 countdown to turn it over — beeps and on-screen digits together — so nobody is caught mid-spin. `--spin` sets the spinning time and the changeover is added on top, because nobody thinks in sweep totals. **Grades itself**: a correctly calibrated sensor reads a constant field magnitude in every orientation, so the spread of corrected magnitudes says whether the sweep found the sphere. Values are withheld entirely on a bad sweep rather than printed for pasting, and the failure is diagnosed by *kind* — a wrong baseline, something magnetic riding on the vest, or the vest passing something once — since those need three different fixes. **Audible and visual** — the live line names the face to point down, counts the changeover, and shows the raw field; the same structure is carried by tones, so the vest can be swept with or without the screen |
@@ -349,6 +357,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | Render every fixed message to audio — run after editing `intents/messages.py` | `python -m indepensense.tools.render_messages` — ~4 min, ~15 MB into `data/audio/messages/` (measured: 122 clips, 247 s) |
 | List what would be rendered, without loading a voice (works on a Mac) | `python -m indepensense.tools.render_messages --dry-run` |
 | Re-render everything, e.g. after changing a voice model | `python -m indepensense.tools.render_messages --force` |
+| Fetch every Hub-hosted model into `models/` — once after install, and after changing `WHISPER_MODELS`, `NLU_EMBEDDING_MODEL` or `MMS_VOICE_REPOS` | `python -m indepensense.tools.fetch_models` (`--dry-run` lists without network, `--force` refetches) |
 
 Optional: anything missing is synthesised on demand, and a fixed message
 synthesised that way is kept permanently — so skipping this costs latency
@@ -432,7 +441,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | No audio output | The headset isn't the default sink. `aplay -l` should list it as a card; `wpctl status` shows the real default and the `Settings` block shows what is pinned. A pin left over from a previous audio device survives that device being unplugged |
 | Headset not in `aplay -l` / `arecord -l` at all | Nothing in `lsusb` either means it's a passive analog USB-C earphone relying on a host DAC, not a USB Audio Class device — no adapter will make it work on a Pi |
 | STT suddenly got worse, nothing in the logs | Mic gain reset. Nothing in the app manages the PipeWire source level — re-run `wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 60%`, with the `%`: a bare number is a linear factor and over-amplifies into clipping |
-| Whisper / Piper / MMS / Ollama slow to start | First boot loads models into RAM (~30–60 s). Subsequent starts are fast. |
+| Voice commands unavailable for the first minutes after boot | Expected: the models load on the `voice-stack` thread after the safety features are up, and a PTT press meanwhile answers with the busy cue. The journal's `Startup profile:` line says how long each load took; the SD card's read speed is the usual limit. |
 | PTT button raises `PinInvalidState` | Do not set `active_state=True` when `pull_up=False` — the pull sets the polarity already |
 | YOLO very slow | Expected during `continuous_detect_test`. In production, YOLO only runs on-demand per voice command |
 | Voice commands don't classify correctly | Check `ollama list` — the Qwen model may not be loaded; the warmup service takes ~1–2 min on cold boot |
@@ -442,7 +451,7 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
 | Navigation never starts, always says "cancelled" | The destination confirmation timed out. It wants a **PTT press** within `DESTINATION_CONFIRM_TIMEOUT_S` after the place is read back |
 | The device talks over itself | Should be impossible — every main-loop utterance goes through the announcer, which is single-threaded. If it happens, something is calling `play()` directly |
 | Process dies with `double free or corruption` and no traceback | A C-level fault, almost always PortAudio. `voice/audio.py` owns every stream and must never call `sd.play` / `sd.rec` / `sd.stop` — those share one global context and let one thread close another's stream. `test_audio_playback.py` guards this |
-| Obstacles vibrate but never beep | Working as designed. The buzzer is reserved for emergencies — the button and a detected fall — so that one sound carries one meaning to a bystander. Obstacles are haptic-only on both sensors and both tiers |
+| Obstacles vibrate but never beep | Working as designed. The buzzer is reserved for emergencies — the button and a detected fall — so that one sound carries one meaning to a bystander. Obstacles are haptic-only on both sensors and every tier — far, warning and danger on TOP; warning and danger on BOTTOM |
 | Saved places vanish after a reboot | `var/places.json` unwritable, or the process runs as a user without write access to `var/` |
 
 ## Voice Commands

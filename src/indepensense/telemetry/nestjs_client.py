@@ -99,6 +99,14 @@ def alert_payload(event: AlertEvent) -> dict[str, Any]:
     }
 
 
+# Gaps between HTTP retries, seconds. A module constant rather than a
+# local list so tests can shrink it: a unit test that sleeps 3.5 s to
+# prove a 404 is not retried has spent 3.5 s asserting what a call
+# counter already knew. Same objection `CLAUDE.md` makes to tests that
+# touch the network, with a different clock.
+_BACKOFF_DELAYS_S = [0.5, 1.0, 2.0]
+
+
 class NestJSTelemetryClient:
     def __init__(
         self,
@@ -126,34 +134,66 @@ class NestJSTelemetryClient:
 
     def _post(self, path: str, payload: dict[str, Any]) -> bool:
         import requests
+        import time
 
         url = f"{self._base_url}{path}"
-        try:
-            response = requests.post(
-                url,
-                json=payload,
-                headers={"Authorization": self._credential.authorization_header()},
-                timeout=self._timeout_s,
-            )
-        except requests.RequestException as exc:
-            print(f"[telemetry] POST {path} network error: {exc}", file=sys.stderr)
-            return False
+        # Retry up to 3 times with exponential backoff (0.5s, 1s, 2s).
+        # HTTP is idempotent so repeated requests are safe. This significantly
+        # improves delivery reliability for alerts on degraded networks.
+        backoff_delays = _BACKOFF_DELAYS_S
+        last_error = None
 
-        if response.status_code == 401:
-            # Not a transient failure. Raised so `buffered.py` can back off
-            # for a quarter of an hour instead of retrying every 10 s
-            # against a request that can never succeed.
-            raise DeviceCredentialRejected(
-                f"backend rejected the device credential for {path} "
-                f"(device {self._credential.device_id})"
-            )
+        for attempt in range(1 + len(backoff_delays)):
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    headers={"Authorization": self._credential.authorization_header()},
+                    timeout=self._timeout_s,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < len(backoff_delays):
+                    delay = backoff_delays[attempt]
+                    print(
+                        f"[telemetry] POST {path} attempt {attempt + 1} network error, "
+                        f"retrying in {delay}s: {exc}",
+                        file=sys.stderr,
+                    )
+                    time.sleep(delay)
+                    continue
+                print(f"[telemetry] POST {path} failed after {attempt + 1} attempts", file=sys.stderr)
+                return False
 
-        if not response.ok:
-            body_preview = response.text[:200] if response.text else "(empty)"
-            print(
-                f"[telemetry] POST {path} returned {response.status_code}: {body_preview}",
-                file=sys.stderr,
-            )
-            return False
+            if response.status_code == 401:
+                # Not a transient failure. Raised so `buffered.py` can back off
+                # for a quarter of an hour instead of retrying every 10 s
+                # against a request that can never succeed.
+                raise DeviceCredentialRejected(
+                    f"backend rejected the device credential for {path} "
+                    f"(device {self._credential.device_id})"
+                )
 
-        return True
+            if not response.ok:
+                body_preview = response.text[:200] if response.text else "(empty)"
+                if attempt < len(backoff_delays):
+                    delay = backoff_delays[attempt]
+                    print(
+                        f"[telemetry] POST {path} attempt {attempt + 1} returned "
+                        f"{response.status_code}, retrying in {delay}s: {body_preview}",
+                        file=sys.stderr,
+                    )
+                    time.sleep(delay)
+                    continue
+                print(
+                    f"[telemetry] POST {path} failed after {attempt + 1} attempts: "
+                    f"{response.status_code}: {body_preview}",
+                    file=sys.stderr,
+                )
+                return False
+
+            # Success on any 2xx response
+            print(f"[telemetry] POST {path} succeeded on attempt {attempt + 1}", flush=True)
+            return True
+
+        return False
