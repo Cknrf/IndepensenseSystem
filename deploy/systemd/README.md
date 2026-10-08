@@ -6,18 +6,48 @@ Pi so the wearable's backend comes up automatically on boot — no more
 
 The `indepensense.service` unit is the wearable's own long-running
 runtime (main loop, fall detection, voice pipeline, telemetry, etc.).
-It pulls in the other three and is ordered after them — but with
-`Wants=`, not `Requires=`, so a service that fails to start cannot keep
-the wearable off. Under `Requires=` an unhappy routing engine took fall
-detection, obstacle warnings and the emergency button with it, which is
-the wrong trade for a safety device: those are the reason it exists,
-routing is a feature.
+It pulls in the other three with `Wants=`, not `Requires=`, so a service
+that fails to start cannot keep the wearable off. Under `Requires=` an
+unhappy routing engine took fall detection, obstacle warnings and the
+emergency button with it, which is the wrong trade for a safety device:
+those are the reason it exists, routing is a feature.
 
 Nothing is touched during startup to make that risky. `_open_router`
 and `_open_geocoder` only store a URL, and `_open_parser` builds the
 Ollama client with `warmup=False` precisely so `start()` never blocks on
 the LLM. The first *request* to a dead service fails, and every caller
 already handles that.
+
+## Boot order: the SD card decides it
+
+Measured on the Pi: the card delivers 24 MB/s, and boot pulls roughly
+4.5 GB through it — the wearable's own models (~1.3 GB), Ollama's NLU
+model (1.9 GB), GraphHopper's graph (~0.9 GB) and Photon's index
+(~0.5 GB). With all four reading at once, a Whisper load that takes 36 s
+alone took 129 s. So the order is:
+
+1. **`indepensense.service` and `ollama.service` start together.** The
+   wearable brings its safety features up in seconds, then loads the
+   voice models while the loop runs; Ollama loads the NLU model
+   alongside, because the wearable's own LLM warmup needs it.
+2. **`graphhopper.service` and `photon.service` start after the wearable
+   reports ready.** `indepensense.service` is `Type=notify`: systemd
+   counts it started only when the app sends `READY=1`, which happens
+   once the voice stack is loaded. Both sidecars are `After=` it. Routing
+   and geocoding are only reachable through a voice command, so nothing
+   can want them before that moment.
+3. **Priorities for what ordering cannot cover.** Ollama keeps its place
+   but drops its I/O priority (the drop-in in `ollama.service.d/`), and
+   the two Java sidecars run at low CPU and I/O priority — for a restart
+   while the wearable is busy, not for boot. These lines only take effect
+   under the `bfq` scheduler, which `../udev/` installs; the default
+   `mq-deadline` ignores them.
+
+`systemctl status indepensense` shows the app's current startup stage
+(`STATUS=` lines) while it is loading, and `journalctl -u indepensense`
+has a `Startup profile:` line per boot with every stage's duration.
+
+### The Ollama warmup
 
 Ollama itself ships with its own systemd service (installed by the
 official Ollama installer). The `ollama-warmup.service` here pre-loads
@@ -35,10 +65,6 @@ announcement is the thing that exists to tell them apart. The app warms
 the NLU itself on a background thread anyway, and holds its "ready"
 greeting until that finishes.
 
-Ordering after `graphhopper` and `photon` costs nothing by comparison:
-both are `Type=simple`, so systemd calls them started the moment java is
-exec'd and never waits for the graph or the index to finish loading.
-
 ## Install
 
 Copy all four unit files into systemd's directory, enable them at boot,
@@ -51,10 +77,18 @@ sudo cp graphhopper.service    /etc/systemd/system/
 sudo cp photon.service         /etc/systemd/system/
 sudo cp ollama-warmup.service  /etc/systemd/system/
 sudo cp indepensense.service   /etc/systemd/system/
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+sudo cp ollama.service.d/override.conf /etc/systemd/system/ollama.service.d/
 
 sudo systemctl daemon-reload
 sudo systemctl enable graphhopper.service photon.service ollama-warmup.service indepensense.service
 sudo systemctl start  graphhopper.service photon.service ollama-warmup.service indepensense.service
+```
+
+Then the udev rule in `../udev/README.md`, and the models:
+
+```bash
+python -m indepensense.tools.fetch_models
 ```
 
 **`ollama-warmup.service` runs a script from the repo**, by absolute path:
@@ -166,6 +200,7 @@ sudo systemctl status graphhopper photon ollama-warmup
 - **graphhopper** — should read `Active: active (running)` within ~5 s.
 - **photon** — same, but takes ~30-60 s to open its OpenSearch index.
 - **ollama-warmup** — `oneshot` service, expected state is `Active: active (exited)` — this is normal for oneshot units. Its job is to fire once at boot, load the model, and exit. Check the model is actually loaded with `ollama ps`.
+- **indepensense** — `Type=notify`: `activating (start)` for the two to three minutes its models take to load, with the current stage in the `Status:` line, then `active (running)`. GraphHopper and Photon stay `inactive` until then by design.
 - **indepensense** — `Active: active (running)`. Full startup takes ~30-60 s (Whisper + Piper model loading + Ollama warmup); watch the log for `Ready. Running fall-detection loop.`
 
 Follow logs in real time:

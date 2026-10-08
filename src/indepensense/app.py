@@ -139,6 +139,7 @@ acceptable — it logs, returns None, and every caller handles None.
 import faulthandler
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -372,6 +373,35 @@ def _static_clip_names(languages) -> frozenset[str]:
         for key in messages.static_keys()
         for language in languages
     )
+
+
+def _notify_systemd(state: str) -> None:
+    """Tell systemd how startup is going, if it is listening. Never raises.
+
+    `indepensense.service` is `Type=notify`: systemd counts it started
+    only when it receives `READY=1`, which the voice-stack loader sends
+    once the models are in RAM. GraphHopper and Photon are ordered
+    `After=` the service, so that one datagram is what keeps their 1.4 GB
+    of graph and index off the SD card while the models load — measured
+    on the Pi, one other process reading from the card turned a 36 s
+    Whisper load into 103 s. `STATUS=` lines show up in `systemctl
+    status` so a headless device can be asked what it is doing.
+
+    One datagram on a unix socket, written out rather than taken from a
+    library: the protocol is that small. Off systemd — on the Mac, or run
+    by hand — `NOTIFY_SOCKET` is unset and this is a no-op.
+    """
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address:
+        return
+    if address.startswith("@"):               # abstract-namespace socket
+        address = "\0" + address[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(address)
+            sock.sendall(state.encode())
+    except OSError as exc:
+        print(f"[systemd] notify failed: {exc}", file=sys.stderr, flush=True)
 
 
 # Clips rendered at the end of every boot, rather than by the
@@ -1330,7 +1360,11 @@ class App:
 
         self._voice_stack_ready.set()
         self._print_startup_profile()
+        # Started, as far as systemd is concerned: the sidecars ordered
+        # after this service may now read their data from the card.
+        _notify_systemd("READY=1\nSTATUS=voice stack ready, warming the LLM")
         self._warm_up_nlu()
+        _notify_systemd("STATUS=fully ready")
 
     def wait_for_voice_stack(self, timeout_s: float) -> bool:
         """Block until the loader thread has finished — models, warmup
@@ -1356,6 +1390,7 @@ class App:
         self._close_stage()
         self._stage_label, self._stage_started = label, time.monotonic()
         print(f"  {label}...", flush=True)
+        _notify_systemd(f"STATUS={label}")
 
     def _close_stage(self) -> None:
         if self._stage_label is not None:
