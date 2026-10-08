@@ -931,6 +931,10 @@ class App:
         # Overwritten by `start()`; defaulted here so a test that
         # drives the warmup directly does not trip over it.
         self._started_at = time.monotonic()
+        # Per-stage startup timing — see `_stage`.
+        self._stage_label: str | None = None
+        self._stage_started = 0.0
+        self._stage_durations: list[tuple[str, float]] = []
 
         # Latest compass heading, refreshed at HEADING_CHECK_INTERVAL_S.
         # None until the first successful read (and stays None when no
@@ -997,15 +1001,17 @@ class App:
         # journal timestamps by hand.
         self._started_at = time.monotonic()
         print("Initialising IndepenSense runtime...", flush=True)
+        self._stage("Enumerating audio devices")
         self._report_audio_devices()
 
         # Before anything slow: tell the user the device is awake. Startup
         # is 2-3 minutes and every second of it is silent otherwise, which
         # to somebody who cannot see the terminal is indistinguishable from
         # a wearable that failed to boot.
+        self._stage("Playing startup notice")
         self._play_startup_notice()
 
-        print("  Opening MPU6050...", flush=True)
+        self._stage("Opening MPU6050")
         self.imu = self._open_imu()
         # Thresholds passed explicitly. They were previously left to the
         # constructor's defaults, which happened to match `config.py` —
@@ -1027,7 +1033,7 @@ class App:
             still_hold_s=WALKING_STILL_HOLD_S,
         )
 
-        print("  Opening GPS...", flush=True)
+        self._stage("Opening GPS")
         # The cache owns the device, so it is wired to consumers whether
         # or not the first open succeeds: its backoff picks the receiver
         # up whenever it appears, and `latest_fix()` answers None until
@@ -1038,10 +1044,10 @@ class App:
         self.gps_cache.start()
         cached_gps = _CachedGPSAdapter(self.gps_cache)
 
-        print("  Loading Whisper models...", flush=True)
+        self._stage("Loading Whisper models")
         self.stt = self._open_stt()
 
-        print("  Loading TTS voices (Piper + MMS)...", flush=True)
+        self._stage("Loading TTS voices (Piper + MMS)")
         self.tts = self._open_tts()
 
         # Started as soon as TTS exists so anything that wants to speak
@@ -1055,25 +1061,25 @@ class App:
         self.volume = self._open_volume()
         print(f"  Speaker volume {self.volume.current}%.", flush=True)
 
-        print("  Connecting to Ollama (warmup runs once the loop is up)...", flush=True)
+        self._stage("Building intent parser (LLM warmup runs once the loop is up)")
         self.parser = self._open_parser()
 
-        print("  Checking cloud LLM fallback...", flush=True)
+        self._stage("Checking cloud LLM fallback")
         self.cloud = self._try_open_cloud_answerer()
 
-        print("  Connecting to GraphHopper + Photon...", flush=True)
+        self._stage("Connecting to GraphHopper + Photon")
         router = self._open_router()
         geocoder = self._open_geocoder()
 
         self.places = self._open_saved_places()
         print(f"  {len(self.places)} saved place(s).", flush=True)
 
-        print("  Loading device credential...", flush=True)
+        self._stage("Loading device credential")
         self.credential = self._load_credential()
         if self.credential is not None:
             print(f"  Device {self.credential.device_id}", flush=True)
 
-        print(f"  Building buffered telemetry to {BACKEND_URL}...", flush=True)
+        self._stage(f"Building buffered telemetry to {BACKEND_URL}")
         telemetry_client = self._open_telemetry_client()
         self.buffered = BufferedTelemetryClient(
             telemetry_client,
@@ -1086,7 +1092,7 @@ class App:
         # battery, and the emergency intent inside the executor — gets
         # SMS without any of them knowing about it. Heartbeats pass
         # straight through. See `telemetry/sms_alerts.py`.
-        print("  Fetching guardian contacts...", flush=True)
+        self._stage("Fetching guardian contacts")
         self.guardians = GuardianDirectory(
             base_url=BACKEND_URL,
             credential=self.credential,
@@ -1097,7 +1103,7 @@ class App:
         self.guardians.refresh()
 
         if SMS_ENABLED:
-            print("  Opening SMS sender (mmcli)...", flush=True)
+            self._stage("Opening SMS sender (mmcli)")
             self.sms = self._try_open_sms()
         # Built even without SMS. The buffered client's True only means
         # "queued", so without a delivery report the executor answered
@@ -1139,7 +1145,7 @@ class App:
             reports_delivery=reports_delivery,
         )
 
-        print("  Opening buttons...", flush=True)
+        self._stage("Opening buttons")
         self.ptt_button = self._try_open_button(PTT_BUTTON_GPIO, "PTT")
         self.emergency_button = self._try_open_button(EMERGENCY_BUTTON_GPIO, "Emergency")
         self.repeat_button = self._try_open_button(REPEAT_BUTTON_GPIO, "Repeat")
@@ -1150,27 +1156,27 @@ class App:
         if self.repeat_button is not None:
             self.repeat_button.on("pressed", self._on_repeat_press)
 
-        print("  Opening buzzer + vibration motors...", flush=True)
+        self._stage("Opening buzzer + vibration motors")
         self.buzzer = self._try_open_buzzer()
         self.front_motor = self._try_open_motor(VIBRATION_FRONT_GPIO, "front")
         self.right_motor = self._try_open_motor(VIBRATION_RIGHT_GPIO, "right")
         self.left_motor = self._try_open_motor(VIBRATION_LEFT_GPIO, "left")
 
-        print("  Opening ultrasonic sensors...", flush=True)
+        self._stage("Opening ultrasonic sensors")
         self.top_sensor = self._try_open_ultrasonic(DYP_A22_TOP_PORT, "TOP")
         self.bottom_sensor = self._try_open_ultrasonic(DYP_A22_BOTTOM_PORT, "BOTTOM")
 
-        print("  Opening UPS HAT (battery)...", flush=True)
+        self._stage("Opening UPS HAT (battery)")
         self.battery = self._try_open_battery()
 
-        print("  Opening magnetometer (QMC5883P compass)...", flush=True)
+        self._stage("Opening magnetometer (QMC5883P compass)")
         self.magnetometer = self._try_open_magnetometer()
 
-        print("  Opening camera + YOLO detector...", flush=True)
+        self._stage("Opening camera + YOLO detector")
         self.camera = self._try_open_camera()
         self.object_detector = self._try_open_detector()
 
-        print("  Opening Tesseract OCR...", flush=True)
+        self._stage("Opening Tesseract OCR")
         self.ocr = self._try_open_ocr()
 
         # Late-bind battery + camera + detector + ocr into the executor.
@@ -1183,7 +1189,7 @@ class App:
             self.executor._detector = self.object_detector
             self.executor._ocr = self.ocr
 
-        print("  Starting heartbeat sender...", flush=True)
+        self._stage("Starting heartbeat sender")
         self.heartbeat_sender = PeriodicHeartbeatSender(
             telemetry=self.buffered,
             gps=cached_gps,
@@ -1210,6 +1216,7 @@ class App:
         # Now that TTS exists, make sure the next boot can speak at second
         # zero. Deliberately last: it costs a synthesis per language and
         # the user is already up and running by this point.
+        self._stage("Rendering boot clips + sweeping the clip cache")
         self._render_boot_clips()
         # Bound the clip cache once per boot. The announcer also sweeps
         # every CLIP_CACHE_SWEEP_EVERY renders, which covers a device
@@ -1221,6 +1228,49 @@ class App:
                 print(f"  Swept {freed / 1e6:.1f} MB of cached speech.", flush=True)
         except Exception as exc:
             print(f"[clips] startup sweep failed: {exc}", file=sys.stderr, flush=True)
+        self._print_startup_profile()
+
+    def _stage(self, label: str) -> None:
+        """Announce a startup stage and time the one before it.
+
+        Every "Opening X..." line in `start()` goes through here. One
+        total at the end said *that* startup was slow; it could not say
+        *which* load was slow, and the answer had to be reconstructed by
+        subtracting journal timestamps — which this device's clock makes
+        unreliable, because NTP steps it mid-boot (one boot showed 311 s
+        on the journal for 253 s on the monotonic clock). Measured here,
+        on the monotonic clock, the figure is right on every boot and
+        the profile is one line in the journal rather than an afternoon.
+        """
+        self._close_stage()
+        self._stage_label, self._stage_started = label, time.monotonic()
+        print(f"  {label}...", flush=True)
+
+    def _close_stage(self) -> None:
+        if self._stage_label is not None:
+            self._stage_durations.append(
+                (self._stage_label, time.monotonic() - self._stage_started)
+            )
+            self._stage_label = None
+
+    def _print_startup_profile(self) -> None:
+        """One line: the stages worth a second each, costliest first."""
+        self._close_stage()
+        total = time.monotonic() - self._started_at
+        slow = sorted(
+            (d for d in self._stage_durations if d[1] >= 1.0),
+            key=lambda d: d[1], reverse=True,
+        )
+        rest = [d for d in self._stage_durations if d[1] < 1.0]
+        parts = [f"{label} {secs:.1f}s" for label, secs in slow]
+        if rest:
+            parts.append(
+                f"{len(rest)} stages under 1s, {sum(d for _, d in rest):.1f}s together"
+            )
+        print(
+            f"  Startup profile, {total:.1f}s from process start to the loop: "
+            + " · ".join(parts), flush=True,
+        )
 
     def run(self) -> None:
         """Main 100 Hz sensor loop. Blocks until shutdown.
