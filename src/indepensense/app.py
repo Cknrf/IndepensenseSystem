@@ -1152,7 +1152,6 @@ class App:
 
         print("  Opening UPS HAT (battery)...", flush=True)
         self.battery = self._try_open_battery()
-        self._announce_battery_status()
 
         print("  Opening magnetometer (QMC5883P compass)...", flush=True)
         self.magnetometer = self._try_open_magnetometer()
@@ -3322,7 +3321,7 @@ The comparisons are inclusive, so a threshold names the percentage
                        critical=True)
 
     def _warm_up_nlu(self) -> None:
-        """Warm the LLM off the main thread, then say the device is ready.
+        """Warm the LLM off the main thread, then greet and report charge.
 
         Never raises: a warmup that fails or times out degrades the first
         voice command, exactly as it did inline, and the greeting is still
@@ -3338,14 +3337,31 @@ The comparisons are inclusive, so a threshold names the percentage
             except Exception as exc:
                 print(f"[nlu-warmup] failed: {exc}", file=sys.stderr, flush=True)
         self._speak_greeting()
+        # After the greeting, not during startup.
+        #
+        # This used to be called the moment the HAT was opened, which put
+        # it on the announcer thread while the main thread was loading
+        # YOLO, the camera stack and Tesseract. Playback writes 512-frame
+        # blocks and `stream.write` blocks; a thread starved of the GIL by
+        # a torch import misses its deadline and the output underruns, so
+        # the sentence arrived as "battery" ... gap ... "32 percent". The
+        # same sentence spoken from a voice command, with the device idle,
+        # plays cleanly — the message was never the problem, the moment
+        # was.
+        #
+        # The order is better anyway: a charge level is something the
+        # wearer acts on when setting off, and the greeting is what tells
+        # them they can.
+        self._announce_battery_status()
 
     def _announce_battery_status(self) -> None:
         """Announce battery percentage right after startup. Never raises.
 
         The user needs to know if the device is ready to go or needs
-        charging before heading out. Announced after the battery is opened
-        but before the language greeting plays. Best-effort: a missing
-        battery handler is no reason to fail startup.
+        charging before heading out. Spoken right after the greeting, once
+        model loading is finished and the audio path is quiet — see the
+        call site for why that matters. Best-effort: a missing battery
+        handler is no reason to fail startup.
         """
         if self.battery is None:
             return
