@@ -365,6 +365,9 @@ FALL_LOOP_INTERVAL_S = 0.01     # 100 Hz — matches ThresholdFallDetector's tun
 #   startup   TTS does not exist yet when this plays — it is the first
 #             thing `start()` does, minutes before the models finish
 #             loading, so it can only ever replay a previous boot's file.
+#   degraded  No TTS is available (it failed to load), so this message must
+#             exist as a clip or the announcer waits forever. This plays
+#             when the voice stack gives up after retries.
 #   thinking  TTS does exist, but this sentence sits in front of the
 #             device's slowest path. Synthesising it on every cloud
 #             question added ~1 s to the exact wait it exists to excuse.
@@ -1220,7 +1223,9 @@ class App:
             timeout_s=GUARDIAN_FETCH_TIMEOUT_S,
             default_country_code=SMS_DEFAULT_COUNTRY_CODE,
         )
-        self.guardians.refresh()
+        threading.Thread(
+            target=self.guardians.refresh, name="guardians-fetch", daemon=True
+        ).start()
 
         if SMS_ENABLED:
             self._stage("Opening SMS sender (mmcli)")
