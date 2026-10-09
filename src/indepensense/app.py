@@ -229,20 +229,14 @@ from indepensense.config import (
     NLU_PROMPT_PATH,
     NLU_TIMEOUT_S,
     NLU_WARMUP_TIMEOUT_S,
-    OBSTACLE_DANGER_CM,
-    OBSTACLE_DANGER_REPEAT_S,
-    OBSTACLE_FAR_CM,
+    OBSTACLE_DETECTION_START_CM,
     OBSTACLE_READING_MAX_AGE_S,
     OBSTACLE_RELEASE_CM,
-    OBSTACLE_RHYTHM_CONTACT_CM,
-    OBSTACLE_RHYTHM_CONTACT_HZ,
-    OBSTACLE_RHYTHM_DANGER_HZ,
     OBSTACLE_RHYTHM_MAX_AGE_S,
+    OBSTACLE_RHYTHM_MAX_HZ,
     OBSTACLE_RHYTHM_PULSE_S,
     OBSTACLE_RHYTHM_SMOOTHING_N,
     OBSTACLE_RHYTHM_START_CM,
-    OBSTACLE_RHYTHM_WARNING_HZ,
-    OBSTACLE_WARNING_CM,
     OLLAMA_URL,
     ORIENTATION_ALIGNED_TOLERANCE_DEG,
     ORIENTATION_BANDS,
@@ -440,17 +434,17 @@ _OBSTACLE_RANK: dict[str | None, int] = {
     None: 0, "far": 1, "warning": 2, "danger": 3,
 }
 
-# Each sensor's tiers, most severe first, with their entry thresholds.
-# Only TOP has a far tier: see `OBSTACLE_FAR_CM`.
+# Tier thresholds for state tracking and logging escalations.
+# Both sensors use the same thresholds. Vibration feedback is continuous
+# via _tick_obstacle_rhythm; these are kept for logging only.
 _OBSTACLE_TIERS: dict[str, tuple[tuple[str, float], ...]] = {
     "top": (
-        ("danger", OBSTACLE_DANGER_CM),
-        ("warning", OBSTACLE_WARNING_CM),
-        ("far", OBSTACLE_FAR_CM),
+        ("danger", 50.0),      # Imminent
+        ("warning", 100.0),    # Close
     ),
     "bottom": (
-        ("danger", OBSTACLE_DANGER_CM),
-        ("warning", OBSTACLE_WARNING_CM),
+        ("danger", 50.0),
+        ("warning", 100.0),
     ),
 }
 
@@ -458,25 +452,21 @@ _OBSTACLE_TIERS: dict[str, tuple[tuple[str, float], ...]] = {
 def _obstacle_tier_for(
     distance_cm: float, current: str | None, sensor_name: str,
 ) -> str | None:
-    """Which tier a reading puts a sensor in, given where it already was.
+    """Which tier a reading puts a sensor in (for logging and state tracking).
 
-    Schmitt-trigger behaviour: a tier is *entered* at its threshold but
+    Schmitt-trigger hysteresis: a tier is *entered* at its threshold but
     only *left* once the obstacle has receded `OBSTACLE_RELEASE_CM`
-    further. Without that gap a reading hovering on a threshold flips tier
-    on every frame, and since each entry fires a motor pulse, a cane held
-    still at 50 cm would buzz at the sensor's 10 Hz frame rate.
+    further. This survives cane sway (few cm micro-movements) without
+    fluttering tier classifications. Vibration feedback itself is purely
+    continuous via _tick_obstacle_rhythm; tiers are kept for state logging.
 
-    One rule covers every tier: a tier *more* severe than the current one
-    must be entered at its entry threshold; the current tier and anything
-    milder use their exit threshold. That last part matters on the way
-    out — an obstacle receding from danger lands in warning by the same
-    line it would have to cross to leave warning, so leaving never needs
-    a different line than approaching.
+    One rule covers every tier: a tier *more* severe than current is
+    entered at its entry threshold; the current tier uses its exit threshold.
+    This prevents a reading hovering on a threshold from fluttering.
 
     A free function because it is pure arithmetic over config values and
     its own arguments — no device, no clock, no app state — which is what
-    lets the hysteresis table be asserted directly instead of inferred
-    from how often a mock motor twitched.
+    lets the hysteresis table be asserted directly.
     """
     current_rank = _OBSTACLE_RANK[current]
     for tier, entry_cm in _OBSTACLE_TIERS[sensor_name]:
@@ -492,27 +482,27 @@ def _obstacle_tier_for(
 def _obstacle_rhythm_hz(distance_cm: float) -> float:
     """Proximity-rhythm pulse rate for a distance, in pulses per second.
 
-    Rises through two bands — warning (`OBSTACLE_WARNING_CM` → danger) and
-    danger (`OBSTACLE_DANGER_CM` → contact) — interpolating linearly inside
-    each, then holds at `OBSTACLE_RHYTHM_CONTACT_HZ` once the obstacle is
-    within `OBSTACLE_RHYTHM_CONTACT_CM`. The bands do not meet: the step
-    up at the danger line is meant to be felt.
+    Maps distance continuously to frequency (no discrete tiers). Vibration
+    frequency increases smoothly as obstacles approach, giving users precise
+    distance awareness through rhythm alone:
+
+      150 cm: 0 Hz (silent)
+      100 cm: ~1.5 Hz (early awareness)
+       50 cm: ~4 Hz (very close)
+       20 cm: ~8 Hz (contact/imminent)
 
     Free and pure for the same reason as `_obstacle_tier_for`: the whole
     distance → rate curve can be asserted as a table.
     """
-    if distance_cm < OBSTACLE_RHYTHM_CONTACT_CM:
-        return OBSTACLE_RHYTHM_CONTACT_HZ
-    if distance_cm < OBSTACLE_DANGER_CM:
-        far_hz, near_hz = OBSTACLE_RHYTHM_DANGER_HZ
-        span = OBSTACLE_DANGER_CM - OBSTACLE_RHYTHM_CONTACT_CM
-        closeness = (OBSTACLE_DANGER_CM - distance_cm) / span
-    else:
-        far_hz, near_hz = OBSTACLE_RHYTHM_WARNING_HZ
-        span = OBSTACLE_WARNING_CM - OBSTACLE_DANGER_CM
-        closeness = (OBSTACLE_WARNING_CM - distance_cm) / span
+    if distance_cm >= OBSTACLE_DETECTION_START_CM:
+        return 0.0
+    if distance_cm < 20.0:
+        return OBSTACLE_RHYTHM_MAX_HZ
+    # Linear interpolation from DETECTION_START down to contact
+    span = OBSTACLE_DETECTION_START_CM - 20.0
+    closeness = (OBSTACLE_DETECTION_START_CM - distance_cm) / span
     closeness = min(1.0, max(0.0, closeness))
-    return far_hz + (near_hz - far_hz) * closeness
+    return closeness * OBSTACLE_RHYTHM_MAX_HZ
 GPS_CACHE_INTERVAL_S = 1.0       # 1 Hz — GPS itself only emits ~1 Hz NMEA anyway
 
 
@@ -2232,30 +2222,17 @@ The comparisons are inclusive, so a threshold names the percentage
     # ---------------------------------------------------------------- obstacles
 
     def _check_obstacle_sensor(self, sensor_name: str, sensor: DYPA22 | None) -> None:
-        """Poll one ultrasonic sensor and alert on a *newly* closer obstacle.
+        """Poll one ultrasonic sensor and update obstacle state.
 
         Called from the main 100 Hz loop. Returns fast when the sensor has
-        no fresh frame (which is 9 out of 10 ticks — DYP-A22 emits at
-        ~10 Hz).
+        no fresh frame (which is 9 out of 10 ticks — DYP-A22 emits at ~10 Hz).
 
-        Fires on **escalation**, not on presence. Entering a tier alerts
-        once; staying in it is silent; receding past the release threshold
-        re-arms it. The one exception is the danger tier, which repeats
-        every `OBSTACLE_DANGER_REPEAT_S` while the wearer stands still so a
-        standing hazard is not announced once and then forgotten. While
-        they walk, `_tick_obstacle_rhythm` keeps them informed instead, and
-        the re-alert on setting off lives in `_on_started_walking`.
+        Updates tier state for tracking and logging, but vibration feedback
+        is entirely continuous via `_tick_obstacle_rhythm`, which maps
+        distance smoothly to vibration frequency based on
+        `OBSTACLE_DETECTION_START_CM`.
 
-        This replaced a fixed two-second cooldown that re-fired for as
-        long as anything stayed in range — a field log shows `danger at
-        42 cm` every two seconds for minutes, each one a motor pulse.
-        Hysteresis is what makes "newly closer" survive a cane that is
-        never quite still; see `OBSTACLE_RELEASE_CM`.
-
-        A de-escalation is deliberately silent. Dropping from danger back
-        to warning means the hazard is receding, and announcing that with
-        the warning pattern would spend the user's attention to tell them
-        something is getting better.
+        Hysteresis tier detection survives cane sway; see `OBSTACLE_RELEASE_CM`.
         """
         if sensor is None:
             return
@@ -2291,19 +2268,13 @@ The comparisons are inclusive, so a threshold names the percentage
                 )
             return
 
-        now = time.monotonic()
-        escalated = _OBSTACLE_RANK[tier] > _OBSTACLE_RANK[previous]
-        if escalated:
-            reason = "entered"
-        elif tier == "danger" and not self._user_walking() and (
-            now - self._obstacle_last_fired.get(sensor_name, 0.0)
-            >= OBSTACLE_DANGER_REPEAT_S
-        ):
-            reason = "repeat"
-        else:
-            return
-
-        self._fire_obstacle(sensor_name, tier, distance, reason, now)
+        # Log tier transitions for debugging, but vibration is purely
+        # continuous via _tick_obstacle_rhythm (no discrete tier alerts).
+        if _OBSTACLE_RANK[tier] > _OBSTACLE_RANK[previous]:
+            print(
+                f"[obstacle:{sensor_name}] {tier} at {distance:.0f} cm (entered)",
+                flush=True,
+            )
 
     def _user_walking(self) -> bool:
         """Whether the wearer is walking. Without an IMU there is no
@@ -2397,29 +2368,13 @@ The comparisons are inclusive, so a threshold names the percentage
             self._warning_lock.release()
 
     def _on_started_walking(self) -> None:
-        """Re-alert every sensor that is already in a tier.
+        """Handle the transition to walking state.
 
-        Alerts fire when an obstacle gets closer, so someone who stopped in
-        front of a post, waited, then set off towards it heard nothing: the
-        distance had not changed when they started moving, and by the time
-        it had they might be on top of it. The chest IMU sees them set off
-        before the ultrasonic sees the gap close.
-
-        Fires the tier the sensor is in, once, through the same path as an
-        escalation. A sensor whose last reading is stale is skipped — its
-        tier describes where the world was, not where it is.
+        With continuous vibration-based feedback, no special re-alert is
+        needed when walking starts. The proximity rhythm in `_tick_obstacle_rhythm`
+        automatically activates and uses the latest sensor readings.
         """
-        now = time.monotonic()
-        for sensor_name, tier in self._obstacle_tier.items():
-            if tier is None:
-                continue
-            cached = self._obstacle_reading.get(sensor_name)
-            if cached is None:
-                continue
-            distance, stamped_at = cached
-            if now - stamped_at > OBSTACLE_READING_MAX_AGE_S:
-                continue
-            self._fire_obstacle(sensor_name, tier, distance, "walking", now)
+        # Continuous vibration is already active; no discrete re-alert needed.
 
     def _fire_obstacle(
         self, sensor_name: str, tier: str, distance: float, reason: str, now: float,

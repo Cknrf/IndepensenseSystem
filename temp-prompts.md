@@ -327,3 +327,19 @@ Oct 08 08:37:24 cknrf python[1446]: [obstacle:top] danger at 27 cm (repeat)
 
 - Whisper and the e5 embedding model try to ping Hugging Face over the cellular network on every boot to check for model updates. Passing local_files_only=True and loading snapshots locally (like MMS already does) closes an offline boot vulnerability and speeds up startup.
 I mean, we don't need to update the whisper and e5 model, so let's not check for model updates. 
+
+For context, I would use another sd card, since apparently the one that I'm using is fake. My concern is that so far, configuration files, data, and other 
+things that is important aren't documented or saved. But the source code is already in the repo, so it is safe.
+
+Now, you can ssh directly to the raspberry pi 5, but access and read only, don't modify or delete anything, especially using rsync since it would delete 
+everything that isn't watched/added in the git. Anyway, I want you to check the raspi, to check all the configurations files, data, and necessary things that
+I need to saved or copy to my device. 
+
+Here is the credential, and don't worry about the security or the confidentiality, trust me. 
+100.113.232.110 and Mearck123 as the password
+
+But before that, since the pi is currently turned off. We can just as well test again the initialization's speed of the main program which would be run automatically by the indepensense service. 
+Even though we have already tested it earlier but this time it is different, since it would be from turned off pi. I want you to just keep ssh to the raspberry pi 5, to connect to it immediately once online/available. 
+But I'm not sure how would you observe or monitor it, if it jsut alright if you would just see the logs of the indepensense, then it is fine for you to be late in ssh to the raspberry pi 5. 
+
+- The name of the locations, how would the NLU would know it? 

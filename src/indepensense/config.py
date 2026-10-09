@@ -84,76 +84,52 @@ DYP_A22_TOP_PORT = "/dev/ttyAMA0"
 DYP_A22_BOTTOM_PORT = "/dev/ttyAMA4"
 DYP_A22_BAUDRATE = 115200
 
-# Obstacle warning thresholds. The main app polls both ultrasonic sensors
-# in the fall-detection loop and fires vibration alerts when the reading
-# crosses into a closer tier (far — TOP only —, warning, danger). See
-# app.py for the full pattern definitions.
-OBSTACLE_WARNING_CM = 100.0      # early notice — obstacle within reach
-OBSTACLE_DANGER_CM = 50.0        # imminent — user should stop
-
-# Extra outermost tier, TOP sensor only. Head-level hazards are the ones
-# the cane cannot find at all, so they get notice from further out: at
-# walking pace (~1.2 m/s) 100 cm is under a second, 200 cm is closer to
-# two. BOTTOM gets no far tier — the cane already reaches about a metre,
-# so a warning beyond that would be about something it is about to touch
-# anyway.
-OBSTACLE_FAR_CM = 200.0
-
-# How far the obstacle has to recede before that tier can fire again.
+# Obstacle detection threshold. Both sensors use continuous distance-to-frequency
+# vibration mapping (no discrete tiers, no speech). Feedback is purely haptic:
+# vibration frequency increases smoothly as obstacles get closer, giving users
+# precise distance awareness through rhythm alone.
 #
-# Without it, alerts repeated on a fixed cooldown for as long as anything
-# stayed in range: a field log shows `danger at 42 cm` firing every two
-# seconds for minutes, each one a motor pulse. Walking a corridor with a
-# wall an arm's length away would buzz continuously, and a signal that
-# never stops is one the wearer learns to ignore.
-#
-# A plain "only fire when the distance changes" rule does not work either,
-# and the reason is the cane itself: a hand holding it moves centimetres
-# without the user going anywhere, so the reading is never still. The band
-# has to be wide enough to swallow that jitter — 15 cm is comfortably
-# above the sway seen sitting still, and well below the 50 cm step between
-# tiers, so a genuine approach still crosses it.
+# Both TOP (torso-level, ~pelvis height) and BOTTOM (ankle-level, 2-3" above
+# ankle) sensors start at this distance. At walking speed (1.2 m/s), 150 cm
+# provides ~1.25 seconds of warning — sufficient for collision avoidance without
+# false positives from ground or environment clutter.
+OBSTACLE_DETECTION_START_CM = 150.0
+
+# Hysteresis band: obstacle must recede this far past a threshold to re-arm.
+# Without it, cane sway (few centimetres) causes false tier changes and
+# frequency stuttering. This band swallows natural hand movement while still
+# detecting genuine approaches. Only used during standing-still phase if
+# any tier-based logic remains; continuous mapping is primary.
 OBSTACLE_RELEASE_CM = 15.0
 
-# Backstop re-notify for the DANGER tier only, while the user is standing
-# still. Someone stopped at 42 cm from a hazard should not be told once and
-# then left; someone at 80 cm does not need reminding at all. Long enough
-# not to nag, short enough that a standing hazard is not forgotten. While
-# walking, the proximity rhythm below takes over this job.
-OBSTACLE_DANGER_REPEAT_S = 15.0
-
-# Proximity rhythm while walking: once something is close, the front
-# motor keeps pulsing, faster the closer it gets — the parking-sensor
-# pattern the Sunu Band, MiniGuide and UltraCane use. Tier alerts above
-# fire once on entry; past that point they said nothing more about an
-# obstacle at 45 cm than one at 20 cm, which is exactly the range where
-# the difference matters.
-#
+# Continuous proximity rhythm while walking: vibration frequency increases
+# smoothly as obstacles get closer, providing precise distance awareness.
 # Rate rather than strength because people judge rhythm far better than
-# vibration amplitude, skin adapts to a steady buzz within seconds, and
-# these motors are switched on/off through a transistor anyway. Short
-# discrete pulses, not a continuous buzz, for the same adaptation reason.
+# vibration amplitude, skin adapts to steady buzzing within seconds, and
+# motors are switched on/off through transistor. Short discrete pulses,
+# not continuous buzz, avoid adaptation.
 #
 # Runs only while `WalkingDetector` says the user is walking. Standing
-# still keeps the fire-once behaviour, so a queue or a crossing is quiet.
+# still uses the same continuous mapping, no special tier-based alerts.
 #
-# Where each sensor's rhythm starts. BOTTOM starts at danger only: it sees
-# the ground at around 80 cm on most readings, so a rhythm from 100 cm
-# would buzz the whole walk, and the cane already covers that range.
+# Both TOP (torso-level) and BOTTOM (ankle-level) sensors start at the
+# same distance threshold, mapped continuously to frequency via
+# _obstacle_rhythm_hz() in app.py.
 OBSTACLE_RHYTHM_START_CM = {
-    "top": OBSTACLE_WARNING_CM,
-    "bottom": OBSTACLE_DANGER_CM,
+    "top": OBSTACLE_DETECTION_START_CM,
+    "bottom": OBSTACLE_DETECTION_START_CM,
 }
-# Pulses per second across each band, as (at the far edge, at the near
-# edge). Warning: 100 → 50 cm, front motor. Danger: 50 → 30 cm, all three
-# motors. The step from 2 to 3 Hz at 50 cm is deliberate — crossing into
-# danger should be felt as a change, not only as a little faster.
-OBSTACLE_RHYTHM_WARNING_HZ = (1.0, 2.0)
-OBSTACLE_RHYTHM_DANGER_HZ = (3.0, 5.0)
-# Inside this distance the rhythm runs at its fastest, nearly continuous:
-# about a step away at walking pace.
-OBSTACLE_RHYTHM_CONTACT_CM = 30.0
-OBSTACLE_RHYTHM_CONTACT_HZ = 8.0
+# Continuous frequency mapping (distance cm → pulses per second).
+# No discrete tiers; frequency increases smoothly as obstacles approach.
+# Calibrated for smooth proprioceptive feedback:
+#   150 cm: 0 Hz (silent start)
+#   100 cm: ~1.5 Hz (early awareness)
+#   50 cm: ~4 Hz (very close)
+#   <20 cm: 8 Hz (contact/imminent)
+OBSTACLE_RHYTHM_MAX_HZ = 8.0  # Fastest rhythm (contact distance)
+# Smoothing: median of recent readings reduces cane sway jitter (hand movement
+# in centimetres), preventing frequency stutter during normal grip adjustments.
+OBSTACLE_RHYTHM_SMOOTHING_N = 3
 # Each pulse. Long enough for a coin motor to spin up and be felt (they
 # take ~30-50 ms), short enough to leave a gap at 8 Hz (125 ms period).
 OBSTACLE_RHYTHM_PULSE_S = 0.08
