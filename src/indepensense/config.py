@@ -102,6 +102,12 @@ OBSTACLE_DETECTION_START_CM = 150.0
 # any tier-based logic remains; continuous mapping is primary.
 OBSTACLE_RELEASE_CM = 15.0
 
+# Motor selection threshold for continuous rhythm: distance at which the
+# feedback escalates from front motor only to all three motors.
+# Used in _play_rhythm_pulse() to provide stronger haptic feedback as the
+# obstacle approaches. The original "danger tier" was at 50 cm.
+OBSTACLE_DANGER_CM = 50.0
+
 # Continuous proximity rhythm while walking: vibration frequency increases
 # smoothly as obstacles get closer, providing precise distance awareness.
 # Rate rather than strength because people judge rhythm far better than
