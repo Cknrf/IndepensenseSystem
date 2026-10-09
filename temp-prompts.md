@@ -324,3 +324,6 @@ Oct 08 08:37:24 cknrf python[1446]: [obstacle:top] danger at 27 cm (repeat)
 - I have noticed as well, that there's a battery duration estimate in the message? Let's remove it since it is not accurate enough which would propose a misinformation for the user which is more risky. 
 
 - My coworker also changed the logic for the distance sensing and the feedback, can you check and tell me the mechanism? 
+
+- Whisper and the e5 embedding model try to ping Hugging Face over the cellular network on every boot to check for model updates. Passing local_files_only=True and loading snapshots locally (like MMS already does) closes an offline boot vulnerability and speeds up startup.
+I mean, we don't need to update the whisper and e5 model, so let's not check for model updates. 
