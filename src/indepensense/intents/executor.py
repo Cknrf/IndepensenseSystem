@@ -245,6 +245,26 @@ def _clean_ocr_text(text: str) -> str:
     return ". ".join(cleaned_paras)
 
 
+def _is_service_unreachable(exc: BaseException) -> bool:
+    """Whether a failure means "nobody answered", not "the answer was no".
+
+    Matched on the exception *type*, not on its message: `requests`
+    raises `ConnectionError` for a refused socket, a DNS failure and an
+    unreachable host alike, and all three mean the service is not
+    listening. An HTTP error — GraphHopper's own 500 for an unroutable
+    pair, say — is the service answering, and must keep reporting what
+    it said.
+
+    `requests` is imported here rather than at module scope so the
+    executor still imports without it, as the rest of the package does.
+    """
+    try:
+        import requests
+    except Exception:            # pragma: no cover - requests is a hard dep
+        return False
+    return isinstance(exc, (requests.ConnectionError, requests.Timeout))
+
+
 class IntentExecutor:
     def __init__(
         self,
@@ -356,7 +376,21 @@ class IntentExecutor:
         try:
             response = handler(result)
         except Exception as exc:
-            response = messages.get("generic.error", self._lang, error=exc)
+            if _is_service_unreachable(exc):
+                # GraphHopper and Photon are now ordered *after* this
+                # unit reports ready, so that the SD card is not being
+                # read by three processes at once during boot. The cost
+                # is a window — roughly the first minute or two — where
+                # the wearable is fully up and routing is not.
+                #
+                # Reading the raw connection error out loud told the user
+                # nothing they could act on. "Not ready yet, try again"
+                # names the one thing that helps, and is still true if
+                # the service is down for good: the user's next move is
+                # the same either way.
+                response = messages.get("routing.not_ready", self._lang)
+            else:
+                response = messages.get("generic.error", self._lang, error=exc)
 
         # Track the last spoken response so Repeat can replay it.
         # Skip when repeating so consecutive Repeats stay stable

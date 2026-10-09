@@ -1611,3 +1611,53 @@ def test_the_answer_does_not_depend_on_the_estimate():
     """Same reading, different gauge estimate, same sentence — the
     estimate no longer reaches the user at all."""
     assert _status(0) == _status(300)
+
+
+# --- a service that is not listening yet --------------------------------------
+#
+# GraphHopper and Photon start *after* the wearable reports ready, so the
+# SD card is not read by three processes at once at boot. That leaves a
+# window where the device is up and routing is not, and the raw
+# connection error read aloud told the user nothing they could act on.
+
+def test_an_unreachable_router_says_so_in_words(make_unreachable_executor):
+    answer = make_unreachable_executor.execute(
+        IntentResult(Intent.NAVIGATION_START, {"location": "the cafeteria"})
+    )
+
+    assert answer == messages.get("routing.not_ready", "en")
+
+
+def test_a_service_that_answered_still_reports_what_it_said():
+    """A GraphHopper 500 is the service answering. Collapsing that into
+    "not ready yet" would hide the error text the client was changed to
+    surface in the first place."""
+    import requests
+    from indepensense.intents.executor import _is_service_unreachable
+
+    answered = requests.HTTPError("500 from GraphHopper: Cannot find point 1")
+
+    assert not _is_service_unreachable(answered)
+
+
+def test_a_refused_socket_counts_as_unreachable():
+    import requests
+    from indepensense.intents.executor import _is_service_unreachable
+
+    assert _is_service_unreachable(requests.ConnectionError("refused"))
+    assert _is_service_unreachable(requests.Timeout("no answer"))
+
+
+@pytest.fixture
+def make_unreachable_executor():
+    """An executor whose router refuses the connection, as it does while
+    GraphHopper is still starting."""
+    import requests
+
+    class _Refusing(MockRouter):
+        def route(self, *args, **kwargs):
+            raise requests.ConnectionError("Connection refused")
+
+    return IntentExecutor(
+        router=_Refusing(), geocoder=MockGeocoder(), gps=_StaticGPS(),
+    )

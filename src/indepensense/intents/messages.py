@@ -862,6 +862,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "I don't know how to report on '{field}'.",
         "tl": "Hindi ko alam kung paano iuulat ang '{field}'.",
     },
+    # Spoken when a local service did not answer at all — GraphHopper
+    # for routing, Photon for place names.
+    #
+    # They are started *after* the wearable reports ready, so the SD
+    # card is not being read by three processes at once during boot.
+    # That buys a faster startup and costs a window of a minute or two
+    # where the device is up and routing is not. Saying so is the point:
+    # "Sorry, something went wrong: HTTPConnectionPool(host=..." is a
+    # sentence no user can act on.
+    #
+    # Worded to be true whether the service is still starting or has
+    # died, because the user's next move is the same either way.
+    "routing.not_ready": {
+        "en": "Navigation is not ready yet. Please try again in a minute.",
+        "tl": "Hindi pa handa ang nabigasyon. Pakisubukan ulit mamaya.",
+    },
     "generic.error": {
         "en": "Sorry, something went wrong: {error}",
         "tl": "Paumanhin, may naganap na problema: {error}",
