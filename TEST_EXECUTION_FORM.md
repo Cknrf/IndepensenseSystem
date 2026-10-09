@@ -395,7 +395,7 @@
 
 | TRIAL | TRIGGER | EXPECTED PATTERN | ACTUAL PATTERN | STATUS | NOTES |
 |-------|---------|---|---|---|---|
-| HF-MOTOR-001 | Obstacle ahead (danger) | All three motors pulse 200ms | | ☐ PASS ☐ FAIL |  |
+| HF-MOTOR-001 | Obstacle ahead (danger), standing still | All three motors pulse together (0.4 s) | | ☐ PASS ☐ FAIL |  |
 | HF-MOTOR-002 | Fall detected | All three motors pulse together | | ☐ PASS ☐ FAIL |  |
 | HF-MOTOR-003 | Obstacle left (warning) | Left motor only vibrates | | ☐ PASS ☐ FAIL |  |
 | HF-MOTOR-004 | Obstacle right (warning) | Right motor only vibrates | | ☐ PASS ☐ FAIL |  |
