@@ -424,11 +424,15 @@ def _notify_systemd(state: str) -> None:
 
 
 # Clips rendered at the end of every boot, rather than by the
-# `render_messages` tool. These two are the only speech with no live
+# `render_messages` tool. These three are the only speech with no live
 # fallback: `_play_startup_notice` runs before the TTS engine is loaded,
 # so if the clip is not already on disk the device simply cannot say it.
-# Everything else in `messages.static_keys()` degrades to synthesis.
-_BOOT_CLIPS: tuple[str, ...] = ("system.starting", "language.greeting")
+# `system.voice_unavailable` plays when voice-stack loading gives up, and
+# must exist as a clip or the announcer waits forever. Everything else in
+# `messages.static_keys()` degrades to synthesis.
+_BOOT_CLIPS: tuple[str, ...] = (
+    "system.starting", "language.greeting", "system.voice_unavailable"
+)
 
 # Obstacle tiers, ordered. `None` is "clear", so comparing ranks answers
 # "did this get worse?" without a chain of string equality checks.
@@ -1215,7 +1219,14 @@ class App:
         # battery, and the emergency intent inside the executor — gets
         # SMS without any of them knowing about it. Heartbeats pass
         # straight through. See `telemetry/sms_alerts.py`.
-        self._stage("Fetching guardian contacts")
+        #
+        # GuardianDirectory construction loads any cached list from disk
+        # instantly, so SMSAlertNotifier can use it immediately. The refresh
+        # (10.8s backend fetch) happens off-thread in parallel to avoid
+        # blocking fall-detection startup. If the first alert arrives before
+        # refresh completes, SMS uses the cached list (which is fine on most
+        # devices). If there's no cache, SMS won't work that one time; the
+        # backend alert still goes through.
         self.guardians = GuardianDirectory(
             base_url=BACKEND_URL,
             credential=self.credential,
