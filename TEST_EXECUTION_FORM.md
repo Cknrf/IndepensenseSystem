@@ -315,20 +315,22 @@
 
 ## 9. OBSTACLE DETECTION & HAPTIC FEEDBACK
 
-### 9.1 Obstacle Detection Tiers (Top Sensor)
+### 9.1 Obstacle Detection Tiers
 
-**Setup:** Place obstacle and move through distance zones.
+**Setup:** Wearer **stands still** for the whole section — while walking, the proximity rhythm (9.2) runs on top of these cues. Both sensors face forward, so obstacles only ever use the front motor or all three together; the left and right motors are for navigation. Start each trial with the obstacle beyond 2.5 m, then bring it in. Alerts fire when the obstacle gets *closer*: moving it away is silent, and a tier only re-arms after the obstacle backs off 15 cm past that tier's line.
 
-| TRIAL | DISTANCE & DIRECTION | EXPECTED TIER | EXPECTED FEEDBACK | ACTUAL FEEDBACK | STATUS | NOTES |
+| TRIAL | SENSOR & DISTANCE | EXPECTED TIER | EXPECTED FEEDBACK | ACTUAL FEEDBACK | STATUS | NOTES |
 |-------|---|---|---|---|---|---|
-| OBS-TIER-001 | 30 cm, center/front | Danger (<50cm) | All three motors pulse (200ms) | | ☐ PASS ☐ FAIL |  |
-| OBS-TIER-002 | 50 cm, left | Warning (50-100cm) | Left motor vibrates (150ms) | | ☐ PASS ☐ FAIL |  |
-| OBS-TIER-003 | 75 cm, right | Warning | Right motor vibrates | | ☐ PASS ☐ FAIL |  |
-| OBS-TIER-004 | 100 cm, center | Far (100-150cm) | Front/center motor light pulse (300ms) | | ☐ PASS ☐ FAIL |  |
-| OBS-TIER-005 | 150 cm, center | Far | Light pulse, slow rate | | ☐ PASS ☐ FAIL |  |
-| OBS-TIER-006 | Move obstacle beyond 150cm | No feedback | Vibration stops | | ☐ PASS ☐ FAIL |  |
+| OBS-TIER-001 | TOP, bring to 150 cm | Far (<200 cm, TOP only) | One short front tick (0.1 s) | | ☐ PASS ☐ FAIL |  |
+| OBS-TIER-002 | TOP, continue to 75 cm | Warning (<100 cm) | One long front pulse (0.5 s) | | ☐ PASS ☐ FAIL |  |
+| OBS-TIER-003 | TOP, continue to 30 cm | Danger (<50 cm) | All three motors together (0.4 s) | | ☐ PASS ☐ FAIL |  |
+| OBS-TIER-004 | TOP, hold at 30 cm for 20 s | Danger | One repeat at ~15 s, otherwise silent | | ☐ PASS ☐ FAIL |  |
+| OBS-TIER-005 | TOP, move obstacle back beyond 215 cm | Clear | No feedback (receding is silent) | | ☐ PASS ☐ FAIL |  |
+| OBS-TIER-006 | BOTTOM, bring to 75 cm | Warning (<100 cm, no far tier) | One front pulse (0.25 s) — noticeably shorter than OBS-TIER-002 | | ☐ PASS ☐ FAIL |  |
+| OBS-TIER-007 | BOTTOM, continue to 30 cm | Danger (<50 cm) | All three motors together (0.4 s) | | ☐ PASS ☐ FAIL |  |
+| OBS-TIER-008 | Any of the above | — | Buzzer never sounds (reserved for emergencies) | | ☐ PASS ☐ FAIL |  |
 
-**Summary:** ___ / 6 passed
+**Summary:** ___ / 8 passed
 
 ### 9.2 Hysteresis & Re-Alert Behavior
 
@@ -337,10 +339,16 @@
 | OBS-HYSTER-001 | Obstacle at 65 cm, hold 10s | Single fire on entry, no repeat | Fires once @ entry, silent for 10s | ☐ PASS ☐ FAIL |  |
 | OBS-HYSTER-002 | Obstacle exits (move to 160cm) | Vibration stops, no repeat | Silent | ☐ PASS ☐ FAIL |  |
 | OBS-HYSTER-003 | Re-enter danger zone | Alert fires again (hysteresis reset) | All motors fire @ re-entry | ☐ PASS ☐ FAIL |  |
-| OBS-HYSTER-004 | Obstacle static, detect motion (walking) | Danger tier repeats every 3s | Alert at 0s, 3s, 6s pattern | ☐ PASS ☐ FAIL |  |
-| OBS-HYSTER-005 | Obstacle static, no motion (standing) | Danger tier repeats every 15s | Alert at 0s, 15s pattern | ☐ PASS ☐ FAIL |  |
+| OBS-HYSTER-004 | Stand still facing a wall at 80 cm for 5 s, then walk towards it | Re-alert on setting off, then proximity rhythm | 0.5 s front pulse as you set off, then short front pulses ~1/s speeding to ~2/s by 50 cm | ☐ PASS ☐ FAIL |  |
+| OBS-HYSTER-005 | Obstacle static, no motion (standing) | Danger tier repeats every 15s, no rhythm | Alert at 0s, 15s pattern | ☐ PASS ☐ FAIL |  |
+| OBS-RHYTHM-001 | Walk slowly towards a wall from 120 cm (TOP sensor) | Rhythm starts below 100 cm, front motor only | Pulses get faster as you approach | ☐ PASS ☐ FAIL |  |
+| OBS-RHYTHM-002 | Keep walking past 50 cm | Clear step up in rate, switches to all three motors | ~3/s at 50 cm rising to ~5/s at 30 cm | ☐ PASS ☐ FAIL |  |
+| OBS-RHYTHM-003 | Closer than 30 cm | Near-continuous all-motor pulsing | ~8/s | ☐ PASS ☐ FAIL |  |
+| OBS-RHYTHM-004 | Stop walking with the wall at 40 cm | Rhythm stops within ~2 s | Silent while standing | ☐ PASS ☐ FAIL |  |
+| OBS-RHYTHM-005 | Walk with only the BOTTOM sensor seeing something at 60-90 cm (e.g. the ground) | No rhythm — BOTTOM joins only below 50 cm | Silent | ☐ PASS ☐ FAIL |  |
+| OBS-RHYTHM-006 | Navigation turn cue while rhythm is running | Turn cue plays intact, rhythm resumes after | Two-pulse turn cue clearly felt | ☐ PASS ☐ FAIL |  |
 
-**Summary:** ___ / 5 passed
+**Summary:** ___ / 11 passed
 
 ### 9.3 Dual-Sensor Coordination
 

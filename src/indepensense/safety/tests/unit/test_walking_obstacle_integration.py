@@ -7,10 +7,6 @@ where an obstacle was present but didn't get closer yet.
 import time
 import pytest
 
-from indepensense.config import (
-    OBSTACLE_DANGER_REPEAT_S,
-    OBSTACLE_DANGER_REPEAT_WALKING_S,
-)
 from indepensense.safety.walking_detector import WalkingDetector
 from indepensense.sensors.base import IMUReading
 
@@ -171,58 +167,6 @@ class TestWalkingDetectorIntegration:
 
         # Window should be reset (only the latest sample)
         assert len(detector._samples) == 1
-
-
-class MockWalkingDetector:
-    """Controllable walking detector for integration testing."""
-
-    def __init__(self):
-        self.walking = True
-
-    def set_walking(self, is_walking: bool):
-        """Manually set walking state."""
-        self.walking = is_walking
-
-
-class TestObstacleRepeatIntervalSelection:
-    """Verify danger repeat interval changes based on walking state."""
-
-    def test_danger_repeat_interval_while_walking(self):
-        """Danger tier repeats more frequently while walking."""
-        detector = MockWalkingDetector()
-        detector.set_walking(True)
-
-        # Simulate _danger_repeat_s() logic
-        interval = (
-            OBSTACLE_DANGER_REPEAT_WALKING_S if detector.walking else OBSTACLE_DANGER_REPEAT_S
-        )
-
-        assert interval == OBSTACLE_DANGER_REPEAT_WALKING_S
-        assert interval < OBSTACLE_DANGER_REPEAT_S  # Shorter while walking
-
-    def test_danger_repeat_interval_while_still(self):
-        """Danger tier repeats less frequently while still."""
-        detector = MockWalkingDetector()
-        detector.set_walking(False)
-
-        # Simulate _danger_repeat_s() logic
-        interval = (
-            OBSTACLE_DANGER_REPEAT_WALKING_S if detector.walking else OBSTACLE_DANGER_REPEAT_S
-        )
-
-        assert interval == OBSTACLE_DANGER_REPEAT_S
-        assert interval > OBSTACLE_DANGER_REPEAT_WALKING_S  # Longer while still
-
-    def test_none_detector_defaults_to_walking(self):
-        """When detector is None, assume walking (safer default)."""
-        detector = None
-
-        # Simulate _danger_repeat_s() logic
-        interval = (
-            OBSTACLE_DANGER_REPEAT_WALKING_S if (detector and detector.walking) else OBSTACLE_DANGER_REPEAT_S
-        )
-
-        assert interval == OBSTACLE_DANGER_REPEAT_S  # Falls back to standing interval
 
 
 class TestObstacleCacheAndReAlert:

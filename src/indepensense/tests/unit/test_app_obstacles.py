@@ -30,10 +30,15 @@ from indepensense.app_mock import MockApp
 from indepensense.config import (
     OBSTACLE_DANGER_CM,
     OBSTACLE_DANGER_REPEAT_S,
-    OBSTACLE_DANGER_REPEAT_WALKING_S,
     OBSTACLE_FAR_CM,
     OBSTACLE_READING_MAX_AGE_S,
     OBSTACLE_RELEASE_CM,
+    OBSTACLE_RHYTHM_CONTACT_CM,
+    OBSTACLE_RHYTHM_CONTACT_HZ,
+    OBSTACLE_RHYTHM_DANGER_HZ,
+    OBSTACLE_RHYTHM_MAX_AGE_S,
+    OBSTACLE_RHYTHM_PULSE_S,
+    OBSTACLE_RHYTHM_WARNING_HZ,
     OBSTACLE_WARNING_CM,
 )
 from indepensense.feedback.mock import MockBuzzer, MockVibrationMotor
@@ -312,36 +317,25 @@ def test_the_backstop_does_not_fire_early(app, monkeypatch):
     assert _feed(app, "top", close) == []
 
 
-def test_walking_repeats_danger_sooner(app, monkeypatch):
-    """A danger-tier obstacle still there after a few seconds of walking
-    is moving with the user or blocking them — remind them soon."""
+def test_walking_hands_the_danger_repeat_to_the_rhythm(app, monkeypatch):
+    """While walking, the proximity rhythm pulses for as long as danger
+    lasts, so the tier repeat would only be a second, slower signal for
+    the same thing."""
     monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
     app.walking_detector = _Motion(walking=True)
     close = OBSTACLE_DANGER_CM - 8
     _feed(app, "top", close)
 
-    app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_WALKING_S + 0.5
-
-    assert _feed(app, "top", close) == [close]
-
-
-def test_standing_still_keeps_the_long_backstop(app, monkeypatch):
-    """The same few seconds while standing in a queue must stay quiet."""
-    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
-    app.walking_detector = _Motion(walking=False)
-    close = OBSTACLE_DANGER_CM - 8
-    _feed(app, "top", close)
-
-    app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_WALKING_S + 0.5
+    app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_S + 1
 
     assert _feed(app, "top", close) == []
 
 
 def test_no_motion_signal_is_treated_as_walking(app):
     """Without an IMU there is no evidence the user is still, so the
-    backstop takes the interval that suppresses less."""
+    rhythm — the side that suppresses nothing — stays available."""
     app.walking_detector = None
-    assert app._danger_repeat_s() == OBSTACLE_DANGER_REPEAT_WALKING_S
+    assert app._user_walking() is True
 
 
 # --- setting off -------------------------------------------------------------
@@ -407,17 +401,199 @@ def test_setting_off_ignores_a_stale_reading(app, monkeypatch):
 
 
 def test_a_re_alert_restarts_the_danger_backstop(app, monkeypatch):
-    """The re-alert counts as the latest danger notice, so the walking
+    """The re-alert counts as the latest danger notice, so the standing
     backstop does not fire a second one straight after it."""
     monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
-    app.walking_detector = _Motion(walking=True)
+    app.walking_detector = _Motion(walking=False)
     close = OBSTACLE_DANGER_CM - 8
     _feed(app, "top", close)
-    app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_WALKING_S + 0.5
+    app._obstacle_last_fired["top"] -= OBSTACLE_DANGER_REPEAT_S + 1
 
     app._on_started_walking()
 
     assert _feed(app, "top", close) == []
+
+
+# --- proximity rhythm --------------------------------------------------------
+#
+# Tier alerts fire once on entry, so past 50 cm nothing told 45 cm from
+# 20 cm. While walking, the closest obstacle now drives a pulse rate that
+# rises as it gets closer — the parking-sensor pattern.
+
+@pytest.fixture
+def pulses(app, monkeypatch):
+    """Record rhythm pulses as `all_motors` flags instead of playing them."""
+    played = []
+    monkeypatch.setattr(app, "_play_warning_pattern", lambda *a: None)
+    monkeypatch.setattr(app, "_play_rhythm_pulse", lambda all_motors: played.append(all_motors))
+    return played
+
+
+def _pulse_due(app):
+    """Wind the rhythm clock back so the next tick is due at any rate."""
+    app._rhythm_last_pulse -= 10.0
+
+
+def test_the_rhythm_pulses_while_walking_towards_head_height(app, pulses):
+    app.walking_detector = _Motion(walking=True)
+    _feed(app, "top", 80, 80, 80)
+
+    app._tick_obstacle_rhythm()          # starts the clock, no pulse yet
+    assert pulses == []
+    _pulse_due(app)
+    app._tick_obstacle_rhythm()
+
+    assert _wait_for(lambda: pulses == [False]), "expected one front pulse"
+
+
+def test_the_first_pulse_waits_one_interval(app, pulses):
+    """The tier alert has just played; a pulse straight on top of it would
+    blur both."""
+    app.walking_detector = _Motion(walking=True)
+    _feed(app, "top", 80, 80, 80)
+
+    app._tick_obstacle_rhythm()
+    app._tick_obstacle_rhythm()
+
+    time.sleep(0.02)
+    assert pulses == []
+
+
+def test_standing_still_silences_the_rhythm(app, pulses):
+    """A queue or a crossing must stay quiet: still keeps fire-once."""
+    app.walking_detector = _Motion(walking=False)
+    _feed(app, "top", 40, 40, 40)
+
+    app._tick_obstacle_rhythm()
+
+    assert app._rhythm_last_pulse is None
+    time.sleep(0.02)
+    assert pulses == []
+
+
+def test_danger_range_pulses_all_motors(app, pulses):
+    app.walking_detector = _Motion(walking=True)
+    _feed(app, "top", 40, 40, 40)
+    app._tick_obstacle_rhythm()
+    _pulse_due(app)
+    app._tick_obstacle_rhythm()
+
+    assert _wait_for(lambda: pulses == [True])
+
+
+def test_bottom_only_joins_inside_danger(app, pulses):
+    """BOTTOM sees the ground around 80 cm on most readings; a rhythm
+    from there would buzz the whole walk."""
+    app.walking_detector = _Motion(walking=True)
+    _feed(app, "bottom", 80, 80, 80)
+    app._tick_obstacle_rhythm()
+    assert app._rhythm_last_pulse is None
+
+    _feed(app, "bottom", 40, 40, 40)
+    app._tick_obstacle_rhythm()
+    assert app._rhythm_last_pulse is not None
+
+
+def test_the_closer_sensor_drives_the_rhythm(app, pulses):
+    """One beat at a time: two sensors must never produce two rhythms."""
+    app.walking_detector = _Motion(walking=True)
+    _feed(app, "top", 90, 90, 90)
+    _feed(app, "bottom", 35, 35, 35)
+
+    app._tick_obstacle_rhythm()
+
+    assert app._rhythm_sensor == "bottom"
+
+
+def test_a_stale_sensor_stops_the_rhythm(app, pulses):
+    """No echo looks like silence from the DYP-A22, so a sensor that has
+    gone quiet means the obstacle has probably left range."""
+    app.walking_detector = _Motion(walking=True)
+    _feed(app, "top", 60, 60, 60)
+    app._tick_obstacle_rhythm()
+    distance, stamped_at = app._obstacle_reading["top"]
+    app._obstacle_reading["top"] = (distance, stamped_at - OBSTACLE_RHYTHM_MAX_AGE_S - 0.1)
+
+    app._tick_obstacle_rhythm()
+
+    assert app._rhythm_last_pulse is None
+    assert app._rhythm_sensor is None
+
+
+def test_one_wobbly_reading_does_not_move_the_rate(app, pulses):
+    """The rate follows the median, so a single sway reading across the
+    danger line does not switch the rhythm to all motors."""
+    app.walking_detector = _Motion(walking=True)
+    _feed(app, "top", 60, 60, 45)
+    app._tick_obstacle_rhythm()
+    _pulse_due(app)
+    app._tick_obstacle_rhythm()
+
+    assert _wait_for(lambda: pulses == [False])
+
+
+def test_closing_in_shortens_the_very_next_gap(app, pulses):
+    """The interval is judged at the current rate, so stepping closer does
+    not wait out the slower gap that was already running."""
+    app.walking_detector = _Motion(walking=True)
+    _feed(app, "top", 95, 95, 95)
+    app._tick_obstacle_rhythm()
+    slow_gap = 1.0 / app_module._obstacle_rhythm_hz(95)
+    fast_gap = 1.0 / app_module._obstacle_rhythm_hz(OBSTACLE_RHYTHM_CONTACT_CM - 5)
+    app._rhythm_last_pulse -= (slow_gap + fast_gap) / 2   # due at fast, not slow
+
+    _feed(app, "top", *([OBSTACLE_RHYTHM_CONTACT_CM - 5] * 3))
+    app._tick_obstacle_rhythm()
+
+    assert _wait_for(lambda: len(pulses) == 1)
+
+
+def test_a_rhythm_pulse_yields_to_a_cue_already_playing(app):
+    """Dropped, not queued: a backlog would fire in a burst after the cue,
+    and a turn instruction must never wait behind rhythm."""
+    with app._warning_lock:
+        app._play_rhythm_pulse(all_motors=False)
+
+    assert app.front_motor.events == []
+
+
+def test_a_rhythm_pulse_is_short(app):
+    app._play_rhythm_pulse(all_motors=False)
+
+    assert app.front_motor.events == [("pulse", 1, OBSTACLE_RHYTHM_PULSE_S, app.front_motor.events[0][3])]
+
+
+def test_a_rhythm_pulse_never_sounds_the_buzzer(app):
+    app._play_rhythm_pulse(all_motors=True)
+    app._play_rhythm_pulse(all_motors=False)
+
+    assert app.buzzer.events == []
+
+
+@pytest.mark.parametrize("distance,expected", [
+    (OBSTACLE_WARNING_CM,             OBSTACLE_RHYTHM_WARNING_HZ[0]),
+    (OBSTACLE_DANGER_CM,              OBSTACLE_RHYTHM_WARNING_HZ[1]),
+    (OBSTACLE_DANGER_CM - 0.001,      OBSTACLE_RHYTHM_DANGER_HZ[0]),
+    (OBSTACLE_RHYTHM_CONTACT_CM,      OBSTACLE_RHYTHM_DANGER_HZ[1]),
+    (OBSTACLE_RHYTHM_CONTACT_CM - 1,  OBSTACLE_RHYTHM_CONTACT_HZ),
+    (5.0,                             OBSTACLE_RHYTHM_CONTACT_HZ),
+])
+def test_the_rhythm_rate_table(distance, expected):
+    assert app_module._obstacle_rhythm_hz(distance) == pytest.approx(expected, abs=1e-3)
+
+
+def test_closer_is_never_slower():
+    """The defining property of the rhythm, over the whole range."""
+    rates = [app_module._obstacle_rhythm_hz(d / 2) for d in range(2 * int(OBSTACLE_WARNING_CM), 0, -1)]
+    assert all(b >= a for a, b in zip(rates, rates[1:]))
+
+
+def test_crossing_into_danger_is_a_felt_step():
+    """The bands do not meet: crossing 50 cm must change the rhythm by more
+    than the warning band's own slope would."""
+    just_outside = app_module._obstacle_rhythm_hz(OBSTACLE_DANGER_CM)
+    just_inside = app_module._obstacle_rhythm_hz(OBSTACLE_DANGER_CM - 0.5)
+    assert just_inside - just_outside >= 0.5
 
 
 # --- independence ------------------------------------------------------------

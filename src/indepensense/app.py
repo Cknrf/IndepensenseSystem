@@ -93,8 +93,13 @@ again. `WalkingDetector` classifies the wearer as still or walking, and:
   - setting off while an obstacle is already in a tier re-fires that
     tier once — otherwise someone who stood in front of a post and then
     walked into it heard nothing, because the distance had not changed;
-  - the danger tier alone repeats, every `OBSTACLE_DANGER_REPEAT_WALKING_S`
-    while walking and every `OBSTACLE_DANGER_REPEAT_S` while still.
+  - while walking, anything inside `OBSTACLE_RHYTHM_START_CM` drives a
+    proximity rhythm: short pulses whose rate rises as the obstacle gets
+    closer, front motor in the warning band and all three in danger. A
+    tier alert says "something is there"; only a changing cue says "and
+    it is getting closer". See `_tick_obstacle_rhythm`;
+  - while still, the danger tier alone repeats, every
+    `OBSTACLE_DANGER_REPEAT_S`.
 
 That replaced a flat 2 s cooldown which re-fired for as long as anything
 stayed in range — on the bench it produced 136 motor pulses in four and a
@@ -144,9 +149,11 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 
 from indepensense.config import (
     VOICE_STACK_LOAD_ATTEMPTS,
@@ -224,10 +231,17 @@ from indepensense.config import (
     NLU_WARMUP_TIMEOUT_S,
     OBSTACLE_DANGER_CM,
     OBSTACLE_DANGER_REPEAT_S,
-    OBSTACLE_DANGER_REPEAT_WALKING_S,
     OBSTACLE_FAR_CM,
     OBSTACLE_READING_MAX_AGE_S,
     OBSTACLE_RELEASE_CM,
+    OBSTACLE_RHYTHM_CONTACT_CM,
+    OBSTACLE_RHYTHM_CONTACT_HZ,
+    OBSTACLE_RHYTHM_DANGER_HZ,
+    OBSTACLE_RHYTHM_MAX_AGE_S,
+    OBSTACLE_RHYTHM_PULSE_S,
+    OBSTACLE_RHYTHM_SMOOTHING_N,
+    OBSTACLE_RHYTHM_START_CM,
+    OBSTACLE_RHYTHM_WARNING_HZ,
     OBSTACLE_WARNING_CM,
     OLLAMA_URL,
     ORIENTATION_ALIGNED_TOLERANCE_DEG,
@@ -466,6 +480,32 @@ def _obstacle_tier_for(
         if distance_cm < threshold:
             return tier
     return None
+
+
+def _obstacle_rhythm_hz(distance_cm: float) -> float:
+    """Proximity-rhythm pulse rate for a distance, in pulses per second.
+
+    Rises through two bands — warning (`OBSTACLE_WARNING_CM` → danger) and
+    danger (`OBSTACLE_DANGER_CM` → contact) — interpolating linearly inside
+    each, then holds at `OBSTACLE_RHYTHM_CONTACT_HZ` once the obstacle is
+    within `OBSTACLE_RHYTHM_CONTACT_CM`. The bands do not meet: the step
+    up at the danger line is meant to be felt.
+
+    Free and pure for the same reason as `_obstacle_tier_for`: the whole
+    distance → rate curve can be asserted as a table.
+    """
+    if distance_cm < OBSTACLE_RHYTHM_CONTACT_CM:
+        return OBSTACLE_RHYTHM_CONTACT_HZ
+    if distance_cm < OBSTACLE_DANGER_CM:
+        far_hz, near_hz = OBSTACLE_RHYTHM_DANGER_HZ
+        span = OBSTACLE_DANGER_CM - OBSTACLE_RHYTHM_CONTACT_CM
+        closeness = (OBSTACLE_DANGER_CM - distance_cm) / span
+    else:
+        far_hz, near_hz = OBSTACLE_RHYTHM_WARNING_HZ
+        span = OBSTACLE_WARNING_CM - OBSTACLE_DANGER_CM
+        closeness = (OBSTACLE_WARNING_CM - distance_cm) / span
+    closeness = min(1.0, max(0.0, closeness))
+    return far_hz + (near_hz - far_hz) * closeness
 GPS_CACHE_INTERVAL_S = 1.0       # 1 Hz — GPS itself only emits ~1 Hz NMEA anyway
 
 
@@ -1043,6 +1083,13 @@ class App:
         # reading when it arrived. Cached the way `_last_heading_deg` is:
         # a consumer off the main loop must never touch the UART itself.
         self._obstacle_reading: dict[str, tuple[float, float]] = {}
+        # The last few distances per sensor, for the rhythm's median.
+        self._obstacle_recent: dict[str, deque[float]] = {}
+        # When the proximity rhythm last pulsed, on the monotonic clock;
+        # None while it is not running. Which sensor is driving it, so a
+        # change of driver is logged once rather than per pulse.
+        self._rhythm_last_pulse: float | None = None
+        self._rhythm_sensor: str | None = None
 
         # When the emergency alert last went out, on the monotonic clock.
         # Negative infinity rather than 0.0: `time.monotonic()` counts from
@@ -1539,6 +1586,7 @@ class App:
                 # return None. That's fine.
                 self._check_obstacle_sensor("top", self.top_sensor)
                 self._check_obstacle_sensor("bottom", self.bottom_sensor)
+                self._tick_obstacle_rhythm()
 
                 # Battery check — throttled to `BATTERY_CHECK_INTERVAL_S`
                 # since battery changes slowly. Rate limiting is inside
@@ -2175,11 +2223,11 @@ The comparisons are inclusive, so a threshold names the percentage
 
         Fires on **escalation**, not on presence. Entering a tier alerts
         once; staying in it is silent; receding past the release threshold
-        re-arms it. The one exception is the danger tier, which repeats so
-        a standing hazard is not announced once and then forgotten — every
-        `OBSTACLE_DANGER_REPEAT_WALKING_S` while the wearer is walking,
-        every `OBSTACLE_DANGER_REPEAT_S` while they stand still. The other
-        re-alert, on setting off, lives in `_on_started_walking`.
+        re-arms it. The one exception is the danger tier, which repeats
+        every `OBSTACLE_DANGER_REPEAT_S` while the wearer stands still so a
+        standing hazard is not announced once and then forgotten. While
+        they walk, `_tick_obstacle_rhythm` keeps them informed instead, and
+        the re-alert on setting off lives in `_on_started_walking`.
 
         This replaced a fixed two-second cooldown that re-fired for as
         long as anything stayed in range — a field log shows `danger at
@@ -2208,6 +2256,10 @@ The comparisons are inclusive, so a threshold names the percentage
         # Stamped with the clock rather than just stored: a reading is
         # only worth repeating while it is still roughly true.
         self._obstacle_reading[sensor_name] = (distance, time.monotonic())
+        recent = self._obstacle_recent.setdefault(
+            sensor_name, deque(maxlen=OBSTACLE_RHYTHM_SMOOTHING_N),
+        )
+        recent.append(distance)
 
         previous = self._obstacle_tier.get(sensor_name)
         tier = _obstacle_tier_for(distance, previous, sensor_name)
@@ -2226,9 +2278,9 @@ The comparisons are inclusive, so a threshold names the percentage
         escalated = _OBSTACLE_RANK[tier] > _OBSTACLE_RANK[previous]
         if escalated:
             reason = "entered"
-        elif tier == "danger" and (
+        elif tier == "danger" and not self._user_walking() and (
             now - self._obstacle_last_fired.get(sensor_name, 0.0)
-            >= self._danger_repeat_s()
+            >= OBSTACLE_DANGER_REPEAT_S
         ):
             reason = "repeat"
         else:
@@ -2236,11 +2288,96 @@ The comparisons are inclusive, so a threshold names the percentage
 
         self._fire_obstacle(sensor_name, tier, distance, reason, now)
 
-    def _danger_repeat_s(self) -> float:
-        """The danger backstop interval for the wearer's current motion."""
-        if self.walking_detector is None or self.walking_detector.walking:
-            return OBSTACLE_DANGER_REPEAT_WALKING_S
-        return OBSTACLE_DANGER_REPEAT_S
+    def _user_walking(self) -> bool:
+        """Whether the wearer is walking. Without an IMU there is no
+        evidence they are still, so this answers the side that suppresses
+        nothing."""
+        return self.walking_detector is None or self.walking_detector.walking
+
+    def _tick_obstacle_rhythm(self) -> None:
+        """Pulse the proximity rhythm if a pulse is due. Main loop, every tick.
+
+        While walking, the closest obstacle inside its sensor's
+        `OBSTACLE_RHYTHM_START_CM` sets a pulse rate (`_obstacle_rhythm_hz`)
+        from the median of its recent readings. A pulse is due once a full
+        interval at the *current* rate has passed since the last one, so
+        closing in shortens the very next gap rather than waiting out the
+        old one.
+
+        The rhythm starts one interval after the obstacle first qualifies:
+        the tier alert has just played, and a pulse on top of it would
+        blur both. Only one sensor drives it at a time — the closer — so
+        the user never feels two competing beats.
+
+        Scheduled from the main loop rather than by a long-lived thread:
+        this only decides *when*, which is cheap, and each pulse is
+        dispatched like every other haptic. See `_play_rhythm_pulse` for
+        how it yields to a cue already playing.
+        """
+        now = time.monotonic()
+        closest: tuple[float, str] | None = None
+        if self._user_walking():
+            for sensor_name, start_cm in OBSTACLE_RHYTHM_START_CM.items():
+                cached = self._obstacle_reading.get(sensor_name)
+                recent = self._obstacle_recent.get(sensor_name)
+                if cached is None or not recent:
+                    continue
+                if now - cached[1] > OBSTACLE_RHYTHM_MAX_AGE_S:
+                    continue
+                distance = median(recent)
+                if distance < start_cm and (closest is None or distance < closest[0]):
+                    closest = (distance, sensor_name)
+
+        if closest is None:
+            if self._rhythm_sensor is not None:
+                print("[obstacle:rhythm] stop", flush=True)
+            self._rhythm_last_pulse = None
+            self._rhythm_sensor = None
+            return
+
+        distance, sensor_name = closest
+        hz = _obstacle_rhythm_hz(distance)
+        if sensor_name != self._rhythm_sensor:
+            print(
+                f"[obstacle:rhythm] {sensor_name} at {distance:.0f} cm, {hz:.1f} Hz",
+                flush=True,
+            )
+            self._rhythm_sensor = sensor_name
+        if self._rhythm_last_pulse is None:
+            self._rhythm_last_pulse = now
+            return
+        if now - self._rhythm_last_pulse < 1.0 / hz:
+            return
+
+        self._rhythm_last_pulse = now
+        threading.Thread(
+            target=self._play_rhythm_pulse,
+            args=(distance < OBSTACLE_DANGER_CM,),
+            name="obstacle-rhythm",
+            daemon=True,
+        ).start()
+
+    def _play_rhythm_pulse(self, all_motors: bool) -> None:
+        """One rhythm pulse: front motor, or all three inside danger.
+
+        Takes `_warning_lock` without waiting. If a tier alert or a
+        navigation cue is playing, this pulse is dropped rather than
+        queued: at up to 8 Hz a queue would pile up behind a 0.5 s cue and
+        then fire in a burst, and a turn instruction should never be
+        delayed by, or drowned in, a backlog of rhythm. The next pulse is
+        at most an eighth of a second away anyway.
+        """
+        if not self._warning_lock.acquire(blocking=False):
+            return
+        try:
+            if all_motors:
+                self._pulse_all_motors(duration_s=OBSTACLE_RHYTHM_PULSE_S)
+            elif self.front_motor is not None:
+                self.front_motor.pulse(times=1, duration_s=OBSTACLE_RHYTHM_PULSE_S)
+        except Exception as exc:
+            print(f"[obstacle:rhythm] error: {exc}", file=sys.stderr, flush=True)
+        finally:
+            self._warning_lock.release()
 
     def _on_started_walking(self) -> None:
         """Re-alert every sensor that is already in a tier.

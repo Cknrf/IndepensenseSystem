@@ -115,18 +115,56 @@ OBSTACLE_FAR_CM = 200.0
 # tiers, so a genuine approach still crosses it.
 OBSTACLE_RELEASE_CM = 15.0
 
-# Backstop re-notify for the DANGER tier only. Someone walking a long wall
-# at 42 cm should not be told once and then left; someone at 80 cm does
-# not need reminding at all. Long enough not to nag, short enough that a
-# standing hazard is not forgotten.
+# Backstop re-notify for the DANGER tier only, while the user is standing
+# still. Someone stopped at 42 cm from a hazard should not be told once and
+# then left; someone at 80 cm does not need reminding at all. Long enough
+# not to nag, short enough that a standing hazard is not forgotten. While
+# walking, the proximity rhythm below takes over this job.
 OBSTACLE_DANGER_REPEAT_S = 15.0
 
-# The same backstop while the user is walking. A danger-tier obstacle that
-# is still there after a few seconds of walking is moving with them or
-# blocking their way — that deserves a reminder far sooner than one in
-# front of somebody standing still. Which interval applies is decided by
-# `WalkingDetector` from the chest IMU.
-OBSTACLE_DANGER_REPEAT_WALKING_S = 3.0
+# Proximity rhythm while walking: once something is close, the front
+# motor keeps pulsing, faster the closer it gets — the parking-sensor
+# pattern the Sunu Band, MiniGuide and UltraCane use. Tier alerts above
+# fire once on entry; past that point they said nothing more about an
+# obstacle at 45 cm than one at 20 cm, which is exactly the range where
+# the difference matters.
+#
+# Rate rather than strength because people judge rhythm far better than
+# vibration amplitude, skin adapts to a steady buzz within seconds, and
+# these motors are switched on/off through a transistor anyway. Short
+# discrete pulses, not a continuous buzz, for the same adaptation reason.
+#
+# Runs only while `WalkingDetector` says the user is walking. Standing
+# still keeps the fire-once behaviour, so a queue or a crossing is quiet.
+#
+# Where each sensor's rhythm starts. BOTTOM starts at danger only: it sees
+# the ground at around 80 cm on most readings, so a rhythm from 100 cm
+# would buzz the whole walk, and the cane already covers that range.
+OBSTACLE_RHYTHM_START_CM = {
+    "top": OBSTACLE_WARNING_CM,
+    "bottom": OBSTACLE_DANGER_CM,
+}
+# Pulses per second across each band, as (at the far edge, at the near
+# edge). Warning: 100 → 50 cm, front motor. Danger: 50 → 30 cm, all three
+# motors. The step from 2 to 3 Hz at 50 cm is deliberate — crossing into
+# danger should be felt as a change, not only as a little faster.
+OBSTACLE_RHYTHM_WARNING_HZ = (1.0, 2.0)
+OBSTACLE_RHYTHM_DANGER_HZ = (3.0, 5.0)
+# Inside this distance the rhythm runs at its fastest, nearly continuous:
+# about a step away at walking pace.
+OBSTACLE_RHYTHM_CONTACT_CM = 30.0
+OBSTACLE_RHYTHM_CONTACT_HZ = 8.0
+# Each pulse. Long enough for a coin motor to spin up and be felt (they
+# take ~30-50 ms), short enough to leave a gap at 8 Hz (125 ms period).
+OBSTACLE_RHYTHM_PULSE_S = 0.08
+# The rhythm follows the median of each sensor's last few readings, not
+# the raw one. Cane sway moves a single reading by centimetres; without
+# this the rate would stutter on every wobble.
+OBSTACLE_RHYTHM_SMOOTHING_N = 3
+# A sensor that has gone quiet for this long stops driving the rhythm.
+# The DYP-A22 reports "no echo" by sending nothing, so silence is also how
+# an obstacle leaving range looks — half a second is five missed frames.
+OBSTACLE_RHYTHM_MAX_AGE_S = 0.5
 
 # How long a cached ultrasonic reading stays worth repeating.
 #
