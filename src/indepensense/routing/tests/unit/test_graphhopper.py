@@ -226,3 +226,40 @@ def test_the_route_call_raises_with_the_detail(monkeypatch):
 
     assert "Cannot find point 2" in str(caught.value)
     assert "500" in str(caught.value)
+
+
+# --- heading and contraction hierarchies cannot both be used -----------------
+#
+# GraphHopper 400s on the pair: CH bakes the first edge out of the start
+# into its shortcuts, so a departure bias has nothing to act on. The
+# request was sending `heading` alone, which worked only for as long as
+# the compass was uncalibrated and the caller passed None.
+
+def test_a_heading_disables_speed_mode(capture):
+    GraphHopperRouter("http://x").route(
+        Coordinate(14.0, 121.0), Coordinate(14.001, 121.001), heading=270.0,
+    )
+
+    assert _params(capture)["ch.disable"] == "true", (
+        "sent a heading without disabling CH — GraphHopper answers 400"
+    )
+
+
+def test_no_heading_leaves_speed_mode_on(capture):
+    """CH is why routing is fast. It must not be given up on every
+    request just because some requests cannot use it."""
+    GraphHopperRouter("http://x").route(
+        Coordinate(14.0, 121.0), Coordinate(14.001, 121.001),
+    )
+
+    assert "ch.disable" not in _params(capture)
+
+
+def test_a_heading_of_zero_still_disables_speed_mode(capture):
+    """Due north is a heading, not a missing one — the same `0 is falsy`
+    trap the heading parameter itself already guards against."""
+    GraphHopperRouter("http://x").route(
+        Coordinate(14.0, 121.0), Coordinate(14.001, 121.001), heading=0.0,
+    )
+
+    assert _params(capture)["ch.disable"] == "true"

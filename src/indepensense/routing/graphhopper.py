@@ -146,6 +146,29 @@ class GraphHopperRouter:
             # and a heading arriving as -10 or 375 is a caller's arithmetic
             # rather than a reason to fail the whole route request.
             params.append(("heading", f"{heading % 360:.0f}"))
+            # `heading` is incompatible with contraction hierarchies, and
+            # GraphHopper rejects the pair outright:
+            #
+            #   400 ... The 'heading' parameter is currently not supported
+            #   for speed mode, you need to disable speed mode with
+            #   `ch.disable=true`. See issue #483
+            #
+            # CH pre-computes shortest paths between contracted nodes, so
+            # the first edge out of the start is already baked in and
+            # cannot be biased after the fact. Asking for both is asking
+            # for a shortcut that was never computed.
+            #
+            # Latent until the compass was calibrated: with
+            # `COMPASS_CALIBRATED = False` the caller passed None, no
+            # heading was sent, and CH served every route. Turning the
+            # compass on turned every navigation request into a 400.
+            #
+            # The cost is real but small here. Without CH, GraphHopper
+            # falls back to a bidirectional A* over the raw graph —
+            # slower, but this graph is one province, not a continent,
+            # and a departure bias that stops the wearer being told to
+            # turn around is worth more than the milliseconds.
+            params.append(("ch.disable", "true"))
         response = requests.get(
             f"{self._base_url}/route",
             params=params,
