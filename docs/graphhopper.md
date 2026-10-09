@@ -142,7 +142,7 @@ server:
 {
   "priority": [
     { "if": "road_class == SERVICE", "multiply_by": "0.6" },
-    { "if": "road_class == TRUNK",   "multiply_by": "3" }
+    { "if": "road_class == TRUNK",   "multiply_by": "4.5" }
   ]
 }
 ```
@@ -200,7 +200,8 @@ Route B: the same origin -> a Jollibee 2.0 km east.
 | profile as GraphHopper ships it | 1.57 km / 17 instr | 3.85 km / 21 instr |
 | + `service` x 0.6 | 1.44 km / 5 | 3.85 km / 21 |
 | + `trunk` x 1.5 | 1.44 km / 5 | 2.52 km / 5 |
-| **+ `trunk` x 3 (shipped)** | **1.44 km / 5** | **2.52 km / 5** |
+| + `trunk` x 3 | 1.44 km / 5 | 2.52 km / 5 |
+| **+ `trunk` x 4.5 (shipped)** | — | — |
 | Google Maps | 1.4 km / ~4 | — |
 | OSRM (fossgis_osrm_foot) | 1.4 km / ~4 | 2.5 km / 5 |
 

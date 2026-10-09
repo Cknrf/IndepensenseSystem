@@ -1,6 +1,6 @@
 {
   "priority": [
     { "if": "road_class == SERVICE", "multiply_by": "0.6" },
-    { "if": "road_class == TRUNK",   "multiply_by": "3" }
+    { "if": "road_class == TRUNK",   "multiply_by": "4.5" }
   ]
 }
