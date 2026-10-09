@@ -66,7 +66,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Saved places — name the spot you are standing in, then "take me home" later, with no geocoder and no network. Matched on the name alone: "my home" and "home" are one place, and a saved place skips both the geocoder and the confirmation prompt
 - Progress on demand: how much further there is to walk, measured along the route rather than as the crow flies
 
-**Compass-assisted navigation** *(built, inert until the magnetometer is calibrated on the assembled unit — see `COMPASS_CALIBRATED` in `config.py`)*
+**Compass-assisted navigation** *(active: the magnetometer is calibrated on the assembled unit — `COMPASS_CALIBRATED = True` in `config.py`)*
 - Turn-to-face guidance: before the first step, a motor pulses on the side to turn toward, faster as the user comes round
 - Departure heading passed to the router, so a route does not open by telling the user to turn around
 - Turn verification — the compass notices a missed turn in about five seconds, where position-based off-route detection takes fifteen to thirty
@@ -387,9 +387,10 @@ After the wearable is assembled, run these steps **in order**. If a step fails, 
    systemctl status ollama graphhopper photon indepensense
    ```
 5. **Run each manual test above**, one component at a time. Do not skip failing components.
-6. **Calibrate the compass.** It is wired and read but nothing acts on it:
-   `COMPASS_CALIBRATED` in `config.py` is `False`, so turn-to-face
-   guidance, the departure heading and turn verification all stay off.
+6. **Calibrate the compass** (done on the current build — `COMPASS_CALIBRATED`
+   is `True`; repeat after any change to the mount, battery or motors).
+   While the flag is `False`, turn-to-face guidance, the departure heading
+   and turn verification all stay off.
    Working heading is not optional for those three — an uncalibrated
    magnetometer does not fail visibly, it reports a plausible bearing that
    may be mirrored, and that sends the user the wrong way.

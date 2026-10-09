@@ -1847,7 +1847,8 @@ The comparisons are inclusive, so a threshold names the percentage
                 self._set_low_battery_latch(True)
 
         # Critical tier, checked independently — a device that boots below
-        # 5% has both latches unset and should still say the urgent thing.
+        # the critical threshold has both latches unset and should still say
+        # the urgent thing.
         if self._critical_battery_alerted:
             if pct >= CRITICAL_BATTERY_RECOVERY_PERCENT and not voltage_critical:
                 print(

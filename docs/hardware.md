@@ -398,7 +398,7 @@ Manual test:
 python -m indepensense.sensors.tests.manual.single_mpu6050_test
 ```
 
-# 7. QMC5883P magnetometer — STATUS: wired, calibration outstanding
+# 7. QMC5883P magnetometer — STATUS: working (calibrated)
 
 Standalone 3-axis compass at address **`0x2C`**, on **its own I²C bus, I2C4**
 — not the I2C1 bus the MPU6050 and UPS HAT share. That separation is
@@ -479,21 +479,20 @@ Lowering the I²C baudrate is the common advice for a flaky bus and would not
 have helped: that addresses pull-ups too *weak* and rise times too slow. This
 was the opposite fault, and clock speed has no bearing on sink current.
 
-### Nothing acts on the heading yet, by design
+### The heading is only acted on once calibrated
 
-`config.COMPASS_CALIBRATED` is `False`, which makes `App.trusted_heading()`
-return `None` and leaves every consumer behaving as it did before the compass
-existed. The driver still opens and the reading is still cached —
-`App.latest_heading()` and the manual tests below show it — but routing will
-not use a bearing that has not been verified on the assembled unit.
+`config.COMPASS_CALIBRATED` gates every consumer. While it is `False`,
+`App.trusted_heading()` returns `None` and turn-to-face guidance, the
+departure heading sent to the router, and turn verification all stay inert;
+the reading is still cached and shown by `App.latest_heading()` and the
+manual tests below.
 
-Until it is set True, three built features stay inert by design:
-turn-to-face guidance, the departure heading sent to the router, and turn
-verification.
-
-Flip it only after steps 1-4 in the `COMPASS_CALIBRATED` comment in
-`config.py`: fix the axis roles, run the calibration sweep, paste the
-values, and check all four cardinals against a phone compass.
+**On this build it is `True`**: the compass was calibrated on the assembled
+vest with `magnetometer_swing` and checked against a phone compass (see the
+`COMPASS_CALIBRATED` and `MAG_HEADING_OFFSET_DEG` comments in `config.py`).
+Re-run that procedure — and set the flag back to `False` until it passes —
+whenever the mount, battery or motor layout changes, since any of them
+moves the vest's own magnetic field.
 
 Verified on the bench: chip ID `0x80`, both control registers holding, and a
 horizontal field of 41.7 μT measured from a flat rotation sweep against ~40 μT

@@ -435,8 +435,10 @@ MAG_SCALE_Z = 1.0110
 # Measured by `magnetometer_swing` against a phone compass, which is also
 # where the rest of the horizontal calibration comes from.
 #
-# Measured 2026-10-04, facing magnetic north by phone compass: 61 samples
-# averaging 12.4°, so the device reads 12.4° high and this cancels it.
+# First measured 2026-10-04, facing magnetic north by phone compass: 61
+# samples averaging 12.4°, so the device read 12.4° high. Re-set to -3.4°
+# on 2026-10-06 after the compass was recalibrated (commit 18ce8eb); the
+# 12.4° figures in this comment describe that first measurement.
 # Standing still the readings held within 0.9° (std dev), which is well
 # inside the 4.6° the swing predicted and says the heading is steady
 # enough to act on.
@@ -929,8 +931,8 @@ LANGUAGE_STATE_PATH = PROJECT_ROOT / "var" / "language"
 # on. `VolumeState` refuses to go below it whatever is asked.
 #
 # The buzzer is unaffected by all of this — it is driven straight from GPIO
-# and never passes through the audio sink, so obstacle and emergency alerts
-# keep their loudness no matter what the user sets here.
+# and never passes through the audio sink, so emergency alerts (the only
+# thing it sounds for) keep their loudness no matter what the user sets here.
 #
 # 10% steps: small enough to tune, large enough that "louder" is audibly
 # louder on the first try rather than needing four presses.
