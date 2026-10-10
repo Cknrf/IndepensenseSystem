@@ -483,46 +483,34 @@ def _obstacle_tier_for(
 def _obstacle_feedback(distance_cm: float) -> tuple[float, float]:
     """Proximity-rhythm feedback: frequency + intensity for a distance.
 
-    Returns (frequency_hz, duty_cycle_0_to_1) with very aggressive ramping:
-    - Both frequency and intensity increase as obstacles approach
+    Returns (frequency_hz, duty_cycle_0_to_1) with continuous linear ramping:
+    - Both frequency and intensity increase smoothly as obstacles approach
     - Creates compound feedback: faster AND stronger as you get closer
-    - Starts noticeable at 150cm (uses all 3 motors at all distances)
+    - Single continuous linear function across full 200-20cm range
+    - Uses all 3 motors at all distances for maximum perceptibility
 
-    Very aggressive curve through key points (max 30 Hz):
-      150 cm:   8 Hz  @ 50% intensity (strong start, all 3 motors)
-      100 cm:  12 Hz  @ 60% intensity (stronger)
-       50 cm:  20 Hz  @ 90% intensity (very strong)
-       20 cm:  30 Hz  @ 100% intensity (max speed + strength)
-       <20 cm: 30 Hz  @ 100% intensity (clamped)
+    Continuous linear curve (max 40 Hz at contact):
+      200 cm:   8 Hz  @  50% intensity (noticeable start, all 3 motors)
+      100 cm:  16 Hz  @  60% intensity (smooth progression)
+       50 cm:  26 Hz  @  90% intensity (strong)
+       20 cm:  40 Hz  @ 100% intensity (max speed + strength)
+       <20 cm: 40 Hz  @ 100% intensity (clamped)
 
-    Linear interpolation between key points. Duty cycle controls vibration
+    Single linear interpolation from 200→20cm ensures smooth feedback that
+    changes uniformly with every cm of distance. Duty cycle controls vibration
     intensity via PWM: 60% duty = motor on 60% of pulse period.
-    All distances use all 3 motors for maximum perceptibility.
     """
     if distance_cm >= OBSTACLE_DETECTION_START_CM:
         return (0.0, 0.0)
     if distance_cm <= 20.0:
-        return (30.0, 1.0)
+        return (40.0, 1.0)
 
-    # Linear interpolation through three segments, starting at 8 Hz @ 50%, maxing at 30 Hz
-    if distance_cm >= 100.0:
-        # 150→100 cm: 8→12 Hz, 50%→60% intensity (span: 50 cm)
-        t = (OBSTACLE_DETECTION_START_CM - distance_cm) / 50.0  # 0 to 1
-        hz = 8.0 + 4.0 * t
-        duty = 0.5 + 0.1 * t
-        return (hz, duty)
-    elif distance_cm >= 50.0:
-        # 100→50 cm: 12→20 Hz, 60%→90% intensity (span: 50 cm)
-        t = (100.0 - distance_cm) / 50.0  # 0 to 1
-        hz = 12.0 + 8.0 * t
-        duty = 0.6 + 0.3 * t
-        return (hz, duty)
-    else:
-        # 50→20 cm: 20→30 Hz, 90%→100% intensity (span: 30 cm)
-        t = (50.0 - distance_cm) / 30.0  # 0 to 1
-        hz = 20.0 + 10.0 * t
-        duty = 0.9 + 0.1 * t
-        return (hz, duty)
+    # Single continuous linear interpolation: 200→20cm (8→40 Hz, 50%→100%)
+    span = OBSTACLE_DETECTION_START_CM - 20.0  # 180 cm
+    t = (OBSTACLE_DETECTION_START_CM - distance_cm) / span  # 0 to 1
+    hz = 8.0 + 32.0 * t  # 8 to 40 Hz
+    duty = 0.5 + 0.5 * t  # 0.5 to 1.0 (50% to 100%)
+    return (hz, duty)
 GPS_CACHE_INTERVAL_S = 1.0       # 1 Hz — GPS itself only emits ~1 Hz NMEA anyway
 
 

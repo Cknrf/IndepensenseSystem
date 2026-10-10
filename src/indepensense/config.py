@@ -93,7 +93,7 @@ DYP_A22_BAUDRATE = 115200
 # ankle) sensors start at this distance. At walking speed (1.2 m/s), 150 cm
 # provides ~1.25 seconds of warning — sufficient for collision avoidance without
 # false positives from ground or environment clutter.
-OBSTACLE_DETECTION_START_CM = 150.0
+OBSTACLE_DETECTION_START_CM = 200.0
 
 # Hysteresis band: obstacle must recede this far past a threshold to re-arm.
 # Without it, cane sway (few centimetres) causes false tier changes and
