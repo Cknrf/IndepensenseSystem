@@ -2293,12 +2293,12 @@ The comparisons are inclusive, so a threshold names the percentage
     def _tick_obstacle_rhythm(self) -> None:
         """Pulse the proximity rhythm if a pulse is due. Main loop, every tick.
 
-        While walking, the closest obstacle inside its sensor's
-        `OBSTACLE_RHYTHM_START_CM` sets a pulse rate (`_obstacle_rhythm_hz`)
-        from the median of its recent readings. A pulse is due once a full
-        interval at the *current* rate has passed since the last one, so
-        closing in shortens the very next gap rather than waiting out the
-        old one.
+        While walking (detected by accelerometer), the closest obstacle inside
+        its sensor's `OBSTACLE_RHYTHM_START_CM` sets a pulse rate using
+        `_obstacle_feedback()` from the median of its recent readings. A pulse
+        is due once a full interval at the *current* rate has passed since the
+        last one, so closing in shortens the very next gap rather than waiting
+        out the old one.
 
         The rhythm starts one interval after the obstacle first qualifies:
         the tier alert has just played, and a pulse on top of it would
@@ -2312,18 +2312,17 @@ The comparisons are inclusive, so a threshold names the percentage
         """
         now = time.monotonic()
         closest: tuple[float, str] | None = None
-        # Continuous obstacle feedback regardless of walking state.
-        # This allows testing and standing-still awareness without accelerometer.
-        for sensor_name, start_cm in OBSTACLE_RHYTHM_START_CM.items():
-            cached = self._obstacle_reading.get(sensor_name)
-            recent = self._obstacle_recent.get(sensor_name)
-            if cached is None or not recent:
-                continue
-            if now - cached[1] > OBSTACLE_RHYTHM_MAX_AGE_S:
-                continue
-            distance = median(recent)
-            if distance < start_cm and (closest is None or distance < closest[0]):
-                closest = (distance, sensor_name)
+        if self._user_walking():
+            for sensor_name, start_cm in OBSTACLE_RHYTHM_START_CM.items():
+                cached = self._obstacle_reading.get(sensor_name)
+                recent = self._obstacle_recent.get(sensor_name)
+                if cached is None or not recent:
+                    continue
+                if now - cached[1] > OBSTACLE_RHYTHM_MAX_AGE_S:
+                    continue
+                distance = median(recent)
+                if distance < start_cm and (closest is None or distance < closest[0]):
+                    closest = (distance, sensor_name)
 
         if closest is None:
             if self._rhythm_sensor is not None:
