@@ -178,6 +178,14 @@ could never have held.
 - **No symlinks.** Nothing in the backup set needs them, but do not
   extend the set to anything that does.
 
+> **Both sets are captured and verified (2026-10-10).** The §4.2 bulk
+> set is at `/Volumes/T7/indepensense-migration/bulk/` — 5.4 GB, 295
+> files, checksum-compared against the Pi with `rsync -n -c`:
+> **0 content mismatches, 0 size mismatches, 0 files needing transfer.**
+> The only differences reported were permission bits, which exFAT does
+> not store — hence the `chown` in §6.7. With that pass recorded, the
+> old card holds nothing that is not duplicated elsewhere.
+>
 > **Already done:** the §4.1 irreplaceable set is on the T7 at
 > `/Volumes/T7/indepensense-migration/pi-backup-20261010/` — 10 traces,
 > all three tarballs verified extractable after the copy, `.env` at its
