@@ -2322,17 +2322,18 @@ The comparisons are inclusive, so a threshold names the percentage
         """
         now = time.monotonic()
         closest: tuple[float, str] | None = None
-        if self._user_walking():
-            for sensor_name, start_cm in OBSTACLE_RHYTHM_START_CM.items():
-                cached = self._obstacle_reading.get(sensor_name)
-                recent = self._obstacle_recent.get(sensor_name)
-                if cached is None or not recent:
-                    continue
-                if now - cached[1] > OBSTACLE_RHYTHM_MAX_AGE_S:
-                    continue
-                distance = median(recent)
-                if distance < start_cm and (closest is None or distance < closest[0]):
-                    closest = (distance, sensor_name)
+        # Continuous obstacle feedback regardless of walking state.
+        # This allows testing and standing-still awareness without accelerometer.
+        for sensor_name, start_cm in OBSTACLE_RHYTHM_START_CM.items():
+            cached = self._obstacle_reading.get(sensor_name)
+            recent = self._obstacle_recent.get(sensor_name)
+            if cached is None or not recent:
+                continue
+            if now - cached[1] > OBSTACLE_RHYTHM_MAX_AGE_S:
+                continue
+            distance = median(recent)
+            if distance < start_cm and (closest is None or distance < closest[0]):
+                closest = (distance, sensor_name)
 
         if closest is None:
             if self._rhythm_sensor is not None:
