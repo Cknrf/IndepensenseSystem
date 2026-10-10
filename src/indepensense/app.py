@@ -489,8 +489,8 @@ def _obstacle_feedback(distance_cm: float) -> tuple[float, float]:
     - Starts noticeable at 150cm (uses all 3 motors at all distances)
 
     Very aggressive curve through key points:
-      150 cm:   2 Hz  @ 30% intensity (noticeable start, all 3 motors)
-      100 cm:   6 Hz  @ 60% intensity (strong)
+      150 cm:   4 Hz  @ 50% intensity (strong start, all 3 motors)
+      100 cm:   6 Hz  @ 60% intensity (stronger)
        50 cm:  10 Hz  @ 90% intensity (very strong)
        20 cm:  15 Hz  @ 100% intensity (max speed + strength)
        <20 cm: 15 Hz  @ 100% intensity (clamped)
@@ -504,12 +504,12 @@ def _obstacle_feedback(distance_cm: float) -> tuple[float, float]:
     if distance_cm <= 20.0:
         return (15.0, 1.0)
 
-    # Linear interpolation through three segments, starting at 2 Hz @ 30%
+    # Linear interpolation through three segments, starting at 4 Hz @ 50%
     if distance_cm >= 100.0:
-        # 150→100 cm: 2→6 Hz, 30%→60% intensity (span: 50 cm)
+        # 150→100 cm: 4→6 Hz, 50%→60% intensity (span: 50 cm)
         t = (OBSTACLE_DETECTION_START_CM - distance_cm) / 50.0  # 0 to 1
-        hz = 2.0 + 4.0 * t
-        duty = 0.3 + 0.3 * t
+        hz = 4.0 + 2.0 * t
+        duty = 0.5 + 0.1 * t
         return (hz, duty)
     elif distance_cm >= 50.0:
         # 100→50 cm: 6→10 Hz, 60%→90% intensity (span: 50 cm)
