@@ -10,7 +10,8 @@ none of which are committed, and several of which cannot be regenerated
 at all. Pulling the card without this list loses them.
 
 Everything below was read off the live device on **2026-10-10** over SSH
-(`cknrf@100.113.232.110`). Where a value is quoted, it is the value that
+(`cknrf@100.113.232.110` — that address belongs to the *old* card and is
+retired after the migration; see §6.6). Where a value is quoted, it is the value that
 was actually on the machine, not a value from a doc.
 
 ---
@@ -227,7 +228,7 @@ gitignored, and two items are not even inside the repo.
 | **Language / volume state** | `var/language` (`en`), `var/volume` (`100`) | 8 B | falls back to config defaults — trivial, but free to keep |
 | **Fall traces** | `var/traces/*.csv` | 720 K | **the sensitivity/specificity evidence.** Each one cost someone an actual fall onto a mattress. These *are* committed per `.gitignore`'s negation — but `git status` on the Pi shows `var/` untracked, so **they are not actually in any commit yet.** Treat as irreplaceable until that changes. |
 | **Calibration + benchmarks + test corpus** | `data/` | 252 M | `calibration/sweep.json` (90 K, magnetometer), `battery/` (160 K), `model_bench/` (148 K), `test/` (229 M), `audio/` (22 M) — thesis measurement evidence, gitignored |
-| **Tailscale node identity** | `/var/lib/tailscale/` | 100 K | the Pi comes back as a *new* node with a *new* IP. `100.113.232.110` is in your notes, your SSH config and this doc. Copying this keeps the address. |
+| **Tailscale node identity** | `/var/lib/tailscale/` | 100 K | backed up but **deliberately not restored** — the new card keeps its own node and address (§6.6). Kept only so the choice stays reversible. |
 | **Network profiles** | `/etc/NetworkManager/system-connections/*.nmconnection` | 2 K | the GOMO APN plus four WiFi PSKs (`mesh3`, `house2`, `iPhone`, `BIDA_E1ED`). Re-typeable, but only if you know the passwords. |
 | **SSH access** | `~/.ssh/authorized_keys` | 207 B | you lock yourself out of key-based login |
 | **Tagalog OCR data** | `/usr/share/tesseract-ocr/5/tessdata/tgl.traineddata` | 7.0 M | **`apt` cannot restore this** — no `tesseract-ocr-tgl` package exists in Debian (§6.4). Placed by hand; `dpkg -S` finds no owner. Lose it and `vision.read` silently stops working in Tagalog. |
@@ -601,48 +602,39 @@ sudo tar xzf "$B"/etc/sudoers-poweroff.tgz -C / && sudo visudo -c
 # git identity
 cp "$B"/etc/gitconfig ~/.gitconfig
 
-# SSH host keys — OPTIONAL, see the note below
-sudo tar xzf "$B"/etc/ssh-host-keys.tgz -C /
-sudo systemctl restart ssh
-
-# tailscale identity — OPTIONAL, see the note below
-sudo systemctl stop tailscaled
-sudo tar xzf "$B"/etc/tailscale.tgz -C /
-sudo systemctl start tailscaled
-tailscale status        # expect the old address back
+# SSH host keys and Tailscale identity are deliberately NOT restored.
+# Decision taken 2026-10-10: the new card keeps its own Tailscale node
+# and its own address. See the note below. The backups exist
+# (ssh-host-keys.tgz, tailscale.tgz) if that is ever reversed.
 
 # audio
 cp -a "$B"/home/wireplumber ~/.config/
 systemctl --user restart wireplumber
 ```
 
-**The two optional restores are one decision, and it has consequences
-either way.**
+### Network identity: the new card keeps its own
 
-The new card, once booted, joins Tailscale as its **own** node with its
-own address. Restoring `tailscaled.state` reclaims the old identity
-instead. Pick deliberately:
+**Decision taken 2026-10-10 — the Pi gets a new Tailscale address and
+the old `100.113.232.110` is retired.** Consequences, all accepted:
 
-| | Keep the new identity | Restore the old one |
-|---|---|---|
-| Address | whatever the new node got | the familiar `100.113.232.110` |
-| Admin console | old node lingers as stale — remove it | new node lingers as stale — remove it |
-| Your notes, SSH config, this doc | all need updating | keep working unchanged |
-| Old card | safe to boot later | **must never join a network again** — two machines claiming one node key will fight |
+- **The old card stays bootable.** This is the real benefit. Had the old
+  identity been restored, booting the old card on a network again would
+  put two machines behind one node key. Keeping the new identity means
+  the old card remains a safe fallback for anything discovered missing
+  after the migration — which, given what §4 turned up, is worth more
+  than a familiar IP.
+- **No SSH host-key warning**, because the address changes too. A new
+  address presenting new keys is just a new host. (Restoring the old
+  address *without* the old host keys is what produces the alarming
+  `REMOTE HOST IDENTIFICATION HAS CHANGED` banner — avoided here.)
+- **One stale node to clean up.** The old `cknrf` node will sit in the
+  Tailscale admin console marked offline. Remove it once the new card is
+  verified, not before.
+- **Anything holding the old address needs updating:** your SSH config,
+  your notes, and §9 of this document.
 
-Restoring the old identity is the lower-friction option *provided* you
-accept that last row. If there is any chance you will boot the old card
-again for forensics or to recover something missed, keep the new
-identity and update your notes instead.
-
-**SSH host keys ride along with that choice.** They were not in the
-original backup set — they are now. If you restore the Tailscale
-identity but *not* the host keys, your Mac sees the familiar address
-presenting a new key and prints the full
-`REMOTE HOST IDENTIFICATION HAS CHANGED` warning, which is
-indistinguishable from an attack and has to be cleared by hand with
-`ssh-keygen -R 100.113.232.110`. Restore both, or neither, or clear the
-known_hosts entry knowingly.
+`ssh-host-keys.tgz` and `tailscale.tgz` are in the backup regardless, so
+this is reversible if the decision changes.
 
 ### 6.7 Models and sidecars
 
@@ -911,7 +903,7 @@ What was on the old card, for comparison after the swap.
 | Kernel | `6.18.33+rpt-rpi-2712` |
 | Python | 3.13.5 (system), venv built `--system-site-packages` |
 | Locale / TZ | `en_GB.UTF-8` / `Asia/Manila` (PST, +0800) |
-| Tailscale | `cknrf` → `100.113.232.110`, `cknrf.tail704f38.ts.net` |
+| Tailscale | old node `cknrf` → `100.113.232.110` (**retired** — the new card has its own address; see §6.6) |
 | User | `cknrf`, uid 1000 |
 
 ### Hardware detected
