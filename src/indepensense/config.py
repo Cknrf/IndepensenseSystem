@@ -614,13 +614,43 @@ CRITICAL_BATTERY_RECOVERY_PERCENT = 25
 
 # Third and final tier: power the machine off while it still can.
 #
-# Not a percentage. The trigger is `BatteryReading.is_critical_low` — a
-# cell under 3.15 V — because that is measured rather than estimated, and
-# because it is the same signal the HAT's own protection uses. The gauge
-# is a calibration against one pack (`BATTERY_EMPTY_RAW_PERCENT`) and the
-# whole reason that constant exists is that it cannot be trusted; keying
-# the one irreversible action to it would be the worst place to rely on
-# it. `CRITICAL_BATTERY_PERCENT` stays what the *wearer* is warned at.
+# Fires on percentage OR voltage, whichever comes first.
+#
+# Why 5%
+# ------
+#
+# `read()` rescales the gauge onto 0-100 against
+# `BATTERY_EMPTY_RAW_PERCENT`, so 0% here means genuinely flat rather
+# than the raw gauge's ~57% floor. The usable span is 43 raw points at
+# the logged ~47.6 mAh each — about 2,040 mAh, which at the Pi's ~4 W is
+# roughly eight hours. One percent is therefore on the order of five
+# minutes, and a graceful shutdown needs about thirty seconds.
+#
+# 5% leaves ~25 minutes of margin. That is not precision, it is slack:
+# it covers gauge error in the region where a fuel gauge is least
+# accurate, a cell sagging faster under load than a flat-rate estimate
+# assumes, and the wearer being mid-task when it fires. 2% would still
+# fit the shutdown and is a worse bet for the same reason the voltage
+# backstop below exists. 10% would throw away the better part of an hour.
+#
+# Measured? No. Every one of the 1,460 samples in `data/battery/` is
+# `fast_charging` or `idle` — there is no logged discharge curve for this
+# pack, so the figure above is reasoned from capacity and draw, not
+# observed. A single controlled discharge with `battery_log` would turn
+# this comment into evidence, and is worth doing before the viva.
+SHUTDOWN_BATTERY_PERCENT = 5
+
+# The backstop, and the reason this tier is not percentage-only.
+#
+# `BatteryReading.is_critical_low` is a cell under 3.15 V: measured
+# rather than estimated, and the same signal the HAT's own protection
+# uses. The gauge is a calibration against one pack, and the whole reason
+# `BATTERY_EMPTY_RAW_PERCENT` exists is that it cannot be trusted — a
+# different pack, a drifting gauge, or a miscalibration would all leave
+# the percentage reading healthy while the cells are flat. Whichever
+# signal trips first wins, so the percentage gives a predictable number
+# to reason about and the voltage catches the case where that number is
+# wrong. `CRITICAL_BATTERY_PERCENT` stays what the *wearer* is warned at.
 #
 # Why this exists at all
 # ----------------------

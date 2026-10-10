@@ -18,6 +18,7 @@ from indepensense.config import (
     CRITICAL_BATTERY_RECOVERY_PERCENT,
     LOW_BATTERY_PERCENT,
     LOW_BATTERY_RECOVERY_PERCENT,
+    SHUTDOWN_BATTERY_PERCENT,
 )
 from indepensense.power.base import BatteryReading
 from indepensense.telemetry.base import EventType
@@ -606,11 +607,46 @@ def test_cell_below_cutoff_powers_off(shutdown_app):
     assert shutdown_app.shutdowns == 1
 
 
-def test_healthy_cells_never_power_off(shutdown_app):
-    """A low gauge alone must not. 20% is still hours on this pack."""
-    shutdown_app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT, cell_mv=3700)
+def test_gauge_at_the_shutdown_threshold_powers_off(shutdown_app):
+    """The headline trigger: 5% on the rescaled gauge.
+
+    Inclusive, matching the two tiers above it, so the constant names the
+    percentage the device shuts down *at* rather than one below it.
+    """
+    shutdown_app.battery.reading = _reading(SHUTDOWN_BATTERY_PERCENT, cell_mv=3600)
+    _check_now_and_settle(shutdown_app)
+    assert shutdown_app.shutdowns == 1
+
+
+def test_one_point_above_the_threshold_keeps_running(shutdown_app):
+    """6% is ~30 minutes on this pack. Pinned so a refactor cannot widen
+    the band and start powering off with half an hour left."""
+    shutdown_app.battery.reading = _reading(
+        SHUTDOWN_BATTERY_PERCENT + 1, cell_mv=3600,
+    )
     _check_now_and_settle(shutdown_app)
     assert shutdown_app.shutdowns == 0
+
+
+def test_the_critical_warning_tier_does_not_power_off(shutdown_app):
+    """20% warns the wearer; it must not shut the device down. That is
+    still hours of use, and the two constants are easy to confuse."""
+    shutdown_app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT, cell_mv=3700)
+    _check_now_and_settle(shutdown_app)
+    assert shutdown_app._critical_battery_alerted
+    assert shutdown_app.shutdowns == 0
+
+
+def test_voltage_backstop_fires_when_the_gauge_reads_healthy(shutdown_app):
+    """The reason this tier is not percentage-only.
+
+    A different pack, a drifting gauge or a wrong `BATTERY_EMPTY_RAW_PERCENT`
+    all look the same from here: a comfortable percentage sitting on top
+    of cells that are actually flat. The voltage catches it.
+    """
+    shutdown_app.battery.reading = _reading(60, cell_mv=3100)
+    _check_now_and_settle(shutdown_app)
+    assert shutdown_app.shutdowns == 1
 
 
 def test_shutdown_fires_even_when_critical_latch_is_already_set(shutdown_app):

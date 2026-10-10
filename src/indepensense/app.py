@@ -266,6 +266,7 @@ from indepensense.config import (
     VIBRATION_RIGHT_GPIO,
     OCR_LANGUAGES,
     OCR_MAX_CHARS,
+    SHUTDOWN_BATTERY_PERCENT,
     SHUTDOWN_COMMAND,
     MESSAGE_AUDIO_DIR,
     CLIP_CACHE_DIR,
@@ -1915,15 +1916,21 @@ The comparisons are inclusive, so a threshold names the percentage
         # the ordering that occurs on a normal discharge, so the bug would
         # have been the default behaviour rather than an edge case.
         #
-        # Voltage only. `pct <= CRITICAL_BATTERY_PERCENT` is 20% and still
-        # hours of use on this pack; powering off there would throw away
-        # most of a charge. See `BATTERY_SHUTDOWN_GRACE_S` for why the
-        # measured signal is the one trusted with the irreversible action.
-        if voltage_critical and not self._battery_shutdown_started:
+        # Either signal fires it. The percentage is the one to reason
+        # about — 5% is roughly 25 minutes on this pack, against the ~30 s
+        # a shutdown needs — and the voltage is the backstop for when the
+        # gauge is wrong, which is the failure `BATTERY_EMPTY_RAW_PERCENT`
+        # exists to document. `CRITICAL_BATTERY_PERCENT` (20%) is not used
+        # here: it is still hours of use, and powering off there would
+        # throw away most of a charge.
+        gauge_flat = pct <= SHUTDOWN_BATTERY_PERCENT and reading.is_discharging
+        if (gauge_flat or voltage_critical) and not self._battery_shutdown_started:
             self._battery_shutdown_started = True
+            trigger = "gauge" if gauge_flat else "cell voltage"
             print(
-                f"[battery] cell below cutoff — graceful shutdown "
-                f"(gauge {pct}%, lowest cell {min(reading.cell_voltages_mv)} mV)",
+                f"[battery] {trigger} below shutdown threshold — graceful "
+                f"shutdown (gauge {pct}%, lowest cell "
+                f"{min(reading.cell_voltages_mv)} mV)",
                 flush=True,
             )
             self._begin_low_battery_shutdown(pct)
