@@ -230,6 +230,10 @@ gitignored, and two items are not even inside the repo.
 | **Tailscale node identity** | `/var/lib/tailscale/` | 100 K | the Pi comes back as a *new* node with a *new* IP. `100.113.232.110` is in your notes, your SSH config and this doc. Copying this keeps the address. |
 | **Network profiles** | `/etc/NetworkManager/system-connections/*.nmconnection` | 2 K | the GOMO APN plus four WiFi PSKs (`mesh3`, `house2`, `iPhone`, `BIDA_E1ED`). Re-typeable, but only if you know the passwords. |
 | **SSH access** | `~/.ssh/authorized_keys` | 207 B | you lock yourself out of key-based login |
+| **Tagalog OCR data** | `/usr/share/tesseract-ocr/5/tessdata/tgl.traineddata` | 7.0 M | **`apt` cannot restore this** — no `tesseract-ocr-tgl` package exists in Debian (§6.4). Placed by hand; `dpkg -S` finds no owner. Lose it and `vision.read` silently stops working in Tagalog. |
+| **SSH host keys** | `/etc/ssh/ssh_host_*` | 3 K | the Mac warns `REMOTE HOST IDENTIFICATION HAS CHANGED` if the Tailscale address is reused with new keys |
+| **Poweroff sudoers rule** | `/etc/sudoers.d/indepensense-poweroff` | 55 B | the voice "shut down" command answers "shutdown failed" |
+| **Git identity** | `~/.gitconfig` | 63 B | commits from the Pi get no author; trivial to retype |
 | **WirePlumber audio fix** | `~/.config/wireplumber/wireplumber.conf.d/` | 5 K | 3 files. `51-no-suspend.conf` is the repo's copy; `50-bluez-policy.conf` and `51-disable-suspension.conf` are **local only and not in the repo** |
 
 > Secrets are copied **as files**. Do not transcribe keys or PSKs into
@@ -264,6 +268,15 @@ Copying wholesale is also safer than a selective re-fetch for a plainer
 reason: you cannot forget to re-download something you never knew was
 there. Take the whole tree.
 
+**The YOLO weights have no fetch path at all.** `fetch_models.py`
+contains no reference to YOLO or ultralytics — it handles Whisper, the
+e5 embeddings and MMS only. `config.YOLO_MODEL_PATH` points at a fixed
+file (`models/yolov8m-oiv7.pt`), and the four `.pt` files on the card
+(`yolov8n`, `yolov8n-oiv7`, `yolov8s-oiv7`, `yolov8m-oiv7`) got there by
+some means no longer recorded. Do not assume ultralytics will re-fetch
+them on demand. **Copy them** — they are inside `models/`, so the §6.7
+copy already covers it, but verify all four arrive.
+
 **Two exceptions — do not copy these:**
 
 - `graph-cache/` — rebuilt automatically on first start and coupled to
@@ -276,7 +289,7 @@ commands are at the end of §6.7.
 
 | What | Path | Size | Rebuild cost |
 |---|---|---|---|
-| Models | `models/` | 1.3 G | `python -m indepensense.tools.fetch_models` + `python -m piper.download_voices en_US-lessac-medium`; YOLO weights pull on first use |
+| Models | `models/` | 1.3 G | `python -m indepensense.tools.fetch_models` + `python -m piper.download_voices en_US-lessac-medium` — **neither covers the YOLO weights**, see below |
 | Ollama blobs | `/usr/share/ollama` | 3.6 G | `ollama pull qwen3:1.7b` (1.4 G). Drop `qwen3:4b` unless still benchmarking. |
 | Photon index | `~/photon/photon_data` | 389 M | re-download the Philippines extract — the slowest item to rebuild |
 | Photon jar | `~/photon/photon-1.2.0.jar` | 95 M | re-download |
@@ -450,7 +463,36 @@ sudo raspi-config nonint do_camera 0
 # SPI stays disabled — it was disabled on the old card and nothing uses it
 
 sudo usermod -aG dialout,i2c,gpio,audio,video,render,input,netdev,plugdev,adm cknrf
+
+# Keep a user session alive without a login. REQUIRED.
+sudo loginctl enable-linger cknrf
+
+# Let the voice "shut down" command work.
+echo 'cknrf ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff' \
+  | sudo tee /etc/sudoers.d/indepensense-poweroff
+sudo chmod 440 /etc/sudoers.d/indepensense-poweroff
+sudo visudo -c                      # must report "parsed OK"
 ```
+
+**Lingering is not optional, and its failure mode is silent.**
+`indepensense.service` runs with `XDG_RUNTIME_DIR=/run/user/1000`, and
+that directory only exists while user 1000 has a session. Without
+lingering, a service that starts at boot — before anyone logs in — finds
+no runtime dir, cannot reach PipeWire, and **the wearable comes up
+completely mute** while every unit reports active. It was enabled on the
+old card (`/var/lib/systemd/linger/cknrf`, dated 2026-06-05) and the
+runbook previously failed to mention it.
+
+The poweroff rule was also live on the old card
+(`/etc/sudoers.d/indepensense-poweroff`); without it the voice shutdown
+command answers "shutdown failed".
+
+> The old card additionally carried `/etc/sudoers.d/cknrf-nopasswd`
+> granting `cknrf ALL=(ALL:ALL) NOPASSWD: ALL` — blanket passwordless
+> sudo. That is far broader than the wearable needs and is almost
+> certainly a convenience left over from setup. The narrow poweroff rule
+> above is the only one the runtime actually requires. Recreate the
+> blanket rule only if you want it; it is not a dependency.
 
 Reboot. Then confirm the old card's group set (`ollama` is added later
 by the Ollama installer):
@@ -471,7 +513,7 @@ Autologin if you want the same behaviour.
 sudo apt update && sudo apt full-upgrade -y
 sudo apt install -y \
   python3-picamera2 libportaudio2 libsndfile1 \
-  tesseract-ocr tesseract-ocr-tgl \
+  tesseract-ocr tesseract-ocr-eng \
   openjdk-21-jre-headless zstd \
   modemmanager i2c-tools gpiod libcamera-apps \
   alsa-utils htop git
@@ -480,6 +522,27 @@ sudo apt install -y \
 Sources: `requirements-pi.txt` (picamera2, portaudio, sndfile,
 tesseract), `docs/graphhopper.md` and `docs/photon.md` (Java, zstd),
 `docs/sim7600.md` (ModemManager).
+
+> **Do not add `tesseract-ocr-tgl` to that line.** `requirements-pi.txt`
+> names it, but **the package does not exist** — Debian Trixie goes
+> `tesseract-ocr-tgk` → `tesseract-ocr-tha`, with no `tgl` in between.
+> `apt install` aborts the *entire* command on an unknown package, so
+> including it means none of the other packages install either, which
+> reads as a broken mirror rather than a typo.
+>
+> Tagalog OCR works on the old card because
+> `/usr/share/tesseract-ocr/5/tessdata/tgl.traineddata` (7.0 MB) was
+> **placed there by hand** — `dpkg -S` finds no owning package. It is
+> therefore irreplaceable-by-apt and is in the backup (§4.1). Restore it
+> with:
+>
+> ```bash
+> sudo tar xzf "$B"/etc/tessdata-tgl.tgz -C /
+> tesseract --list-langs        # expect eng, osd, tgl
+> ```
+>
+> `requirements-pi.txt` should have its `tesseract-ocr-tgl` line
+> corrected to say this — it is currently a trap for the next rebuild.
 
 ### 6.5 Repo and venv
 
@@ -528,16 +591,58 @@ sudo tar xzf "$B"/etc/nm-connections.tgz -C /
 sudo chmod 600 /etc/NetworkManager/system-connections/*.nmconnection
 sudo systemctl restart NetworkManager
 
-# tailscale identity — service must be stopped while the state is swapped
+# tessdata: Tagalog OCR — not restorable via apt, see §6.4
+sudo tar xzf "$B"/etc/tessdata-tgl.tgz -C /
+tesseract --list-langs                  # expect eng, osd, tgl
+
+# poweroff sudoers rule (if not already created in §6.3)
+sudo tar xzf "$B"/etc/sudoers-poweroff.tgz -C / && sudo visudo -c
+
+# git identity
+cp "$B"/etc/gitconfig ~/.gitconfig
+
+# SSH host keys — OPTIONAL, see the note below
+sudo tar xzf "$B"/etc/ssh-host-keys.tgz -C /
+sudo systemctl restart ssh
+
+# tailscale identity — OPTIONAL, see the note below
 sudo systemctl stop tailscaled
 sudo tar xzf "$B"/etc/tailscale.tgz -C /
 sudo systemctl start tailscaled
-tailscale status        # expect 100.113.232.110
+tailscale status        # expect the old address back
 
 # audio
 cp -a "$B"/home/wireplumber ~/.config/
 systemctl --user restart wireplumber
 ```
+
+**The two optional restores are one decision, and it has consequences
+either way.**
+
+The new card, once booted, joins Tailscale as its **own** node with its
+own address. Restoring `tailscaled.state` reclaims the old identity
+instead. Pick deliberately:
+
+| | Keep the new identity | Restore the old one |
+|---|---|---|
+| Address | whatever the new node got | the familiar `100.113.232.110` |
+| Admin console | old node lingers as stale — remove it | new node lingers as stale — remove it |
+| Your notes, SSH config, this doc | all need updating | keep working unchanged |
+| Old card | safe to boot later | **must never join a network again** — two machines claiming one node key will fight |
+
+Restoring the old identity is the lower-friction option *provided* you
+accept that last row. If there is any chance you will boot the old card
+again for forensics or to recover something missed, keep the new
+identity and update your notes instead.
+
+**SSH host keys ride along with that choice.** They were not in the
+original backup set — they are now. If you restore the Tailscale
+identity but *not* the host keys, your Mac sees the familiar address
+presenting a new key and prints the full
+`REMOTE HOST IDENTIFICATION HAS CHANGED` warning, which is
+indistinguishable from an attack and has to be cleared by hand with
+`ssh-keygen -R 100.113.232.110`. Restore both, or neither, or clear the
+known_hosts entry knowingly.
 
 ### 6.7 Models and sidecars
 
@@ -642,10 +747,14 @@ Expected, from the old card:
 |---|---|
 | APN | `internet.globe.com.ph` |
 | Profile | `gomo`, `autoconnect-priority=10`, `autoconnect-retries=0` |
-| Own number | `639760365713` |
-| IMEI | `862636058626654` |
+| Own number | *(the GOMO SIM's number — compare against the handset, not recorded here)* |
+| IMEI | *(device-specific — compare against the sticker, not recorded here)* |
 | Operator ID | `51502` (Globe PH) |
 | Firmware | `LE20B04SIM7600G22`, carrier config `ROW_Gen_VoLTE` |
+
+> The SIM number and IMEI are deliberately **not** written down here:
+> this repository is public. Read them off the device with
+> `mmcli -m any | grep -E 'own|imei'` and compare by eye.
 
 If `mmcli -L` is empty on a fresh ModemManager install, `docs/sim7600.md`
 §"After a fresh apt install modemmanager" covers it.
@@ -702,15 +811,30 @@ cat /sys/block/mmcblk0/device/manfid   # expect 0x000003
 sudo tune2fs -l /dev/mmcblk0p2 | grep 'Filesystem state'   # expect 'clean'
 ```
 
-Then verify the capacity is real, because that is the fault being fixed:
+**Capacity test — run it on the EMPTY card, before setup.**
+
+`f3write` fills all free space to 100%. Running it on a live system
+disk, as an earlier draft of this document implied, starves every
+running service: journald cannot write, Ollama cannot load, and the
+failures look like software faults. Do it from the Mac with the card in
+the Anker reader, while the card is still freshly imaged and empty:
 
 ```bash
-sudo apt install -y f3
-f3write /path/on/card && f3read /path/on/card    # hours, but definitive
+brew install f3
+f3write /Volumes/bootfs && f3read /Volumes/bootfs
 ```
 
-Worth the time once. A second counterfeit would present identically to
-the first, and you would not find out until the thesis demo.
+Or on the Pi **before** installing anything, with the sidecars stopped:
+
+```bash
+sudo systemctl stop indepensense graphhopper photon ollama
+sudo apt install -y f3
+f3write ~/f3 && f3read ~/f3 && rm -rf ~/f3
+```
+
+Takes a while on 58 GiB, and is worth it exactly once. A second
+counterfeit presents identically to the first, and you would find out at
+the demo.
 
 **Throughput — re-measure, do not assume**
 
