@@ -488,12 +488,12 @@ def _obstacle_feedback(distance_cm: float) -> tuple[float, float]:
     - Creates compound feedback: faster AND stronger as you get closer
     - Starts noticeable at 150cm (uses all 3 motors at all distances)
 
-    Very aggressive curve through key points:
-      150 cm:   4 Hz  @ 50% intensity (strong start, all 3 motors)
-      100 cm:   6 Hz  @ 60% intensity (stronger)
-       50 cm:  10 Hz  @ 90% intensity (very strong)
-       20 cm:  15 Hz  @ 100% intensity (max speed + strength)
-       <20 cm: 15 Hz  @ 100% intensity (clamped)
+    Very aggressive curve through key points (max 30 Hz):
+      150 cm:   8 Hz  @ 50% intensity (strong start, all 3 motors)
+      100 cm:  12 Hz  @ 60% intensity (stronger)
+       50 cm:  20 Hz  @ 90% intensity (very strong)
+       20 cm:  30 Hz  @ 100% intensity (max speed + strength)
+       <20 cm: 30 Hz  @ 100% intensity (clamped)
 
     Linear interpolation between key points. Duty cycle controls vibration
     intensity via PWM: 60% duty = motor on 60% of pulse period.
@@ -502,25 +502,25 @@ def _obstacle_feedback(distance_cm: float) -> tuple[float, float]:
     if distance_cm >= OBSTACLE_DETECTION_START_CM:
         return (0.0, 0.0)
     if distance_cm <= 20.0:
-        return (15.0, 1.0)
+        return (30.0, 1.0)
 
-    # Linear interpolation through three segments, starting at 4 Hz @ 50%
+    # Linear interpolation through three segments, starting at 8 Hz @ 50%, maxing at 30 Hz
     if distance_cm >= 100.0:
-        # 150→100 cm: 4→6 Hz, 50%→60% intensity (span: 50 cm)
+        # 150→100 cm: 8→12 Hz, 50%→60% intensity (span: 50 cm)
         t = (OBSTACLE_DETECTION_START_CM - distance_cm) / 50.0  # 0 to 1
-        hz = 4.0 + 2.0 * t
+        hz = 8.0 + 4.0 * t
         duty = 0.5 + 0.1 * t
         return (hz, duty)
     elif distance_cm >= 50.0:
-        # 100→50 cm: 6→10 Hz, 60%→90% intensity (span: 50 cm)
+        # 100→50 cm: 12→20 Hz, 60%→90% intensity (span: 50 cm)
         t = (100.0 - distance_cm) / 50.0  # 0 to 1
-        hz = 6.0 + 4.0 * t
+        hz = 12.0 + 8.0 * t
         duty = 0.6 + 0.3 * t
         return (hz, duty)
     else:
-        # 50→20 cm: 10→15 Hz, 90%→100% intensity (span: 30 cm)
+        # 50→20 cm: 20→30 Hz, 90%→100% intensity (span: 30 cm)
         t = (50.0 - distance_cm) / 30.0  # 0 to 1
-        hz = 10.0 + 5.0 * t
+        hz = 20.0 + 10.0 * t
         duty = 0.9 + 0.1 * t
         return (hz, duty)
 GPS_CACHE_INTERVAL_S = 1.0       # 1 Hz — GPS itself only emits ~1 Hz NMEA anyway

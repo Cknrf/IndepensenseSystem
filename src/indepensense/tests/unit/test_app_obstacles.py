@@ -5,11 +5,11 @@ intensity (PWM duty cycle) with all 3 motors active at all distances. This tests
 that distance smoothly maps to both vibration frequency and strength, with compound
 feedback: faster AND stronger as obstacles approach.
 
-Very aggressive curve (starting very strong at 150cm):
-  150 cm:   4 Hz @  50% intensity (very noticeable start, all 3 motors)
-  100 cm:   6 Hz @  60% intensity (strong)
-   50 cm:  10 Hz @  90% intensity (very strong)
-   20 cm:  15 Hz @ 100% intensity (max speed + strength)
+Very aggressive curve (starting strong, maxing at 30 Hz):
+  150 cm:   8 Hz @  50% intensity (very noticeable start, all 3 motors)
+  100 cm:  12 Hz @  60% intensity (strong)
+   50 cm:  20 Hz @  90% intensity (very strong)
+   20 cm:  30 Hz @ 100% intensity (max speed + strength)
 
 Tests build a bare `MockApp` and assign only the devices each one needs.
 """
@@ -54,15 +54,15 @@ def app():
     # Beyond detection: silent
     (OBSTACLE_DETECTION_START_CM + 10, 0.0, 0.0, 0.0, 0.0),
     (OBSTACLE_DETECTION_START_CM,      0.0, 0.0, 0.0, 0.0),
-    # Just inside detection: very strong start (150→100cm: 4→6Hz, 50%→60%)
-    (140.0,                            4.4, 4.6, 0.48, 0.52),
-    # Mid-range: ramping harder (100→50cm: 6→10Hz, 60%→90%)
-    (100.0,                            5.8, 6.2, 0.55, 0.65),
-    # Close: strong feedback (50→20cm: 10→15Hz, 90%→100%)
-    (50.0,                             9.8, 10.2, 0.85, 0.95),
+    # Just inside detection: very strong start (150→100cm: 8→12Hz, 50%→60%)
+    (140.0,                            8.8, 9.2, 0.48, 0.52),
+    # Mid-range: ramping harder (100→50cm: 12→20Hz, 60%→90%)
+    (100.0,                           11.8, 12.2, 0.55, 0.65),
+    # Close: strong feedback (50→20cm: 20→30Hz, 90%→100%)
+    (50.0,                            19.8, 20.2, 0.85, 0.95),
     # Contact: maximum
-    (20.0,                            14.8, 15.2, 0.95, 1.0),
-    (10.0,                            15.0, 15.0, 1.0, 1.0),
+    (20.0,                            29.8, 30.2, 0.95, 1.0),
+    (10.0,                            30.0, 30.0, 1.0, 1.0),
 ])
 def test_feedback_by_distance(distance, hz_min, hz_max, duty_min, duty_max):
     """Both frequency and intensity increase as obstacle gets closer (aggressive curve)."""
@@ -103,10 +103,10 @@ def test_silent_beyond_detection():
 
 
 def test_max_at_contact():
-    """Maximum feedback (15 Hz @ 100%) at contact distance and closer."""
+    """Maximum feedback (30 Hz @ 100%) at contact distance and closer."""
     for distance in [20.0, 10.0, 5.0, 1.0]:
         hz, duty = app_module._obstacle_feedback(distance)
-        assert hz == 15.0, f"at {distance}cm: expected 15 Hz"
+        assert hz == 30.0, f"at {distance}cm: expected 30 Hz"
         assert duty == 1.0, f"at {distance}cm: expected 100% duty"
 
 
