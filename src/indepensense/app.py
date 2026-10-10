@@ -161,6 +161,7 @@ from indepensense.config import (
     BACKEND_URL,
     BATTERY_CHECK_INTERVAL_S,
     BATTERY_EMPTY_RAW_PERCENT,
+    BATTERY_SHUTDOWN_GRACE_S,
     BUZZER_GPIO,
     CAMERA_FPS,
     CAMERA_HEIGHT,
@@ -1118,6 +1119,20 @@ class App:
         # by the voice thread after the goodbye has finished playing.
         self._shutdown_requested = False
 
+        # Latch for the battery-triggered power-off, which cannot reuse
+        # `_shutdown_requested`: that flag is only ever read inside the
+        # voice pipeline, after a response has played, so it needs a voice
+        # command to fire. A dying battery does not come with one.
+        #
+        # In memory and not on disk, unlike the two alert latches. Those
+        # persist so a restart does not re-warn about the same discharge;
+        # this one must NOT persist, because a device that comes back up
+        # on a charger has to be able to shut down again on the next
+        # discharge. The thing it guards against is only re-entry within
+        # one run — the battery poll fires every 10 s and the shutdown
+        # takes longer than that.
+        self._battery_shutdown_started = False
+
         # Mutex around warning playback so two overlapping warnings
         # don't race on the buzzer or motor state.
         self._warning_lock = threading.Lock()
@@ -1888,6 +1903,104 @@ The comparisons are inclusive, so a threshold names the percentage
                     critical=True,
                 )
                 self._set_critical_battery_latch(True)
+
+        # Power-off tier, checked OUTSIDE the latch above on purpose.
+        #
+        # The critical latch means "the wearer has been warned", and it is
+        # set the moment either signal trips — usually the gauge, at 20%,
+        # long before any cell is near cutoff. Hanging the shutdown off
+        # the same `else` branch would mean the common case (gauge fires
+        # first, voltage sags later) never reaches it at all: the latch is
+        # already set, so the branch never runs again. That is precisely
+        # the ordering that occurs on a normal discharge, so the bug would
+        # have been the default behaviour rather than an edge case.
+        #
+        # Voltage only. `pct <= CRITICAL_BATTERY_PERCENT` is 20% and still
+        # hours of use on this pack; powering off there would throw away
+        # most of a charge. See `BATTERY_SHUTDOWN_GRACE_S` for why the
+        # measured signal is the one trusted with the irreversible action.
+        if voltage_critical and not self._battery_shutdown_started:
+            self._battery_shutdown_started = True
+            print(
+                f"[battery] cell below cutoff — graceful shutdown "
+                f"(gauge {pct}%, lowest cell {min(reading.cell_voltages_mv)} mV)",
+                flush=True,
+            )
+            self._begin_low_battery_shutdown(pct)
+
+    def _begin_low_battery_shutdown(self, percentage: int) -> None:
+        """Speak, alert guardians, then power the machine off. Never raises.
+
+        Runs on a short-lived thread for the same reason `_spawn_haptic`
+        does: every step here blocks, and the caller is the 100 Hz loop
+        that detects falls. One-shot rather than a long-lived worker —
+        this happens at most once per run and the process does not outlive
+        it.
+
+        Order is deliberate, and speech goes first. The wearer cannot see
+        a screen, so the only way they learn the device is about to stop
+        detecting obstacles and falls is by hearing it. Everything else
+        here is for someone who is not present.
+
+        The guardian alert reuses `EventType.LOW_BATTERY`. It is not a
+        repeat of the 30% one in substance — "the device is off now and
+        the wearer is unassisted" is actionable where "it is getting low"
+        was only informative — but `EventType` values are a contract with
+        the backend's whitelist (see `telemetry/base.py`), and that is a
+        separate repository. Inventing a member here would post an event
+        the backend rejects, which is worse than reusing an accurate one.
+
+        Never raises, and the shutdown runs even if the steps before it
+        fail. A device that cannot speak or cannot reach the backend is
+        still a device whose cells are below cutoff; swallowing an
+        exception on the way to `poweroff` would hand the outcome back to
+        the HAT's hardware cut, which is the fault this exists to fix.
+        """
+        def _run() -> None:
+            try:
+                self._announce(
+                    messages.get("battery.shutting_down", self.language.current),
+                    critical=True,
+                )
+            except Exception as exc:
+                print(f"[battery-shutdown] announce failed: {exc}",
+                      file=sys.stderr, flush=True)
+
+            try:
+                self._fire_low_battery_alert(percentage)
+            except Exception as exc:
+                print(f"[battery-shutdown] guardian alert failed: {exc}",
+                      file=sys.stderr, flush=True)
+
+            # Wait for the sentence to actually be heard, but never longer
+            # than the grace budget — the HAT cuts power on its own about a
+            # minute after the cell crosses cutoff, and a stuck announcer
+            # must not spend that minute. Polling `pending_count()` rather
+            # than sleeping the whole budget means the usual case proceeds
+            # as soon as the clip finishes, a few seconds in.
+            deadline = time.monotonic() + BATTERY_SHUTDOWN_GRACE_S
+            while time.monotonic() < deadline:
+                try:
+                    if self.announcer is None or self.announcer.pending_count() == 0:
+                        break
+                except Exception:
+                    break
+                time.sleep(0.2)
+
+            # Flush before handing over. `systemctl poweroff` syncs as part
+            # of a normal halt, but this path exists precisely because the
+            # power may be cut out from under that halt, and an explicit
+            # sync here costs milliseconds.
+            try:
+                os.sync()
+            except Exception:
+                pass
+
+            self._perform_shutdown()
+
+        threading.Thread(
+            target=_run, name="battery-shutdown", daemon=True,
+        ).start()
 
     def obstacle_ahead_cm(self) -> float | None:
         """Distance to whatever the forward sensor sees, or None.

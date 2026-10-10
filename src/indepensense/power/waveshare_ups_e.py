@@ -42,10 +42,12 @@ the charger showed 59%. The usable span is therefore ~41 raw points, not
 100, and the raw figure overstates remaining charge by roughly 2.4× in
 the region that matters.
 
-That was not cosmetic. `LOW_BATTERY_PERCENT` (15) and
-`CRITICAL_BATTERY_PERCENT` (5) both sit below a floor the gauge never
-reaches, so neither alert had ever fired or could — the wearable gave no
-warning and simply died.
+That was not cosmetic. `LOW_BATTERY_PERCENT` and
+`CRITICAL_BATTERY_PERCENT` were then 15 and 5, both below a floor the
+raw gauge never reaches, so neither alert had ever fired or could — the
+wearable gave no warning and simply died. They are 30 and 20 against the
+rescaled figure now; the numbers in `config.py` are the live ones and
+this paragraph is the history, not a second source of truth.
 
 `read()` therefore rescales onto 0-100 against `empty_raw_percent` and
 reports the original alongside as `raw_percentage`. The correction lives

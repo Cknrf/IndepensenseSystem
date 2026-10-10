@@ -5,6 +5,7 @@ This logic now costs money: SMS fans out to every guardian on a
 contact list repeatedly. The latch was already correct when I read it —
 these tests are here so it stays that way.
 """
+import threading
 import time
 
 import pytest
@@ -546,3 +547,123 @@ def test_both_tiers_are_reachable_by_the_corrected_gauge():
         assert any(value < threshold for value in reachable), (
             f"no raw reading produces a corrected value under {threshold}%"
         )
+
+
+# --------------------------------------------------------------- shutdown tier
+#
+# Added 2026-10-11, after the wearable announced "the device will shut
+# down soon" at the critical tier and then ran until the HAT cut power
+# mid-write. `power/base.py` documents the contract and
+# `waveshare_ups_e.py` exposes `request_power_off()` for it; nothing
+# called either. These tests exist so that cannot silently return.
+
+
+class _ShutdownApp(_RecordingApp):
+    """Records the power-off instead of halting the machine running tests.
+
+    `_perform_shutdown` is the only thing stubbed. The real
+    `_begin_low_battery_shutdown` runs — including its thread — because a
+    test that reimplemented that sequence would assert against itself and
+    notice nothing if the production order changed.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.shutdowns = 0
+
+    def _perform_shutdown(self) -> None:
+        self.shutdowns += 1
+
+
+@pytest.fixture
+def shutdown_app():
+    instance = _ShutdownApp()
+    instance.battery = _ScriptedBattery()
+    instance.alert_sink = MockTelemetryClient()
+    return instance
+
+
+def _check_now_and_settle(app):
+    """Run a battery check, then join any shutdown thread it spawned.
+
+    The real method spawns `battery-shutdown` so it never blocks the
+    100 Hz loop, which makes the assertions racy unless the test waits.
+    The thread's only wait is on `announcer.pending_count()`, and
+    `self.announcer` is None until `start()` — never called in unit tests
+    — so it exits immediately rather than sleeping out the grace budget.
+    """
+    _check_now(app)
+    for thread in threading.enumerate():
+        if thread.name == "battery-shutdown":
+            thread.join(timeout=5.0)
+            assert not thread.is_alive(), "shutdown thread did not finish"
+
+
+def test_cell_below_cutoff_powers_off(shutdown_app):
+    """A cell under 3.15 V triggers the shutdown, not just a warning."""
+    shutdown_app.battery.reading = _reading(50, cell_mv=3100)
+    _check_now_and_settle(shutdown_app)
+    assert shutdown_app.shutdowns == 1
+
+
+def test_healthy_cells_never_power_off(shutdown_app):
+    """A low gauge alone must not. 20% is still hours on this pack."""
+    shutdown_app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT, cell_mv=3700)
+    _check_now_and_settle(shutdown_app)
+    assert shutdown_app.shutdowns == 0
+
+
+def test_shutdown_fires_even_when_critical_latch_is_already_set(shutdown_app):
+    """The ordering that would have made the bug the default behaviour.
+
+    On a normal discharge the gauge crosses 20% well before any cell
+    nears cutoff, so the critical latch is already set by the time the
+    voltage signal trips. If the shutdown were checked inside the same
+    `else` branch as the warning, that branch would never run again and
+    the device would never power off — in the common case, not an edge
+    one.
+    """
+    shutdown_app.battery.reading = _reading(CRITICAL_BATTERY_PERCENT, cell_mv=3700)
+    _check_now_and_settle(shutdown_app)
+    assert shutdown_app._critical_battery_alerted
+    assert shutdown_app.shutdowns == 0
+
+    shutdown_app.battery.reading = _reading(8, cell_mv=3100)
+    _check_now_and_settle(shutdown_app)
+    assert shutdown_app.shutdowns == 1
+
+
+def test_shutdown_runs_once_per_run(shutdown_app):
+    """The poll fires every 10 s; the shutdown must not stack."""
+    shutdown_app.battery.reading = _reading(5, cell_mv=3100)
+    for _ in range(4):
+        _check_now_and_settle(shutdown_app)
+    assert shutdown_app.shutdowns == 1
+
+
+def test_charging_cell_never_powers_off(shutdown_app):
+    """`is_critical_low` is false while charging — a sagging cell on the
+    charger is recovering, not dying."""
+    shutdown_app.battery.reading = _reading(5, charging=True, cell_mv=3100)
+    _check_now_and_settle(shutdown_app)
+    assert shutdown_app.shutdowns == 0
+
+
+def test_wearer_is_told_before_power_is_cut(shutdown_app):
+    """Speech first, and critical so it preempts whatever is queued.
+
+    The wearer cannot see the device. Hearing it is the only way they
+    learn obstacle and fall detection are about to stop.
+    """
+    shutdown_app.battery.reading = _reading(5, cell_mv=3100)
+    _check_now_and_settle(shutdown_app)
+    assert any(critical for _, critical in shutdown_app.spoken)
+    assert shutdown_app.shutdowns == 1
+
+
+def test_guardians_are_alerted_at_shutdown(shutdown_app):
+    """They were told at 30% that it was low; this tells them it is gone."""
+    shutdown_app.battery.reading = _reading(5, cell_mv=3100)
+    _check_now_and_settle(shutdown_app)
+    sent = [a.event_type for a in shutdown_app.alert_sink.alerts]
+    assert EventType.LOW_BATTERY in sent

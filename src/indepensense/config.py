@@ -612,6 +612,41 @@ BATTERY_CHECK_INTERVAL_S = 10.0
 CRITICAL_BATTERY_PERCENT = 20
 CRITICAL_BATTERY_RECOVERY_PERCENT = 25
 
+# Third and final tier: power the machine off while it still can.
+#
+# Not a percentage. The trigger is `BatteryReading.is_critical_low` — a
+# cell under 3.15 V — because that is measured rather than estimated, and
+# because it is the same signal the HAT's own protection uses. The gauge
+# is a calibration against one pack (`BATTERY_EMPTY_RAW_PERCENT`) and the
+# whole reason that constant exists is that it cannot be trusted; keying
+# the one irreversible action to it would be the worst place to rely on
+# it. `CRITICAL_BATTERY_PERCENT` stays what the *wearer* is warned at.
+#
+# Why this exists at all
+# ----------------------
+#
+# It did not, until 2026-10-11. The wearable announced "the device will
+# shut down soon" at the critical tier and then never shut down — it ran
+# until the HAT cut power mid-write. `power/base.py` documents the
+# contract ("app-level graceful shutdown must happen quickly") and
+# `waveshare_ups_e.py` exposes `request_power_off()` for it; nothing
+# called either. The device went flat in the field that day and recovered
+# only because ext4 replayed its journal.
+#
+# The budget
+# ----------
+#
+# `is_critical_low` gives roughly 60 s before the HAT cuts power on its
+# own. Everything has to fit inside that: speaking the warning (a few
+# seconds, and it is spoken *first* because a wearer who cannot see the
+# device has no other way to learn it is going dark), the guardian alert,
+# then `systemctl poweroff` and systemd's own teardown. 20 s of grace for
+# the speech leaves roughly 40 s for the rest, which is generous for a
+# halt. A cell can sag faster under load than this assumes, so the wait
+# is a ceiling, not a target — the sequence proceeds as soon as the
+# announcer has drained.
+BATTERY_SHUTDOWN_GRACE_S = 20.0
+
 # Separate latch file from the 30% one, so the two tiers cannot clear each
 # other. Same presence-is-the-state trick — see `LOW_BATTERY_STATE_PATH`.
 CRITICAL_BATTERY_STATE_PATH = PROJECT_ROOT / "var" / "critical_battery_alerted"

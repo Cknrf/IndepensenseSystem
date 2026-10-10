@@ -573,6 +573,19 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Kritikal na ang baterya, {percent} porsyento na lang. "
               "Malapit nang mag-shut down ang device.",
     },
+    # Spoken once, immediately before the device powers itself off. No
+    # placeholder: by this point the percentage is beside the point and
+    # the wearer needs the shortest sentence that conveys "it is going
+    # dark now, and you are about to be without it". Being placeholder-free
+    # also means it is rendered into the permanent clip directory, so it
+    # never waits on synthesis at the one moment there is no time for it —
+    # the same reason the emergency-delivery failures live there.
+    "battery.shutting_down": {
+        "en": "Battery empty. Shutting down now. "
+              "Obstacle and fall detection will stop.",
+        "tl": "Ubos na ang baterya. Nagsa-shut down na po. "
+              "Titigil na ang pag-detect ng balakid at pagkahulog.",
+    },
 
     "emergency.local_only": {
         "en": "Emergency alert triggered locally. Guardian dashboard not connected.",
