@@ -480,30 +480,47 @@ def _obstacle_tier_for(
     return None
 
 
-def _obstacle_rhythm_hz(distance_cm: float) -> float:
-    """Proximity-rhythm pulse rate for a distance, in pulses per second.
+def _obstacle_feedback(distance_cm: float) -> tuple[float, float]:
+    """Proximity-rhythm feedback: frequency + intensity for a distance.
 
-    Maps distance continuously to frequency (no discrete tiers). Vibration
-    frequency increases smoothly as obstacles approach, giving users precise
-    distance awareness through rhythm alone:
+    Returns (frequency_hz, duty_cycle_0_to_1) with aggressive ramping:
+    - Both frequency and intensity increase as obstacles approach
+    - Creates compound feedback: faster AND stronger as you get closer
 
-      150 cm: 0 Hz (silent)
-      100 cm: ~1.5 Hz (early awareness)
-       50 cm: ~4 Hz (very close)
-       20 cm: ~8 Hz (contact/imminent)
+    Aggressive curve through key points:
+      150 cm:   0 Hz  @  0% intensity (silent, at detection start)
+      100 cm:   6 Hz  @ 60% intensity (noticeable)
+       50 cm:  10 Hz  @ 90% intensity (strong)
+       20 cm:  15 Hz  @ 100% intensity (max speed + strength)
+       <20 cm: 15 Hz  @ 100% intensity (clamped)
 
-    Free and pure for the same reason as `_obstacle_tier_for`: the whole
-    distance → rate curve can be asserted as a table.
+    Linear interpolation between key points. Duty cycle controls vibration
+    intensity via PWM: 60% duty = motor on 60% of pulse period.
     """
     if distance_cm >= OBSTACLE_DETECTION_START_CM:
-        return 0.0
-    if distance_cm < 20.0:
-        return OBSTACLE_RHYTHM_MAX_HZ
-    # Linear interpolation from DETECTION_START down to contact
-    span = OBSTACLE_DETECTION_START_CM - 20.0
-    closeness = (OBSTACLE_DETECTION_START_CM - distance_cm) / span
-    closeness = min(1.0, max(0.0, closeness))
-    return closeness * OBSTACLE_RHYTHM_MAX_HZ
+        return (0.0, 0.0)
+    if distance_cm <= 20.0:
+        return (15.0, 1.0)
+
+    # Linear interpolation through three segments
+    if distance_cm >= 100.0:
+        # 150→100 cm: 0→6 Hz, 0%→60% intensity (span: 50 cm)
+        t = (OBSTACLE_DETECTION_START_CM - distance_cm) / 50.0  # 0 to 1
+        hz = 6.0 * t
+        duty = 0.6 * t
+        return (hz, duty)
+    elif distance_cm >= 50.0:
+        # 100→50 cm: 6→10 Hz, 60%→90% intensity (span: 50 cm)
+        t = (100.0 - distance_cm) / 50.0  # 0 to 1
+        hz = 6.0 + 4.0 * t
+        duty = 0.6 + 0.3 * t
+        return (hz, duty)
+    else:
+        # 50→20 cm: 10→15 Hz, 90%→100% intensity (span: 30 cm)
+        t = (50.0 - distance_cm) / 30.0  # 0 to 1
+        hz = 10.0 + 5.0 * t
+        duty = 0.9 + 0.1 * t
+        return (hz, duty)
 GPS_CACHE_INTERVAL_S = 1.0       # 1 Hz — GPS itself only emits ~1 Hz NMEA anyway
 
 
@@ -2325,44 +2342,66 @@ The comparisons are inclusive, so a threshold names the percentage
             return
 
         distance, sensor_name = closest
-        hz = _obstacle_rhythm_hz(distance)
+        hz, duty_cycle = _obstacle_feedback(distance)
         if sensor_name != self._rhythm_sensor:
             print(
-                f"[obstacle:rhythm] {sensor_name} at {distance:.0f} cm, {hz:.1f} Hz",
+                f"[obstacle:rhythm] {sensor_name} at {distance:.0f} cm, {hz:.1f} Hz @ {duty_cycle*100:.0f}%",
                 flush=True,
             )
             self._rhythm_sensor = sensor_name
         if self._rhythm_last_pulse is None:
             self._rhythm_last_pulse = now
             return
-        if now - self._rhythm_last_pulse < 1.0 / hz:
+        if hz > 0 and now - self._rhythm_last_pulse < 1.0 / hz:
             return
 
         self._rhythm_last_pulse = now
         threading.Thread(
             target=self._play_rhythm_pulse,
-            args=(distance < OBSTACLE_DANGER_CM,),
+            args=(distance < OBSTACLE_DANGER_CM, duty_cycle),
             name="obstacle-rhythm",
             daemon=True,
         ).start()
 
-    def _play_rhythm_pulse(self, all_motors: bool) -> None:
-        """One rhythm pulse: front motor, or all three inside danger.
+    def _play_rhythm_pulse(self, all_motors: bool, duty_cycle: float = 1.0) -> None:
+        """One rhythm pulse with PWM intensity control.
 
         Takes `_warning_lock` without waiting. If a tier alert or a
         navigation cue is playing, this pulse is dropped rather than
-        queued: at up to 8 Hz a queue would pile up behind a 0.5 s cue and
+        queued: at up to 15 Hz a queue would pile up behind a 0.5 s cue and
         then fire in a burst, and a turn instruction should never be
         delayed by, or drowned in, a backlog of rhythm. The next pulse is
-        at most an eighth of a second away anyway.
+        at most 67ms away (1/15 Hz) anyway.
+
+        Args:
+            all_motors: If True, pulse all 3 motors; else front motor only.
+            duty_cycle: 0.0-1.0, fraction of pulse period motors stay ON.
+                       0.3 = on for 30% of pulse, off for 70%.
+                       1.0 = on for entire pulse (no off time).
         """
         if not self._warning_lock.acquire(blocking=False):
             return
         try:
+            # PWM: on_time and off_time within the pulse period
+            on_time = OBSTACLE_RHYTHM_PULSE_S * duty_cycle
+            off_time = OBSTACLE_RHYTHM_PULSE_S * (1.0 - duty_cycle)
+
             if all_motors:
-                self._pulse_all_motors(duration_s=OBSTACLE_RHYTHM_PULSE_S)
+                # All three motors on simultaneously
+                motors = [m for m in (self.front_motor, self.right_motor, self.left_motor) if m is not None]
+                for m in motors:
+                    m.on()
+                time.sleep(on_time)
+                for m in motors:
+                    m.off()
             elif self.front_motor is not None:
-                self.front_motor.pulse(times=1, duration_s=OBSTACLE_RHYTHM_PULSE_S)
+                # Front motor only
+                self.front_motor.on()
+                time.sleep(on_time)
+                self.front_motor.off()
+
+            if off_time > 0:
+                time.sleep(off_time)
         except Exception as exc:
             print(f"[obstacle:rhythm] error: {exc}", file=sys.stderr, flush=True)
         finally:

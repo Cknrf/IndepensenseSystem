@@ -229,117 +229,65 @@ I think what we should do here, is to have a message right after the first try t
 
 - Should I add as well, an non-emergency confirmation. To tell the guardians that the user is fine, it is important as well for them to know the status of the user, especially when there's an emergency that got triggered
 
-- I have noticed as well, that the battery warning doesn't get triggered, particularly what I have tested is the 70% raw readings which is 30 percent in the mathemtical correspond right? 
-
-- Why does it take so much time before the indepensense app.py got even started? I mean it shouldn't be because of the booting of the pi, I think it just takes 25-30 seconds accoridng to the online information. What do you think? 
-That's where also my concern emerge, since after turning on the battery which would turn on immediately the pi, there wouldn't be an indicator that the user should wait before the system starts since it is the booting time of the PI. But my problem as well is the time that took before the PI run the app.py. Or is it normal?
-But when I run it manually, the app.py, it initalizes fast, than the service. What do you think? 
-
-- I have tested fortunately right now coincidencetialy the battery:
-ct 08 08:04:26 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:26 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:04:30 cknrf python[1446]: [battery] 30% — firing LOW_BATTERY alert
-Oct 08 08:04:30 cknrf python[1446]: [telemetry] POST /raspberry/alert succeeded on attempt 1
-Oct 08 08:04:36 cknrf python[1446]: [obstacle:bottom] danger at 41 cm (repeat)
-Oct 08 08:04:43 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:43 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:04:43 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:44 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:04:45 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:45 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:04:46 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:47 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:04:50 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:50 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:04:50 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:50 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:04:51 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:51 cknrf python[1446]: [obstacle:bottom] danger at 54 cm (repeat)
-Oct 08 08:04:51 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:04:52 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:52 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:04:54 cknrf python[1446]: [telemetry] POST /raspberry/interval-information succeeded on attempt 1
-Oct 08 08:04:59 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:04:59 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:00 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:00 cknrf python[1446]: [sms] timed out after 30.0s: ['--sms=0', '--send']
-Oct 08 08:05:00 cknrf python[1446]: [sms] send to +639051675263 attempt 1 failed, retrying in 0.1s: send failed
-Oct 08 08:05:01 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:05:01 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:02 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:04 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:05 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:06 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:06 cknrf python[1446]: [obstacle:bottom] danger at 53 cm (repeat)
-Oct 08 08:05:07 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:05:07 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:07 cknrf python[1446]: [obstacle:top] warning at 95 cm (entered)
-Oct 08 08:05:09 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:09 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:10 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:10 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:10 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:10 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:17 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:18 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:21 cknrf python[1446]: [obstacle:bottom] danger at 54 cm (repeat)
-Oct 08 08:05:22 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:22 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:23 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:23 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:23 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:24 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:25 cknrf python[1446]: [telemetry] POST /raspberry/interval-information succeeded on attempt 1
-Oct 08 08:05:29 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:30 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:30 cknrf python[1446]: [sms] timed out after 30.0s: ['--sms=1', '--send']
-Oct 08 08:05:30 cknrf python[1446]: [sms] send to +639051675263 attempt 2 failed, retrying in 0.5s: send failed
-Oct 08 08:05:32 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:33 cknrf python[1446]: [obstacle:top] warning at 54 cm (entered)
-Oct 08 08:05:36 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:36 cknrf python[1446]: [obstacle:bottom] danger at 53 cm (repeat)
-Oct 08 08:05:37 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:37 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:41 cknrf python[1446]: [obstacle:top] warning at 54 cm (entered)
-Oct 08 08:05:41 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:42 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:05:43 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:05:51 cknrf python[1446]: [obstacle:bottom] danger at 42 cm (repeat)
-Oct 08 08:05:55 cknrf python[1446]: [telemetry] POST /raspberry/interval-information succeeded on attempt 1
-Oct 08 08:06:01 cknrf python[1446]: [sms] timed out after 30.0s: ['--sms=2', '--send']
-Oct 08 08:06:01 cknrf python[1446]: [sms] send to +639051675263 attempt 3 failed, retrying in 1.0s: send failed
-Oct 08 08:06:07 cknrf python[1446]: [obstacle:bottom] danger at 54 cm (repeat)
-Oct 08 08:06:07 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:06:07 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-Oct 08 08:06:08 cknrf python[1446]: [obstacle:top] warning at 96 cm (entered)
-Oct 08 08:06:09 cknrf python[1446]: [obstacle:top] clear at 6553 cm
-
-Oct 08 08:37:11 cknrf python[1446]: [battery] critical, warning the wearer — gauge 20% (raw 66%), lowest cell 3442 mV
-Oct 08 08:37:21 cknrf python[1446]: [obstacle:bottom] danger at 22 cm (repeat)
-Oct 08 08:37:24 cknrf python[1446]: [telemetry] POST /raspberry/interval-information succeeded on attempt 1
-Oct 08 08:37:24 cknrf python[1446]: [obstacle:top] danger at 27 cm (repeat)
-
-- What if the services failed? I mean those things that we are loading the ram, the ollama, graphhopper, whisper, piper, etc. Would the system would retry loading it? or it is in the background. And what would happen to the system, if they aren't loaded? Since most of the features/functions depend on them, what do you think? 
-
-- I have noticed as well, that there's a battery duration estimate in the message? Let's remove it since it is not accurate enough which would propose a misinformation for the user which is more risky. 
-
-- My coworker also changed the logic for the distance sensing and the feedback, can you check and tell me the mechanism? 
-
-- Whisper and the e5 embedding model try to ping Hugging Face over the cellular network on every boot to check for model updates. Passing local_files_only=True and loading snapshots locally (like MMS already does) closes an offline boot vulnerability and speeds up startup.
-I mean, we don't need to update the whisper and e5 model, so let's not check for model updates. 
-
-For context, I would use another sd card, since apparently the one that I'm using is fake. My concern is that so far, configuration files, data, and other 
-things that is important aren't documented or saved. But the source code is already in the repo, so it is safe.
-
-Now, you can ssh directly to the raspberry pi 5, but access and read only, don't modify or delete anything, especially using rsync since it would delete 
-everything that isn't watched/added in the git. Anyway, I want you to check the raspi, to check all the configurations files, data, and necessary things that
-I need to saved or copy to my device. 
-
-Here is the credential, and don't worry about the security or the confidentiality, trust me. 
-100.113.232.110 and Mearck123 as the password
-
-But before that, since the pi is currently turned off. We can just as well test again the initialization's speed of the main program which would be run automatically by the indepensense service. 
-Even though we have already tested it earlier but this time it is different, since it would be from turned off pi. I want you to just keep ssh to the raspberry pi 5, to connect to it immediately once online/available. 
-But I'm not sure how would you observe or monitor it, if it jsut alright if you would just see the logs of the indepensense, then it is fine for you to be late in ssh to the raspberry pi 5. 
-
 - The name of the locations, how would the NLU would know it? 
+
+- What is the particular cue or beep used for when the voice stack still loading - press ignored:
+(.venv) cknrf@cknrf:~/Desktop/thesis/IndepensenseSystem $ cd src/indepensense
+(.venv) cknrf@cknrf:~/Desktop/thesis/IndepensenseSystem/src/indepensense $ python3 app.py
+Initialising IndepenSense runtime...
+  Enumerating audio devices...
+  Audio: 12 device(s); in=11 'default', out=11 'default'.
+  Playing startup notice...
+  Opening MPU6050...
+  Opening GPS...
+  Speaker volume 80%.
+  Checking cloud LLM fallback...
+  Cloud LLM ready (mistral-small-latest).
+  Connecting to GraphHopper + Photon...
+  2 saved place(s).
+  Loading device credential...
+  Device 4c0d6ef0-c623-4b0b-8587-9ef29a31d1f1
+  Building buffered telemetry to https://indepensense-api.maendou.com...
+  Fetching guardian contacts...
+[guardians] refreshed: 1 contact(s)
+  Opening SMS sender (mmcli)...
+  Opening buttons...
+  Opening buzzer + vibration motors...
+  Opening ultrasonic sensors...
+  Opening UPS HAT (battery)...
+  Opening magnetometer (QMC5883P compass)...
+  Starting heartbeat sender...
+Safety features up in 7s (language: en). Running the fall-detection loop; voice commands follow once the models are loaded and the LLM is warm. SIGINT/SIGTERM to stop.
+  Loading Whisper models...
+[obstacle:top] warning at 60 cm (entered)
+[obstacle:bottom] warning at 85 cm (entered)
+[battery] recovered to 44% — LOW_BATTERY latch cleared
+[battery] recovered to 44% — CRITICAL latch cleared
+[telemetry] POST /raspberry/interval-information succeeded on attempt 1
+[obstacle:top] danger at 47 cm (entered)
+[PTT] Voice stack still loading — press ignored.
+[PTT] Voice stack still loading — press ignored.
+[PTT] Voice stack still loading — press ignored.
+[PTT] Voice stack still loading — press ignored.
+[REPEAT] response: There is nothing to repeat yet.
+
+[EMERGENCY BUTTON] Pressed. Firing alert...
+[EMERGENCY BUTTON] response: Sending your emergency alert.
+[telemetry] POST /raspberry/alert succeeded on attempt 1
+[sms] sent to +639051675263
+[alert] delivered (sms=sent).
+[obstacle:top] danger at 47 cm (entered)
+  Loading TTS voices (Piper + MMS)...
+2026-10-10 04:06:36.580134815 [W:onnxruntime:Default, device_discovery.cc:283 GetGpuDevices] Failed to detect devices under "/sys/class/drm/card1": device_discovery.cc:93 ReadFileContents Failed to open file: "/sys/class/drm/card1/device/vendor"
+2026-10-10 04:06:36.580193537 [W:onnxruntime:Default, device_discovery.cc:283 GetGpuDevices] Failed to detect devices under "/sys/class/drm/card0": device_discovery.cc:93 ReadFileContents Failed to open file: "/sys/class/drm/card0/device/vendor"
+[PTT] Voice stack still loading — press ignored.
+[obstacle:top] danger at 48 cm (entered)
+[PTT] Voice stack still loading — press ignored.
+[PTT] Voice stack still loading — press ignored.
+
+- What's the problem?
+[telemetry] POST /raspberry/interval-information succeeded on attempt 1
+[PTT] Intent: navigation.start via llm params={'location': 'Jollibee', 'nearest': True}
+[nav] destination confirmed.
+[PTT] Response: Sorry, something went wrong: 400 from GraphHopper: The 'heading' parameter is currently not supported for speed mode, you need to disable speed mode with `ch.disable=true`. See issue #483 (java.lang.IllegalArgumentException)
+- 

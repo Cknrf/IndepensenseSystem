@@ -1,9 +1,14 @@
 """Unit tests for obstacle detection and continuous vibration feedback in `app.py`.
 
-With continuous distance-to-frequency vibration mapping, obstacles are no
-longer represented as discrete tiers. This tests that distance smoothly maps
-to vibration frequency, with no feedback beyond detection distance and max
-feedback at contact distance.
+With aggressive dual-parameter feedback, obstacles map to both frequency AND intensity
+(PWM duty cycle). This tests that distance smoothly maps to both vibration frequency
+and strength, with compound feedback: faster AND stronger as obstacles approach.
+
+Aggressive curve:
+  150 cm:   2 Hz @  30% intensity
+  100 cm:   6 Hz @  60% intensity
+   50 cm:  10 Hz @  90% intensity
+   20 cm:  15 Hz @ 100% intensity
 
 Tests build a bare `MockApp` and assign only the devices each one needs.
 """
@@ -16,7 +21,6 @@ from indepensense.config import (
     OBSTACLE_DETECTION_START_CM,
     OBSTACLE_READING_MAX_AGE_S,
     OBSTACLE_RELEASE_CM,
-    OBSTACLE_RHYTHM_MAX_HZ,
 )
 from indepensense.feedback.mock import MockVibrationMotor
 from indepensense.sensors.base import UltrasonicReading
@@ -43,40 +47,66 @@ def app():
     return app
 
 
-# --- rhythm frequency mapping ---
+# --- aggressive feedback: frequency + intensity mapping ---
 
-@pytest.mark.parametrize("distance,expected_min,expected_max", [
-    (OBSTACLE_DETECTION_START_CM + 10, 0.0, 0.0),   # Beyond detection
-    (OBSTACLE_DETECTION_START_CM,      0.0, 0.0),   # At detection start
-    (OBSTACLE_DETECTION_START_CM - 1,  0.0, 1.0),   # Just inside, low frequency
-    (100.0,                            3.0, 3.2),   # Mid-range (~3.08 Hz)
-    (50.0,                             6.0, 6.3),   # Close (~6.15 Hz)
-    (20.0,                             8.0, 8.0),   # Contact (exactly 8 Hz)
+@pytest.mark.parametrize("distance,hz_min,hz_max,duty_min,duty_max", [
+    # Beyond detection: silent
+    (OBSTACLE_DETECTION_START_CM + 10, 0.0, 0.0, 0.0, 0.0),
+    (OBSTACLE_DETECTION_START_CM,      0.0, 0.0, 0.0, 0.0),
+    # Just inside detection: ramping up (150→100cm: 0→6Hz, 0%→60%)
+    (140.0,                            1.0, 1.5, 0.10, 0.15),
+    # Mid-range: ramping harder (100→50cm: 6→10Hz, 60%→90%)
+    (100.0,                            5.8, 6.2, 0.55, 0.65),
+    # Close: strong feedback (50→20cm: 10→15Hz, 90%→100%)
+    (50.0,                             9.8, 10.2, 0.85, 0.95),
+    # Contact: maximum
+    (20.0,                            14.8, 15.2, 0.95, 1.0),
+    (10.0,                            15.0, 15.0, 1.0, 1.0),
 ])
-def test_rhythm_frequency_by_distance(distance, expected_min, expected_max):
-    """Frequency increases continuously as obstacle gets closer."""
-    actual = app_module._obstacle_rhythm_hz(distance)
-    assert expected_min <= actual <= expected_max, \
-        f"at {distance}cm: expected {expected_min}-{expected_max}Hz, got {actual}Hz"
+def test_feedback_by_distance(distance, hz_min, hz_max, duty_min, duty_max):
+    """Both frequency and intensity increase as obstacle gets closer (aggressive curve)."""
+    hz, duty = app_module._obstacle_feedback(distance)
+    assert hz_min <= hz <= hz_max, \
+        f"at {distance}cm: expected frequency {hz_min}-{hz_max}Hz, got {hz}Hz"
+    assert duty_min <= duty <= duty_max, \
+        f"at {distance}cm: expected duty {duty_min*100:.0f}%-{duty_max*100:.0f}%, got {duty*100:.0f}%"
 
 
-def test_closer_is_never_slower():
-    """Monotonic property: closer obstacles always produce faster or equal frequency."""
-    rates = [app_module._obstacle_rhythm_hz(d) for d in range(int(OBSTACLE_DETECTION_START_CM), 0, -5)]
-    for a, b in zip(rates, rates[1:]):
-        assert b >= a, f"frequency should increase as distance decreases"
+def test_frequency_increases_monotonically():
+    """Frequency increases as distance decreases."""
+    distances = list(range(150, 0, -5))
+    feedbacks = [app_module._obstacle_feedback(d) for d in distances]
+    frequencies = [hz for hz, _ in feedbacks]
+
+    for i, (a, b) in enumerate(zip(frequencies, frequencies[1:])):
+        assert b >= a, f"at index {i}: frequency should increase (distance {distances[i]} vs {distances[i+1]})"
+
+
+def test_intensity_increases_monotonically():
+    """Intensity (duty cycle) increases as distance decreases."""
+    distances = list(range(150, 0, -5))
+    feedbacks = [app_module._obstacle_feedback(d) for d in distances]
+    duties = [duty for _, duty in feedbacks]
+
+    for i, (a, b) in enumerate(zip(duties, duties[1:])):
+        assert b >= a, f"at index {i}: duty should increase (distance {distances[i]} vs {distances[i+1]})"
 
 
 def test_silent_beyond_detection():
-    """No vibration feedback beyond detection start distance."""
-    assert app_module._obstacle_rhythm_hz(OBSTACLE_DETECTION_START_CM + 100) == 0.0
-    assert app_module._obstacle_rhythm_hz(OBSTACLE_DETECTION_START_CM + 1) == 0.0
+    """No feedback beyond detection start distance."""
+    hz, duty = app_module._obstacle_feedback(OBSTACLE_DETECTION_START_CM + 100)
+    assert hz == 0.0 and duty == 0.0
+
+    hz, duty = app_module._obstacle_feedback(OBSTACLE_DETECTION_START_CM + 1)
+    assert hz == 0.0 and duty == 0.0
 
 
-def test_max_frequency_at_contact():
-    """Vibration reaches max frequency within contact distance."""
-    for d in [20.0, 10.0, 5.0, 1.0]:
-        assert app_module._obstacle_rhythm_hz(d) == OBSTACLE_RHYTHM_MAX_HZ
+def test_max_at_contact():
+    """Maximum feedback (15 Hz @ 100%) at contact distance and closer."""
+    for distance in [20.0, 10.0, 5.0, 1.0]:
+        hz, duty = app_module._obstacle_feedback(distance)
+        assert hz == 15.0, f"at {distance}cm: expected 15 Hz"
+        assert duty == 1.0, f"at {distance}cm: expected 100% duty"
 
 
 # --- sensor reading and state tracking ---
