@@ -930,6 +930,50 @@ curl -s 'localhost:2322/api?q=batangas'   # Photon
 curl -s localhost:11434/api/tags | grep qwen3
 ```
 
+### Measured outcome, 2026-10-11
+
+The rebuild completed and the runtime came up clean on the first start.
+These are the numbers to quote, and they replace the ones taken on the
+counterfeit card:
+
+| | Old card | New card |
+|---|---|---|
+| Sequential read | 24 MB/s | **89.5 MB/s** |
+| Safety features up | — | **6.3 s** after process start |
+| Voice stack ready | ~200 s | **43.8 s** |
+| `systemd` reports started | n/a (`Type=simple`) | **60 s** |
+
+Voice-stack breakdown on the new card:
+
+```
+Loading TTS voices (Piper + MMS)          15.3 s
+Loading Whisper models                    11.2 s
+Building intent parser (LLM warmup next)   9.1 s
+Playing startup notice                     5.0 s
+Opening camera + YOLO detector             2.0 s
+16 stages under 1 s                        1.3 s together
+```
+
+**Roughly 4.5× faster to a usable voice interface**, and the safety
+features — fall detection, obstacle warnings, the emergency button — are
+live in 6.3 s regardless. That gap is the whole point of the
+safety-first startup split, and it is now visible in the numbers rather
+than argued from first principles.
+
+Two things this settles:
+
+- **The 487 s embedding load was an artefact.** Measured standalone
+  while a 1.3 GB rsync was writing to the same card, it looked
+  catastrophic. In the real startup, with the card otherwise quiet, it
+  is **9.1 s** — in line with the old card's figure. Contention, not
+  regression. Worth remembering before trusting any single measurement
+  taken during this migration.
+- **The I/O-priority work is live for the first time.** `bfq` is the
+  active scheduler and all three sidecars report
+  `IOSchedulingClass=2, prio=7`. On the old card the rule was never
+  installed, so those settings had been inert since they were written.
+  Any re-measurement of the boot-ordering benefit should start here.
+
 **Application**
 
 ```bash
