@@ -536,11 +536,26 @@ Autologin if you want the same behaviour.
 sudo apt update && sudo apt full-upgrade -y
 sudo apt install -y \
   python3-picamera2 libportaudio2 libsndfile1 \
+  pipewire-alsa libasound2-plugins \
   tesseract-ocr tesseract-ocr-eng \
   openjdk-21-jre-headless zstd \
   modemmanager i2c-tools gpiod libcamera-apps \
-  alsa-utils htop git
+  alsa-utils htop git python3-venv
 ```
+
+> **`pipewire-alsa` is not optional, and an earlier draft of this list
+> omitted it.** Without it there is no ALSA `default` PCM routed through
+> PipeWire: `sounddevice` enumerates only the raw USB device (`hw:2,0`)
+> and every stream at the project's 22050 Hz dies with
+> `Invalid sample rate [PaErrorCode -9997]`, because the USB codec
+> accepts only its own native rates. The wearable is then totally
+> silent, and the error points at PortAudio rather than at a missing
+> package — the same class of fault as the lingering one, found a
+> different way.
+>
+> Measured on the 2026-10-10 rebuild: before installing it PortAudio
+> listed **one** device, after it listed **four** (`hw:2,0`, `pipewire`,
+> `pulse`, `default`) and 22050 Hz opened first try.
 
 Sources: `requirements-pi.txt` (picamera2, portaudio, sndfile,
 tesseract), `docs/graphhopper.md` and `docs/photon.md` (Java, zstd),

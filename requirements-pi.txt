@@ -16,6 +16,16 @@ lgpio>=0.2
 # sounddevice + soundfile (in requirements.txt) wrap system C libraries.
 # The Python packages install fine via pip, but the underlying C libraries
 # must be present:  sudo apt install -y libportaudio2 libsndfile1
+#
+# `pipewire-alsa` is required too, and its absence is not obvious from
+# the error. Without it ALSA has no `default` PCM routed through
+# PipeWire, so PortAudio enumerates only the raw `hw:2,0` USB device and
+# opening a stream at the project's 22050 Hz fails with
+# `Invalid sample rate [PaErrorCode -9997]` — the USB codec only accepts
+# its own native rates. With the bridge installed, PipeWire resamples
+# and 22050 Hz opens normally. Install:
+#
+#     sudo apt install -y pipewire-alsa libasound2-plugins
 
 # YOLOv8 object detection.
 #
@@ -35,7 +45,16 @@ ultralytics>=8.0
 #
 # The weights are downloaded separately (see docs/voice.md) and loaded from
 # a local directory, so nothing here reaches the network at runtime.
-transformers>=4.33
+#
+# Capped below 5.0. transformers 5.x removes `VitsModel` from the public
+# API — `from transformers import VitsModel` raises
+# `ModuleNotFoundError: Could not import module 'VitsModel'`, which takes
+# Tagalog speech with it. The same release moves `PreTrainedModel`, which
+# breaks sentence-transformers' import of it and so takes the NLU fast
+# path too. Found on the 2026-10-10 card rebuild: a clean install
+# resolved to 5.19.0 and both model loads failed while every unit test
+# still passed, because the tests use mocks and never load real weights.
+transformers>=4.33,<5
 
 # Semantic fast path for intent classification — `intfloat/multilingual-e5-small`
 # encoded via sentence-transformers. See intents/embeddings.py and
@@ -49,7 +68,14 @@ transformers>=4.33
 # into models/embeddings/ and loaded from there by path — the runtime
 # never resolves the repo id, so it starts the same with or without a
 # network.
-sentence-transformers>=3.0
+#
+# Capped below 6.0 for the same reason, from the other direction:
+# sentence-transformers 6.x *requires* `transformers>=5.0.0`, so leaving
+# it uncapped drags transformers 5.x back in and re-breaks VitsModel. The
+# two caps are one decision — change them together or not at all.
+# Verified working pair on the Pi: transformers 4.57.6 +
+# sentence-transformers 5.7.0.
+sentence-transformers>=3.0,<6
 
 # Tesseract OCR — printed-text reader for the `vision.read` intent.
 # The binary + language packs come from apt:
