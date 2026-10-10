@@ -483,25 +483,39 @@ sudo chmod 440 /etc/sudoers.d/indepensense-poweroff
 sudo visudo -c                      # must report "parsed OK"
 ```
 
-**Lingering is not optional, and its failure mode is silent.**
-`indepensense.service` runs with `XDG_RUNTIME_DIR=/run/user/1000`, and
-that directory only exists while user 1000 has a session. Without
-lingering, a service that starts at boot — before anyone logs in — finds
-no runtime dir, cannot reach PipeWire, and **the wearable comes up
-completely mute** while every unit reports active. It was enabled on the
-old card (`/var/lib/systemd/linger/cknrf`, dated 2026-06-05) and the
-runbook previously failed to mention it.
+**Lingering matters, and its failure mode is silent — but check before
+you fix.** `indepensense.service` runs with
+`XDG_RUNTIME_DIR=/run/user/1000`, and that directory only exists while
+user 1000 has a session. Without lingering, a service starting at boot
+— before anyone logs in — finds no runtime dir, cannot reach PipeWire,
+and **the wearable comes up completely mute** while every unit reports
+active.
 
-The poweroff rule was also live on the old card
-(`/etc/sudoers.d/indepensense-poweroff`); without it the voice shutdown
-command answers "shutdown failed".
+In practice **Raspberry Pi OS Trixie already enables it** for the first
+user: `/var/lib/systemd/linger/cknrf` was present on the old card and
+was present on the new card at first boot, before anything was
+installed. So the command above is a *verification*, not a repair:
 
-> The old card additionally carried `/etc/sudoers.d/cknrf-nopasswd`
-> granting `cknrf ALL=(ALL:ALL) NOPASSWD: ALL` — blanket passwordless
-> sudo. That is far broader than the wearable needs and is almost
-> certainly a convenience left over from setup. The narrow poweroff rule
-> above is the only one the runtime actually requires. Recreate the
-> blanket rule only if you want it; it is not a dependency.
+```bash
+loginctl show-user cknrf -p Linger     # want: Linger=yes
+```
+
+It is kept in the sequence because the consequence of it being absent is
+so hard to diagnose from the symptom — a silent device with a green
+`systemctl status` sends you looking at the audio stack, which is fine.
+
+The poweroff rule is the one genuinely missing on a fresh image. It was
+live on the old card (`/etc/sudoers.d/indepensense-poweroff`); without
+it the voice shutdown command answers "shutdown failed".
+
+> **Passwordless sudo is stock, not a leftover.** An earlier draft here
+> guessed that the old card's `/etc/sudoers.d/cknrf-nopasswd` was a
+> convenience someone added. It is not: the Imager provisions it via
+> cloud-init, and the new card came up with
+> `/etc/sudoers.d/90-cloud-init-users` containing the identical
+> `cknrf ALL=(ALL) NOPASSWD:ALL`. Nothing to recreate, and nothing to
+> be alarmed about — it is the standard Raspberry Pi OS posture for the
+> first user.
 
 Reboot. Then confirm the old card's group set (`ollama` is added later
 by the Ollama installer):
@@ -803,13 +817,26 @@ installed, and the WirePlumber drop-in is in place.
 Run in order. Each line should produce the stated result before you
 consider erasing the old card.
 
-**Card is genuine**
+**Card is genuine — measured 2026-10-10, it is.**
 
 ```bash
 cat /sys/block/mmcblk0/device/name     # expect a real SanDisk PNM, not 'asdfg'
 cat /sys/block/mmcblk0/device/manfid   # expect 0x000003
 sudo tune2fs -l /dev/mmcblk0p2 | grep 'Filesystem state'   # expect 'clean'
 ```
+
+Every CID field that was wrong on the counterfeit is right on the
+replacement — this is what §1's table looks like when the card is real:
+
+| CID field | Old (counterfeit) | New (SanDisk Extreme Pro 64 GB) |
+|---|---|---|
+| product name | `asdfg` | **`SR64G`** |
+| manufacturer | `0x000005` | **`0x000003`** (SanDisk) |
+| OEM | `0x000c` | **`0x5344`** (ASCII "SD") |
+| serial | `0x00000012` | **`0x59a9800e`** |
+| date | 05/2025 | 02/2026 |
+| capacity | claimed 250 GiB | **59.5 GiB** — matches the label |
+| filesystem state | `clean with errors` | **`clean`** |
 
 **Capacity test — run it on the EMPTY card, before setup.**
 
@@ -836,15 +863,29 @@ Takes a while on 58 GiB, and is worth it exactly once. A second
 counterfeit presents identically to the first, and you would find out at
 the demo.
 
-**Throughput — re-measure, do not assume**
+**Throughput — measured 2026-10-10**
+
+`hdparm` is not installed on a stock Trixie image; `dd` with `iflag=direct`
+bypasses the page cache and needs nothing extra:
 
 ```bash
-sudo hdparm -t --direct /dev/mmcblk0
-# old card: ~24 MB/s. An Extreme Pro should read 80-90 MB/s on a Pi 5.
+sudo dd if=/dev/mmcblk0 of=/dev/null bs=1M count=2000 iflag=direct
 ```
 
-Record this. It is the number that justifies revisiting the boot-ordering
-measurements in `deploy/systemd/README.md`.
+| | Sequential read |
+|---|---|
+| Old card (counterfeit) | **24 MB/s** |
+| New card (Extreme Pro) | **89.5 MB/s** |
+
+**3.7× faster.** This is the number that forces a revisit of the
+boot-ordering work: the ordering in `deploy/systemd/` was justified by a
+measurement that *one other process streaming from the card turned a 36 s
+Whisper load into 103 s*, on a card delivering a quarter of this
+bandwidth. The ordering may still help, but the magnitude will not be
+what was written down. **Re-run the boot timings before quoting any of
+those figures in the thesis** — and report the change, because "the
+I/O contention we engineered around was substantially an artefact of a
+counterfeit card" is a finding, not an embarrassment.
 
 **Hardware present**
 
