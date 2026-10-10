@@ -1,14 +1,15 @@
 """Unit tests for obstacle detection and continuous vibration feedback in `app.py`.
 
-With aggressive dual-parameter feedback, obstacles map to both frequency AND intensity
-(PWM duty cycle). This tests that distance smoothly maps to both vibration frequency
-and strength, with compound feedback: faster AND stronger as obstacles approach.
+With very aggressive dual-parameter feedback, obstacles map to both frequency AND
+intensity (PWM duty cycle) with all 3 motors active at all distances. This tests
+that distance smoothly maps to both vibration frequency and strength, with compound
+feedback: faster AND stronger as obstacles approach.
 
-Aggressive curve:
-  150 cm:   2 Hz @  30% intensity
-  100 cm:   6 Hz @  60% intensity
-   50 cm:  10 Hz @  90% intensity
-   20 cm:  15 Hz @ 100% intensity
+Very aggressive curve (starting strong at 150cm):
+  150 cm:   2 Hz @  30% intensity (noticeable start, all 3 motors)
+  100 cm:   6 Hz @  60% intensity (strong)
+   50 cm:  10 Hz @  90% intensity (very strong)
+   20 cm:  15 Hz @ 100% intensity (max speed + strength)
 
 Tests build a bare `MockApp` and assign only the devices each one needs.
 """
@@ -53,8 +54,8 @@ def app():
     # Beyond detection: silent
     (OBSTACLE_DETECTION_START_CM + 10, 0.0, 0.0, 0.0, 0.0),
     (OBSTACLE_DETECTION_START_CM,      0.0, 0.0, 0.0, 0.0),
-    # Just inside detection: ramping up (150→100cm: 0→6Hz, 0%→60%)
-    (140.0,                            1.0, 1.5, 0.10, 0.15),
+    # Just inside detection: strong start (150→100cm: 2→6Hz, 30%→60%)
+    (140.0,                            2.8, 3.2, 0.35, 0.40),
     # Mid-range: ramping harder (100→50cm: 6→10Hz, 60%→90%)
     (100.0,                            5.8, 6.2, 0.55, 0.65),
     # Close: strong feedback (50→20cm: 10→15Hz, 90%→100%)

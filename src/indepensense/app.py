@@ -483,31 +483,33 @@ def _obstacle_tier_for(
 def _obstacle_feedback(distance_cm: float) -> tuple[float, float]:
     """Proximity-rhythm feedback: frequency + intensity for a distance.
 
-    Returns (frequency_hz, duty_cycle_0_to_1) with aggressive ramping:
+    Returns (frequency_hz, duty_cycle_0_to_1) with very aggressive ramping:
     - Both frequency and intensity increase as obstacles approach
     - Creates compound feedback: faster AND stronger as you get closer
+    - Starts noticeable at 150cm (uses all 3 motors at all distances)
 
-    Aggressive curve through key points:
-      150 cm:   0 Hz  @  0% intensity (silent, at detection start)
-      100 cm:   6 Hz  @ 60% intensity (noticeable)
-       50 cm:  10 Hz  @ 90% intensity (strong)
+    Very aggressive curve through key points:
+      150 cm:   2 Hz  @ 30% intensity (noticeable start, all 3 motors)
+      100 cm:   6 Hz  @ 60% intensity (strong)
+       50 cm:  10 Hz  @ 90% intensity (very strong)
        20 cm:  15 Hz  @ 100% intensity (max speed + strength)
        <20 cm: 15 Hz  @ 100% intensity (clamped)
 
     Linear interpolation between key points. Duty cycle controls vibration
     intensity via PWM: 60% duty = motor on 60% of pulse period.
+    All distances use all 3 motors for maximum perceptibility.
     """
     if distance_cm >= OBSTACLE_DETECTION_START_CM:
         return (0.0, 0.0)
     if distance_cm <= 20.0:
         return (15.0, 1.0)
 
-    # Linear interpolation through three segments
+    # Linear interpolation through three segments, starting at 2 Hz @ 30%
     if distance_cm >= 100.0:
-        # 150→100 cm: 0→6 Hz, 0%→60% intensity (span: 50 cm)
+        # 150→100 cm: 2→6 Hz, 30%→60% intensity (span: 50 cm)
         t = (OBSTACLE_DETECTION_START_CM - distance_cm) / 50.0  # 0 to 1
-        hz = 6.0 * t
-        duty = 0.6 * t
+        hz = 2.0 + 4.0 * t
+        duty = 0.3 + 0.3 * t
         return (hz, duty)
     elif distance_cm >= 50.0:
         # 100→50 cm: 6→10 Hz, 60%→90% intensity (span: 50 cm)
@@ -2359,7 +2361,7 @@ The comparisons are inclusive, so a threshold names the percentage
         self._rhythm_last_pulse = now
         threading.Thread(
             target=self._play_rhythm_pulse,
-            args=(distance < OBSTACLE_DANGER_CM, duty_cycle),
+            args=(True, duty_cycle),  # Always use all 3 motors for max perceptibility
             name="obstacle-rhythm",
             daemon=True,
         ).start()
