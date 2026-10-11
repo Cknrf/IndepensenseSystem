@@ -1272,7 +1272,30 @@ NLU_WARMUP_TIMEOUT_S = 180.0 if NLU_LARGE_MODEL else 90.0
 # command, competing with the 100 Hz main loop that runs fall detection
 # and obstacle polling. A cloud call leaves the Pi idle while it waits,
 # so the safety loop keeps its timing. See architecture decision #1.
-NLU_CLOUD_ENABLED = False
+# Measured 2026-10-12 with `llm_probe --cloud --modem`, all 226 cases
+# through the same scorer as the local model, over the SIM7600:
+#
+#     engine                        combined   english  tagalog  adversarial
+#     local Qwen 3 1.7B                82.3%     88.8%    85.1%      66.7%
+#     cloud, shared prompt             92.5%     89.8%    93.2%      96.3%
+#     cloud, nlu_system_cloud.md       97.8%     98.0%    97.3%      98.1%
+#
+# +15.5 points over local overall, and +31.4 on the adversarial group —
+# which is where a misclassification is dangerous rather than merely
+# annoying, so that is the column that justifies the dependency.
+#
+# The middle row is why the prompt is split rather than shared: the same
+# model gained 5.3 points from nothing but being told to stop deferring.
+#
+# Latency on that run: 0.73 s average, 1.55 s worst, 0 of 226 over the
+# 2.5 s deadline, prompt cache 97.1%. Measured over cellular, so these
+# are field numbers rather than bench ones.
+#
+# Caveat for the write-up: 63 of the 226 cases appear verbatim in the
+# prompt's examples, so the absolute figures are optimistic by an
+# unmeasured amount. Both prompts carry the same 63, so the *comparison*
+# above is sound even though the absolutes are soft.
+NLU_CLOUD_ENABLED = True
 # Pinned, not `mistral-small-latest`. The alias resolves to this today,
 # but it moves — and a thesis that quotes an accuracy figure needs the
 # model that produced it to still exist. Same reasoning as the local
