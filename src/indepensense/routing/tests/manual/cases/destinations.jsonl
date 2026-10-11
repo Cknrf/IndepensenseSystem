@@ -1,0 +1,119 @@
+// Destinations for `transcript_probe`, with the ways a transcript of each
+// one can come out wrong.
+//
+// READ THIS BEFORE TRUSTING A NUMBER FROM IT.
+//
+// The `heard` entries below are SEEDED BY HAND — plausible confusions,
+// not recordings. Exactly one of them is observed fact: "Jalebi" for
+// Jollibee, which `config.WHISPER_INITIAL_PROMPTS` exists to correct.
+// The rest are guesses at what a decoder might do, and a guess scored to
+// one decimal place is still a guess.
+//
+// Replace them with real transcripts as you collect them. `heard` is a
+// list precisely so a real one can be appended next to the invented one
+// and the two compared. The honest way to fill it: record yourself
+// saying each destination on the Pi, run Whisper over the clips, and
+// paste what comes out — mistakes included, verbatim, with no tidying.
+//
+// What a misheard place name actually looks like
+// ----------------------------------------------
+//
+// Whisper has no character-level fallback. It cannot spell a word it was
+// never trained on, so an out-of-vocabulary name is not emitted as a
+// near-miss spelling — it is emitted as whatever sequence of words the
+// decoder DOES know that best fits the audio. The error types below are
+// in rough order of how much damage they do to `name_match_score`, which
+// compares whole tokens:
+//
+//   substitution   the name becomes a different real word
+//                  Bulacnin -> "Bull Acne", Marawoy -> "Marrow Way"
+//   boundary       one word is split, or two are joined
+//                  Inosloban -> "In Oslo Ban", Lipa City Hall -> "Lipa Cityhall"
+//   initials       an initialled street has no stable spoken form at all
+//                  B. Morada -> "Be Morada" / "Bee Morada" / "B Morada"
+//   spelling       a near-miss on a name the decoder half-knows
+//                  Jollibee -> "Jollybee"
+//
+// Only the last one is the ordinary idea of a typo, and it is the least
+// of the four. A substitution shares NO tokens with the true name, so
+// the name signal does not degrade — it disappears, every candidate ties
+// at 0.00, and ranking silently becomes a pure distance sort. That is
+// the mechanism this probe is pointed at.
+//
+// Fields
+//   group    chain | local | street | barangay | category — reported
+//            separately, ordered by how much of the name Whisper's
+//            vocabulary already holds
+//   place    the canonical spelling. Also the CONTROL: the probe always
+//            tests this string too, and the gap between it and `heard` is
+//            the whole measurement. Do NOT repeat it inside `heard` —
+//            the loader rejects that, because it counts the control twice
+//   origin   "lat,lon" the user is standing at
+//   nearest  mirrors the NLU's `nearest` parameter — ranking ignores the
+//            name entirely when true
+//   heard    misheard forms only
+//   truth    OPTIONAL "lat,lon". Only needed when geocoding `place`
+//            itself lands somewhere wrong — see the probe's docstring
+//
+// Origins are in Lipa City, Batangas, the same fix used throughout the
+// repo's routing tests. These places must exist in YOUR Photon extract:
+// a case whose control fails is reported as unusable and not scored, so
+// a wrong guess here costs a line of output, not a wrong result.
+
+// --- national chains -------------------------------------------------------
+// In Whisper's vocabulary, and `WHISPER_INITIAL_PROMPTS` backstops the
+// `tiny` English model where it is not. The easy tier, and the one that
+// says whether anything is wrong upstream of spelling. Errors here are
+// mild: spelling and boundary, rarely substitution.
+{"group":"chain","place":"Jollibee","origin":"13.937387,121.118698","nearest":true,"heard":["Jalebi","Jolly Bee","Jollybee","Jelly Bee"]}
+{"group":"chain","place":"Mang Inasal","origin":"13.937387,121.118698","nearest":true,"heard":["Mang in a sal","Mongin Asal","Man Enistle","Mangin Hassle"]}
+{"group":"chain","place":"Chowking","origin":"13.937387,121.118698","nearest":true,"heard":["Chow King","Chalking","Shaolin King"]}
+{"group":"chain","place":"Mercury Drug","origin":"13.937387,121.118698","nearest":true,"heard":["Mercury Drugs","Mercury Drag","Mercurio Drug"]}
+{"group":"chain","place":"7-Eleven","origin":"13.937387,121.118698","nearest":true,"heard":["Seven Eleven","711","Seven Levin"]}
+{"group":"chain","place":"SM City Lipa","origin":"13.937387,121.118698","nearest":false,"heard":["SM Lipa","Essem Lipa","SM Leper","Asem Lipa"]}
+{"group":"chain","place":"Puregold","origin":"13.937387,121.118698","nearest":true,"heard":["Pure Gold","Pure Goal","Pyur Gold"]}
+
+// --- named local landmarks -------------------------------------------------
+// Mostly English and Spanish words the decoder knows, assembled into a
+// name it does not. Expect boundary errors and the odd substitution on
+// the one Tagalog or Spanish token.
+{"group":"local","place":"Lipa City Hall","origin":"13.937387,121.118698","nearest":false,"heard":["Lipa Cityhall","Leper City Hall","Lipa City Hole","Lee Pa City Hall"]}
+{"group":"local","place":"San Sebastian Cathedral","origin":"13.937387,121.118698","nearest":false,"heard":["Sansebastian Cathedral","San Sebastien Cathedral","Sun Sebastian Cathedral"]}
+{"group":"local","place":"Batangas State University","origin":"13.937387,121.118698","nearest":false,"heard":["Batanga State University","Bat Angus State University","Batangas State Universe","Batangas Estate University"]}
+{"group":"local","place":"Lipa City Public Market","origin":"13.937387,121.118698","nearest":false,"heard":["Lipa Public Market","Leepa City Public Market","Lipa City Palengke","Lee Park City Public Market"]}
+
+// --- streets ---------------------------------------------------------------
+// Filipino street names are overwhelmingly initialled surnames, and an
+// initial has no stable spoken form: "B." is said "bee" and written "B",
+// "B.", "Be" or "Bee" depending on nothing the device controls. The
+// surname behind it is usually out of vocabulary as well, so these carry
+// two independent errors in one short name.
+{"group":"street","place":"B. Morada Avenue","origin":"13.937387,121.118698","nearest":false,"heard":["Be Morada Avenue","Bee Morada Avenue","B Morada Ave","Be More Rada Avenue"]}
+{"group":"street","place":"P. Torres Street","origin":"13.937387,121.118698","nearest":false,"heard":["P Torres Street","Pee Torres Street","Petorres Street","Pea Taurus Street"]}
+{"group":"street","place":"C.M. Recto Avenue","origin":"13.937387,121.118698","nearest":false,"heard":["CM Recto Avenue","See Em Recto Avenue","CM Rector Avenue","Seam Wrecked Oh Avenue"]}
+{"group":"street","place":"J.P. Laurel Highway","origin":"13.937387,121.118698","nearest":false,"heard":["JP Laurel Highway","Jay Pee Laurel Highway","Jaypee Lorel Highway","J P Laural Highway"]}
+{"group":"street","place":"Gen. Luna Street","origin":"13.937387,121.118698","nearest":false,"heard":["Gen Luna Street","Jen Luna Street","General Una Street","Gentle Una Street"]}
+
+// --- barangays -------------------------------------------------------------
+// The hard tier, and the reason this probe exists. Tagalog toponyms are
+// out of vocabulary for an English model and thin even in the Tagalog
+// one, so the decoder reaches for English words that sound similar. The
+// results share no tokens at all with the true name — which is precisely
+// the case `name_match_score` scores at 0.00.
+{"group":"barangay","place":"Bulacnin","origin":"13.937387,121.118698","nearest":false,"heard":["Bull Acnin","Bull Acne","Boolak Nin","Bulaknin"]}
+{"group":"barangay","place":"Marawoy","origin":"13.937387,121.118698","nearest":false,"heard":["Mara Woy","Marrow Way","Mar Away","Maraguay"]}
+{"group":"barangay","place":"Inosloban","origin":"13.937387,121.118698","nearest":false,"heard":["In Oslo Ban","Inos Loban","Enos Loban","Enoch Sloban"]}
+{"group":"barangay","place":"Sabang","origin":"13.937387,121.118698","nearest":false,"heard":["Sabong","Saw Bang","Sa Bang","Suh Bong"]}
+{"group":"barangay","place":"Bugtong na Pulo","origin":"13.937387,121.118698","nearest":false,"heard":["Bug Tong Na Pulo","Bugtong Napulo","Book Tong Na Pulo","Bug Tongue Na Polo"]}
+{"group":"barangay","place":"Mataas na Lupa","origin":"13.937387,121.118698","nearest":false,"heard":["Matas Na Lupa","Mataas Nalupa","Mata As Na Lupa","My Toss Na Lupa"]}
+{"group":"barangay","place":"Pinagtongulan","origin":"13.937387,121.118698","nearest":false,"heard":["Pinag Tongulan","Pina Tongulan","Pinang Tongulan","Peenag Tongue Yulan"]}
+{"group":"barangay","place":"Tangob","origin":"13.937387,121.118698","nearest":false,"heard":["Tango B","Tangub","Tan Gob","Tango Bee"]}
+
+// --- category queries ------------------------------------------------------
+// The control group, and expected to be immune: these are ordinary words
+// the decoder gets right, and `rank_candidates` ignores the name entirely
+// when `nearest` is true. If this tier degrades, the problem is not
+// spelling and the rest of the probe is measuring the wrong thing.
+{"group":"category","place":"hospital","origin":"13.937387,121.118698","nearest":true,"heard":["ospital","hospitals"]}
+{"group":"category","place":"pharmacy","origin":"13.937387,121.118698","nearest":true,"heard":["parmacy","botika"]}
+{"group":"category","place":"church","origin":"13.937387,121.118698","nearest":true,"heard":["simbahan","churches"]}
