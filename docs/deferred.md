@@ -63,6 +63,78 @@ that it needs its own evaluation before it ships.
 
 ## Voice & latency
 
+### Keep the USB DAC awake so short cues survive — cause found, fix not built
+**Status:** parked · **Raised:** 2026-10-11
+
+The four non-speech cues lose their opening and are heard as a tick, or not at
+all, whenever the device has been quiet for a few seconds. Speech is unaffected.
+This is the fault `docs/audio-portaudio.md` has carried as an open problem since
+October; **the cause is now measured**, and the fix is understood but not
+implemented.
+
+**The cause.** The bone-conduction headset's USB dongle mutes its own DAC when
+the signal goes quiet, and takes 0.7–1.0 s to unmute — longer than any cue this
+system produces. Measured by feeding continuous dither at falling levels and
+playing the real stop cue under each:
+
+| dither | level | cue | hiss |
+|---|---|---|---|
+| `1e-4` | −80 dBFS | **clipped** | inaudible |
+| `2e-4` | −74 dBFS | **complete** | **inaudible** |
+| `3e-4` | −70 dBFS | complete | audible |
+| `1e-3` | −60 dBFS | complete | audible |
+
+So the dongle's squelch threshold sits between **−80 and −74 dBFS**, and the
+usable window is one step wide.
+
+**What this settles.** The open contradiction in `docs/audio-portaudio.md` §7
+dissolves: adjacency of `Pa_Initialize` was a correlation, never the mechanism.
+Four candidate causes were eliminated by measurement on 2026-10-11 — PipeWire
+suspension (0 suspensions in 22 s), the `pipewire-alsa` bridge (all four
+PortAudio device paths played a 0.45 s sound complete), the PortAudio re-init
+failing (traced: `reinit=True`, `gap=0.0 ms`, `streams=0`, every cue still
+clipped), and the headset amplifier as a *mechanical* limit (a louder dither
+fixes it, so it is electronic muting, not transducer attack). A `pw-record`
+capture of the sink monitor shows the complete cue reaching the ALSA device, so
+nothing above ALSA is implicated.
+
+It also explains why `1f955fb` — "hold the output device open with inaudible
+dither" — failed. It had the right diagnosis and chose `1e-4` precisely to stay
+inaudible, landing one step below the threshold. It was reverted four minutes
+later (`ae08b72`) for a segfault, so nobody discovered it was also too quiet.
+
+**Why it is parked rather than built.** The fix is a long-lived thread writing
+dither at `2e-4` for the life of the process, which is a structural change under
+`CLAUDE.md`'s concurrency rule. Three things make it worth deciding deliberately
+rather than in passing:
+
+- It must register in `_portaudio_streams`, or the re-init calls `Pa_Terminate`
+  under a live stream — a C-level double free, and the likeliest explanation for
+  the original segfault.
+- Doing so disables the PortAudio re-init entirely, since the count never
+  reaches zero. That is defensible — the trace shows it buying nothing here, at
+  69–96 ms on the critical path of every sound — but it retires a workaround two
+  sessions were spent building, and deserves its own decision.
+- The window is one step wide and tuned to **this** dongle and **this**
+  listener. The amplitude belongs in `config.py` with the measured table above,
+  not as a literal, or the next person will quite reasonably lower it for
+  inaudibility and silently restore the bug.
+
+The alternative, if a background thread is unwanted, is to lengthen and raise
+the cues past the hardware's floor — cue-only, no new thread, but it grows a
+button acknowledgement from ~0.2 s to ~0.5 s and makes it less snappy.
+
+**Not a migration regression.** It reproduces identically on the old SD card,
+on the same headset, with byte-identical `voice/audio.py`. `aplay` is clipped
+too, which `docs/audio-portaudio.md` records as having worked — so that claim no
+longer holds on this hardware either.
+
+**Revisit when:** the cue vocabulary matters for a demo or user test, or a
+different headset is adopted — in which case re-run the dither sweep, because
+the threshold is a property of the dongle.
+
+---
+
 ### Re-test Tagalog on `base` with a steered `initial_prompt`
 **Status:** parked · **Raised:** 2026-09-12
 
