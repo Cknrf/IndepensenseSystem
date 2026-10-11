@@ -236,7 +236,6 @@ Tell me the time
 What is the time
 Could you tell me the time please
 May I know the time
-what time is it right now
 tell me the current time
 
 Anong oras na ba ngayon
@@ -244,7 +243,6 @@ Alam mo ba kung anong oras na
 Sabihin mo nga ang oras
 Pakisabi ang oras
 Anong oras na po
-anong oras na ba
 
 # Carrier phrases — see the note under `vision.describe`.
 Can you tell me the time right now
@@ -472,8 +470,6 @@ I cannot hear you
 Speak up
 A bit louder please
 Raise the sound
-can you make it louder
-make it louder
 
 Lakasan mo ang boses mo
 Hindi kita marinig
@@ -483,7 +479,6 @@ Konting lakas pa
 Palakasan mo ang tunog mo
 Lakasan mo ang tunog
 Dagdagan mo ang lakas ng tunog
-pakilakasan ang boses
 
 ## system.volume:down
 
