@@ -46,11 +46,30 @@ have to be compared on identical cases or the comparison is worthless.
     # or any other Mistral model, e.g. the cheap comparison
     python -m indepensense.intents.tests.manual.llm_probe ministral-8b-2512 --cloud
 
-Needs `INDEPENSENSE_CLOUD_API_KEY` in the environment. **Run it on the Pi
-over the modem** — `--interface wwan0`-equivalent routing is what the
-device actually has, and `wlan0` wins by route metric at a desk, so a
-latency number measured on the bench is not the field number. Accuracy is
-hardware-independent; latency is not.
+Needs `INDEPENSENSE_CLOUD_API_KEY` in the environment.
+
+Measuring the latency the device actually sees
+----------------------------------------------
+
+`--modem` sends every cloud request out of the SIM7600 instead of
+whatever the routing table prefers:
+
+    python -m indepensense.intents.tests.manual.llm_probe --cloud --modem
+    python -m indepensense.intents.tests.manual.llm_probe --cloud --modem=wwan1
+
+**Without it, a run at a desk measures WiFi.** Both interfaces hold a
+default route and `wlan0` wins on metric (600 against `wwan0`'s 700), so
+the bench number is not the field number — measured 577 ms against
+743 ms on 2026-10-12. Accuracy is route-independent; latency is not, so
+`--modem` matters for the second and not the first.
+
+The bind is `SO_BINDTODEVICE`, which works unprivileged here — no sudo,
+no `ip rule`, and nothing that could drop an SSH session the way
+re-prioritising the default route or disabling WiFi would. Source-address
+binding is *not* enough on its own: the route lookup for the destination
+still selects `wlan0`, and the kernel refuses the mismatched source with
+`EADDRNOTAVAIL`. The interface is named in the summary so a saved run
+records which path produced it.
 
 Cloud mode also reports prompt-cache effectiveness per query, since the
 cached fraction of the prefix is what makes the running cost tolerable.
@@ -108,12 +127,55 @@ PREFILL = not CLOUD and (
     "--prefill" in sys.argv or (not _ARGS and NLU_COMPACT_PREFILL)
 )
 
-# One session for the whole run, so the TLS handshake is paid once and the
-# per-query numbers are the warm ones the device sees. Measuring 226 cold
-# connections would add ~100-250 ms to every case and report a latency no
-# deployed code would ever pay — `MistralIntentParser` holds a session for
-# exactly this reason.
-_cloud_session = requests.Session() if CLOUD else None
+# `--modem` / `--modem=<iface>`: bind cloud requests to the cellular
+# interface. Default name matches the SIM7600 as ModemManager brings it
+# up; `ip -br addr` on the Pi shows the current one.
+_MODEM_ARG = next(
+    (a for a in sys.argv if a == "--modem" or a.startswith("--modem=")), None,
+)
+MODEM_IFACE = (
+    None if _MODEM_ARG is None
+    else (_MODEM_ARG.split("=", 1)[1] if "=" in _MODEM_ARG else "wwan0")
+)
+
+
+def _build_cloud_session():
+    """One session for the whole run, optionally pinned to the modem.
+
+    A single session so the TLS handshake is paid once and the per-query
+    numbers are the warm ones the device sees: 226 cold connections would
+    add ~100-250 ms to every case and report a latency no deployed code
+    would ever pay. `MistralIntentParser` holds a session for the same
+    reason.
+
+    `SO_BINDTODEVICE` rather than `source_address`, because binding the
+    source alone leaves the route lookup pointing at `wlan0` and the
+    kernel rejects the mismatch with `EADDRNOTAVAIL`.
+    """
+    session = requests.Session()
+    if MODEM_IFACE is None:
+        return session
+
+    import socket
+    from requests.adapters import HTTPAdapter
+    from urllib3.poolmanager import PoolManager
+
+    class _InterfaceAdapter(HTTPAdapter):
+        def init_poolmanager(self, connections, maxsize, block=False, **kw):
+            kw["socket_options"] = [(
+                socket.SOL_SOCKET,
+                socket.SO_BINDTODEVICE,
+                MODEM_IFACE.encode(),
+            )]
+            self.poolmanager = PoolManager(
+                num_pools=connections, maxsize=maxsize, block=block, **kw,
+            )
+
+    session.mount("https://", _InterfaceAdapter())
+    return session
+
+
+_cloud_session = _build_cloud_session() if CLOUD else None
 # Accumulated across the run and reported in the summary. The cached
 # fraction of the prefix is what decides whether this is affordable, so it
 # is measured rather than assumed.
@@ -552,6 +614,33 @@ def free_ram_mb() -> int:
 CLOUD_PROBE_TIMEOUT_S = 30.0
 
 
+def _egress_ip() -> str:
+    """The public address the run is actually leaving from.
+
+    Printed because `--modem` silently measuring WiFi is the failure this
+    whole flag exists to prevent, and a flag that is set but not working
+    looks exactly like one that is. Two different addresses across two
+    runs is the proof the bind took effect.
+    """
+    try:
+        return _cloud_session.get("https://api.ipify.org", timeout=15).text.strip()
+    except Exception as exc:   # noqa: BLE001 - diagnostic only
+        return f"unknown ({type(exc).__name__})"
+
+
+def _default_iface() -> str:
+    """Interface the kernel would pick for the provider, for the header."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["ip", "route", "get", "1.0.0.1"],
+            capture_output=True, text=True, timeout=3.0,
+        ).stdout.split()
+        return out[out.index("dev") + 1] if "dev" in out else "?"
+    except Exception:   # noqa: BLE001 - diagnostic only
+        return "?"
+
+
 def cloud_query(
     text: str,
     timeout_s: float = CLOUD_PROBE_TIMEOUT_S,
@@ -757,6 +846,14 @@ def main():
         print(f"Model:  {MODEL}  (cloud, JSON mode)")
         print(f"Prompt: {PROMPT_PATH} ({len(SYSTEM_PROMPT)} chars)")
         print(f"URL:    {CLOUD_LLM_URL}")
+        if MODEM_IFACE:
+            print(f"Route:  {MODEM_IFACE} (cellular) — egress {_egress_ip()}")
+        else:
+            print(
+                f"Route:  default ({_default_iface()}) — egress {_egress_ip()}\n"
+                f"  NOTE: not pinned to the modem. At a desk this measures WiFi,\n"
+                f"  which is ~170 ms faster than the field. Use --modem."
+            )
     else:
         print(f"Model:  {MODEL}  ({'compact-JSON prefill' if PREFILL else 'JSON mode'})")
         print(f"Prompt: {PROMPT_PATH} ({len(SYSTEM_PROMPT)} chars)")
@@ -853,7 +950,8 @@ def main():
     total = len(TEST_CASES)
     print()
     if CLOUD:
-        print(f"Summary for model: {MODEL} (cloud)")
+        route = f"{MODEM_IFACE}, cellular" if MODEM_IFACE else "default route"
+        print(f"Summary for model: {MODEL} (cloud via {route})")
     else:
         print(f"Summary for model: {MODEL} ({'compact-JSON prefill' if PREFILL else 'JSON mode'})")
     print(f"  Total queries:       {total}")
