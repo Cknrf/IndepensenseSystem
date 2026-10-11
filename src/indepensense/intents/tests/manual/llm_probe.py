@@ -32,14 +32,42 @@ Run from repo root:
 
 With no model named, the model and request style are whatever `config.py`
 selects, so a bare run measures exactly what the device runs.
+
+Cloud mode
+----------
+
+`--cloud` measures a Mistral model through the same test set and the same
+scoring, which is the entire point: the local baseline and the candidate
+have to be compared on identical cases or the comparison is worthless.
+
+    # the pinned config.NLU_CLOUD_MODEL
+    python -m indepensense.intents.tests.manual.llm_probe --cloud
+
+    # or any other Mistral model, e.g. the cheap comparison
+    python -m indepensense.intents.tests.manual.llm_probe ministral-8b-2512 --cloud
+
+Needs `INDEPENSENSE_CLOUD_API_KEY` in the environment. **Run it on the Pi
+over the modem** — `--interface wwan0`-equivalent routing is what the
+device actually has, and `wlan0` wins by route metric at a desk, so a
+latency number measured on the bench is not the field number. Accuracy is
+hardware-independent; latency is not.
+
+Cloud mode also reports prompt-cache effectiveness per query, since the
+cached fraction of the prefix is what makes the running cost tolerable.
 """
 import json
+import os
 import sys
 import time
 
 import requests
 
 from indepensense.config import (
+    CLOUD_LLM_API_KEY_ENV,
+    CLOUD_LLM_URL,
+    NLU_CLOUD_MODEL,
+    NLU_CLOUD_PROMPT_PATH,
+    NLU_CLOUD_TIMEOUT_S,
     NLU_COMPACT_PREFILL,
     NLU_MODEL,
     NLU_WARMUP_TIMEOUT_S,
@@ -71,10 +99,26 @@ DEFAULT_MODEL = NLU_MODEL
 COLD_QUERY_TIMEOUT_S = 300.0
 WARM_QUERY_TIMEOUT_S = 120.0
 _ARGS = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
-MODEL = _ARGS[0] if _ARGS else DEFAULT_MODEL
+CLOUD = "--cloud" in sys.argv
+MODEL = _ARGS[0] if _ARGS else (NLU_CLOUD_MODEL if CLOUD else DEFAULT_MODEL)
 # A named model is measured in JSON mode unless `--prefill` says otherwise;
-# the bare default follows config, like the device.
-PREFILL = "--prefill" in sys.argv or (not _ARGS and NLU_COMPACT_PREFILL)
+# the bare default follows config, like the device. Meaningless under
+# `--cloud`, where the request style is the provider's.
+PREFILL = not CLOUD and (
+    "--prefill" in sys.argv or (not _ARGS and NLU_COMPACT_PREFILL)
+)
+
+# One session for the whole run, so the TLS handshake is paid once and the
+# per-query numbers are the warm ones the device sees. Measuring 226 cold
+# connections would add ~100-250 ms to every case and report a latency no
+# deployed code would ever pay — `MistralIntentParser` holds a session for
+# exactly this reason.
+_cloud_session = requests.Session() if CLOUD else None
+# Accumulated across the run and reported in the summary. The cached
+# fraction of the prefix is what decides whether this is affordable, so it
+# is measured rather than assumed.
+_cloud_prompt_tokens = 0
+_cloud_cached_tokens = 0
 # Must match `intents/parser.py`'s `_COMPACT_PREFIX`.
 _COMPACT_PREFIX = '{"intent":"'
 
@@ -85,7 +129,12 @@ _COMPACT_PREFIX = '{"intent":"'
 # the rest of the run rather than forcing the user to pass a flag.
 _send_think = True
 
-PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
+# Each engine gets its own prompt — the cloud model needs the deferral
+# bias dialled down, the local one needs it. Reading the wrong file here
+# would measure a configuration the device never runs.
+PROMPT_PATH = NLU_CLOUD_PROMPT_PATH if CLOUD else (
+    PROJECT_ROOT / "prompts" / "nlu_system.md"
+)
 SYSTEM_PROMPT = PROMPT_PATH.read_text()
 
 
@@ -500,6 +549,80 @@ def free_ram_mb() -> int:
     return -1
 
 
+CLOUD_PROBE_TIMEOUT_S = 30.0
+
+
+def cloud_query(
+    text: str,
+    timeout_s: float = CLOUD_PROBE_TIMEOUT_S,
+) -> tuple[float, dict | None, str]:
+    """Send one transcript to Mistral. Same return shape as `query`.
+
+    Deliberately builds the request here rather than importing
+    `MistralIntentParser`: the probe measures the raw model against the
+    test set, and routing through the driver would also measure the
+    driver's normalisation, so a scoring bug and a model regression would
+    be indistinguishable. The payload is kept identical to `_payload`
+    there — two messages, system first, temperature 0, JSON mode — and if
+    the two ever drift, this probe stops predicting the device.
+
+    No timeout is enforced at the device's 2.5 s deadline. The probe
+    measures what the model *can* do; how much of that the runtime is
+    willing to wait for is a separate decision, and truncating here would
+    report a fallback as a wrong answer.
+    """
+    global _cloud_prompt_tokens, _cloud_cached_tokens
+
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": text},
+        ],
+        "max_tokens": 128,
+        "temperature": 0.0,
+        "response_format": {"type": "json_object"},
+    }
+
+    t0 = time.time()
+    response = _cloud_session.post(
+        CLOUD_LLM_URL,
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {os.environ[CLOUD_LLM_API_KEY_ENV]}",
+            "Content-Type": "application/json",
+        },
+        timeout=timeout_s,
+    )
+    elapsed = time.time() - t0
+
+    try:
+        body = response.json()
+    except ValueError:
+        return elapsed, None, response.text[:200]
+
+    if response.status_code != 200:
+        error = json.dumps(body.get("error") or body)
+        return elapsed, None, f"HTTP {response.status_code}: {error[:150]}"
+
+    usage = body.get("usage") or {}
+    _cloud_prompt_tokens += usage.get("prompt_tokens", 0)
+    _cloud_cached_tokens += (
+        (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+    )
+
+    try:
+        raw = body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        return elapsed, None, f"unexpected shape: {exc}"
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    return elapsed, parsed, raw
+
+
 def query(
     text: str,
     timeout_s: float = WARM_QUERY_TIMEOUT_S,
@@ -510,8 +633,17 @@ def query(
     (non-reasoning model), disables it for the remainder of the run and
     retries once. Without this the rejection would surface as an empty
     response on every case and look like a total accuracy collapse.
+
+    Under `--cloud` this hands straight over to `cloud_query`, so the
+    caller — and therefore the scoring and reporting below — cannot tell
+    the two engines apart. That is the point: an accuracy comparison is
+    only meaningful if both sides ran the same cases through the same
+    scorer.
     """
     global _send_think
+
+    if CLOUD:
+        return cloud_query(text)
 
     if PREFILL:
         url = OLLAMA_CHAT_URL
@@ -612,30 +744,52 @@ def score(
 
 
 def main():
-    print(f"Model:  {MODEL}  ({'compact-JSON prefill' if PREFILL else 'JSON mode'})")
-    print(f"Prompt: {PROMPT_PATH} ({len(SYSTEM_PROMPT)} chars)")
-    print(f"Free RAM before loading model: {free_ram_mb()} MB")
+    if CLOUD and not os.environ.get(CLOUD_LLM_API_KEY_ENV):
+        # Fail before 226 queries rather than on the first one, and name
+        # the variable — the key lives in `.env` on the Pi, which a
+        # non-interactive shell does not source.
+        sys.exit(
+            f"{CLOUD_LLM_API_KEY_ENV} is not set. On the Pi: "
+            f"`set -a && . ./.env && set +a` first."
+        )
+
+    if CLOUD:
+        print(f"Model:  {MODEL}  (cloud, JSON mode)")
+        print(f"Prompt: {PROMPT_PATH} ({len(SYSTEM_PROMPT)} chars)")
+        print(f"URL:    {CLOUD_LLM_URL}")
+    else:
+        print(f"Model:  {MODEL}  ({'compact-JSON prefill' if PREFILL else 'JSON mode'})")
+        print(f"Prompt: {PROMPT_PATH} ({len(SYSTEM_PROMPT)} chars)")
+        print(f"Free RAM before loading model: {free_ram_mb()} MB")
     print("Warming up with a throwaway query...")
 
     cold_elapsed, _, _ = query("Hello", timeout_s=COLD_QUERY_TIMEOUT_S)
     print(f"Cold query took {cold_elapsed:.2f}s")
-    print(f"Free RAM after model loaded: {free_ram_mb()} MB")
-    if cold_elapsed > NLU_WARMUP_TIMEOUT_S:
-        # A cold query slower than the app's warmup budget means its startup
-        # warmup gives up, so the first real voice command after boot pays
-        # this cost instead.
-        print(
-            f"  NOTE: this exceeds NLU_WARMUP_TIMEOUT_S "
-            f"({NLU_WARMUP_TIMEOUT_S:.0f}s), so app.py's startup warmup would "
-            f"time out and the first voice command would pay the prefill."
-        )
-    if MODEL != NLU_MODEL:
-        # The budget follows `config.NLU_LARGE_MODEL`, which is set for a
-        # different model than the one measured here.
-        print(
-            f"  (config is set for {NLU_MODEL}; flipping NLU_LARGE_MODEL "
-            f"changes the warmup budget along with the model.)"
-        )
+    if CLOUD:
+        # The cold call pays TCP + TLS and, if the provider's prefix cache
+        # has expired, a full prefill. Both are startup costs the device
+        # pays once via `MistralIntentParser.warm_up`, which is why they
+        # are reported separately rather than folded into the per-query
+        # numbers below.
+        print("  (cold = TLS handshake + any uncached prefill; warmed once at startup)")
+    else:
+        print(f"Free RAM after model loaded: {free_ram_mb()} MB")
+        if cold_elapsed > NLU_WARMUP_TIMEOUT_S:
+            # A cold query slower than the app's warmup budget means its startup
+            # warmup gives up, so the first real voice command after boot pays
+            # this cost instead.
+            print(
+                f"  NOTE: this exceeds NLU_WARMUP_TIMEOUT_S "
+                f"({NLU_WARMUP_TIMEOUT_S:.0f}s), so app.py's startup warmup would "
+                f"time out and the first voice command would pay the prefill."
+            )
+        if MODEL != NLU_MODEL:
+            # The budget follows `config.NLU_LARGE_MODEL`, which is set for a
+            # different model than the one measured here.
+            print(
+                f"  (config is set for {NLU_MODEL}; flipping NLU_LARGE_MODEL "
+                f"changes the warmup budget along with the model.)"
+            )
     print()
 
     total_time = 0.0
@@ -647,8 +801,16 @@ def main():
     misses: list[tuple[str, str, str, dict, str]] = []   # (group, input, expected_intent, expected_slots, got)
     stats = {g: {"n": 0, "intent": 0, "combined": 0, "time": 0.0} for g in GROUPS}
 
+    # How many answers arrived too late for the runtime to use them. These
+    # are not wrong — the model answered — but the device would have
+    # abandoned the wait and fallen back to Ollama, so they bound how much
+    # of the measured accuracy is actually reachable in production.
+    over_deadline = 0
+
     for i, (group, text, expected_intent, expected_slots) in enumerate(TEST_CASES, 1):
         elapsed, parsed, raw = query(text)
+        if CLOUD and elapsed > NLU_CLOUD_TIMEOUT_S:
+            over_deadline += 1
         total_time += elapsed
         stats[group]["n"] += 1
         stats[group]["time"] += elapsed
@@ -690,7 +852,10 @@ def main():
 
     total = len(TEST_CASES)
     print()
-    print(f"Summary for model: {MODEL} ({'compact-JSON prefill' if PREFILL else 'JSON mode'})")
+    if CLOUD:
+        print(f"Summary for model: {MODEL} (cloud)")
+    else:
+        print(f"Summary for model: {MODEL} ({'compact-JSON prefill' if PREFILL else 'JSON mode'})")
     print(f"  Total queries:       {total}")
     print(f"  JSON parse failures: {parse_failures}")
     print(f"  Intent accuracy:     {intent_correct_count}/{total} "
@@ -704,8 +869,16 @@ def main():
     print(f"  Cold query time:     {cold_elapsed:.2f}s")
     print(f"  Total time (warm):   {total_time:.1f}s")
     print(f"  Avg per query:       {total_time / total:.2f}s")
-    print(f"  Free RAM at end:     {free_ram_mb()} MB")
-    print(f"  Thinking disabled:   {_send_think}")
+    if CLOUD:
+        print(f"  Over {NLU_CLOUD_TIMEOUT_S:.1f}s deadline:  {over_deadline}/{total} "
+              f"({100 * over_deadline / total:.1f}%) — would fall back to Ollama")
+        if _cloud_prompt_tokens:
+            print(f"  Prompt tokens:       {_cloud_prompt_tokens} total, "
+                  f"{_cloud_cached_tokens} cached "
+                  f"({100 * _cloud_cached_tokens / _cloud_prompt_tokens:.1f}%)")
+    else:
+        print(f"  Free RAM at end:     {free_ram_mb()} MB")
+        print(f"  Thinking disabled:   {_send_think}")
 
     print()
     print("Per-group breakdown (Tagalog is the priority language):")
