@@ -341,7 +341,12 @@ ENGLISH_CASES = [
     # Tagalog genitive is generalisation rather than lookup.
     ("What is the exact location of my sister's house",
      "place.locate", {"label": "my sister's house"}),
-    ("Where is the pharmacy I saved", "place.locate", {"label": "the pharmacy"}),
+    # No article: `geocode_probe` on 2026-10-12 showed "the pharmacy" makes
+    # Photon match the brand "The Generics Pharmacy" 7.1 km away and drop the
+    # nearest real pharmacy (2.6 km) out of the window entirely, while
+    # "pharmacy" finds it. The two navigation.start cases above already
+    # expected the bare noun; this was the outlier.
+    ("Where is the pharmacy I saved", "place.locate", {"label": "pharmacy"}),
     ("Say the names of the places I kept", "place.list", {}),
     ("Do you still remember my home",    "unknown", {}),
     ("Save this place as Grandma's house", "place.save", {"label": "Grandma's house"}),
