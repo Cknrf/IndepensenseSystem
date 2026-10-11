@@ -1,28 +1,57 @@
-"""Mistral implementation of `CloudAnswerer`.
+"""Mistral drivers: the `CloudAnswerer`, and the cloud `IntentParser`.
+
+Two classes, one provider, opposite jobs — and one file, because they
+share the endpoint, the auth, the session discipline and the error
+mapping. Splitting them would duplicate all four to separate forty lines.
+
+  - `MistralAnswerer` answers open questions the local model declined.
+  - `MistralIntentParser` classifies into the fixed intent set, as the
+    primary in front of `OllamaIntentParser`.
+
+**They have deliberately opposite conversation contracts, and that is the
+thing to keep straight when editing either.** The answerer replays one
+prior turn, because people ask follow-ups ("what about the second one").
+The parser replays *nothing*: intent classification must be independent
+per utterance, so that a previous "take me to Jollibee" cannot colour the
+next "stop", and so no context can contaminate an emergency phrasing.
+Each press of the button is a fresh classification. See
+`MistralIntentParser` for why the cache does not undermine this.
 
 Mistral's chat API is OpenAI-shaped: `POST /v1/chat/completions` with a
 bearer token, `{"model": ..., "messages": [...]}`, and the reply at
 `choices[0].message.content`.
 
-Latency, and why the EU hop is not the thing to worry about
------------------------------------------------------------
+Latency, and why the network is not the thing to worry about
+------------------------------------------------------------
 
-Mistral is EU-hosted, so round-trip from the Philippines is roughly
-250 ms against ~40 ms to Singapore. That sounds like a reason to pick a
-different provider; it isn't. Generation time dominates — a short answer
-takes 0.5-1 s to produce wherever you are — and this call already sits on
-top of a 4-6 s chain (Tagalog STT, local NLU, Piper). An extra 0.2 s of
-RTT is noise in that budget.
+Measured from the deployed Pi on 2026-10-12, over the SIM7600 rather
+than the bench WiFi (`curl --interface wwan0` — the modem is the
+metric-700 default and loses to `wlan0` at a desk, so anything measured
+without binding is not the field case):
+
+                              median    worst    TCP connect
+    wwan0 (SIM7600)           743 ms   1263 ms     35-50 ms
+    wlan0 (WiFi)              577 ms    978 ms     33-45 ms
+
+n=15 each, warm-connection equivalent (`total` minus `appconnect`, which
+is what the module-level `Session` below gives after the first call),
+with the real ~2,600-token NLU prompt.
+
+Two things that earlier guesswork got wrong. Round-trip to Mistral from
+the Philippines is ~40 ms, not the ~250 ms this docstring used to claim
+— the TCP connect times above measure it directly. And **the cellular
+link costs only ~170 ms over WiFi**, so the modem is not the constraint
+it was assumed to be. What dominates is prefill plus generation on their
+side, which is also where all the variance lives.
 
 The two things that *do* matter are handled here:
 
   - **`max_tokens` is capped low.** Generation time scales with output
     length, making this the single largest lever. It also keeps answers
     speakable, which is wanted regardless.
-  - **The HTTP connection is reused.** A cold TLS handshake costs about
-    three round trips before the request is even sent — ~0.75 s at this
-    distance. A module-level `Session` keeps the socket warm, so only the
-    first call after startup pays it.
+  - **The HTTP connection is reused.** TCP plus TLS measured 95-250 ms
+    before the request is even sent. A `Session` per instance keeps the
+    socket warm, so only the first call after startup pays it.
 
 Streaming is deliberately not used: Piper needs the complete text before
 it can synthesise anything, so there is nothing to overlap.
@@ -30,15 +59,22 @@ it can synthesise anything, so there is nothing to overlap.
 Tagalog
 -------
 
-Tagalog is a low-resource language for most providers and Mistral's
-quality there is unverified. Test it before trusting it. If answers come
-back poor, asking for English regardless is a defensible fallback — the
-wearable already speaks English well and a correct English answer beats a
-garbled Tagalog one.
+Tagalog is a low-resource language for most providers. For *answers* —
+free Tagalog prose — Mistral's quality remains unverified. Test it before
+trusting it. If answers come back poor, asking for English regardless is
+a defensible fallback: the wearable already speaks English well and a
+correct English answer beats a garbled Tagalog one.
+
+Classification is the easier task and has one data point: "dalhin mo ako
+sa Jollibee" came back as `navigation.start` with `location: "Jollibee"`
+and `nearest: false` on the first attempt. One case is not a result —
+`llm_probe` over the full prompt set is what settles it.
 """
 import sys
+from pathlib import Path
 
-from indepensense.intents.base import CloudAnswer
+from indepensense.intents.base import CloudAnswer, Intent, IntentResult
+from indepensense.intents.parser import parse_llm_response
 
 # Sent as the system message. Written for a device that speaks its output
 # aloud to a blind user, which drives every constraint here:
@@ -203,3 +239,176 @@ class MistralAnswerer:
             return CloudAnswer(text=None, reason="error")
 
         return CloudAnswer(text=text.strip(), reason="ok")
+
+
+# Matches `parser._MAX_OUTPUT_TOKENS`. A classification is a few dozen
+# tokens; this only exists so a model that starts rambling is cut off
+# rather than billed for and waited on.
+_MAX_OUTPUT_TOKENS = 128
+
+
+class MistralIntentParser:
+    """An `IntentParser` backed by Mistral, for use in front of Ollama.
+
+    Emits the same JSON contract as the local model and hands it to
+    `parse_llm_response`, so the failure taxonomy that `IntentResult` and
+    `cloud.py` depend on is defined in exactly one place. `source` is
+    `"cloud"`, which is what makes a wrong action in `journalctl`
+    attributable to the engine that produced it now that three can.
+
+    Stateless, and why the cache does not change that
+    -------------------------------------------------
+
+    Every request carries exactly two messages — the system prompt, then
+    this transcript. No history, ever. The reasoning is in the module
+    docstring; the enforcement is `_payload`, and a unit test asserts the
+    shape, because this is the sort of invariant that a well-meaning
+    "let's give it some context" edit erases silently.
+
+    Mistral caches the prompt prefix server-side: measured at 2,560 of
+    2,591 tokens on the first attempt, so most of the prefill is neither
+    recomputed nor billed at full rate. That is an arithmetic
+    optimisation, not a memory — the cached tensors for a fixed prefix are
+    identical to the ones a cold request would compute, and the part that
+    *varies* (the transcript) is the uncached remainder by construction.
+    So the calls are cached and independent at the same time. Nothing in
+    the prompt needs to ask for isolation, and asking would be worse than
+    useless: it would spend tuned prompt budget on a property the request
+    shape already guarantees, and a model cannot honour an instruction
+    about state it has no access to.
+
+    What that *does* impose is a stable prefix. Three rules follow:
+
+      - the system message stays first and stays byte-identical —
+        `prompt_path.read_text()`, never `.format()`;
+      - nothing variable is prepended (no timestamp, GPS or battery);
+      - the transcript goes last.
+
+    Note `MistralAnswerer` above interpolates the language into its own
+    system prompt, which splits its cache into one variant per language.
+    Acceptable there, and deliberately not done here: `nlu_system.md`
+    already covers both languages, so one prefix serves every utterance.
+
+    Never raises. Every failure becomes `failure="transport"`, which is
+    what tells `FallbackIntentParser` to try the local model — and,
+    equally important, what stops a failed request from reaching
+    `cloud.py` as if it were a genuine decline.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        prompt_path: Path,
+        url: str = _DEFAULT_URL,
+        timeout_s: float = 2.5,
+        max_tokens: int = _MAX_OUTPUT_TOKENS,
+    ):
+        if not api_key:
+            raise ValueError("MistralIntentParser requires an API key")
+        self._api_key = api_key
+        self._model = model
+        # Read once at construction, like `OllamaIntentParser`. Re-reading
+        # per call would let an edit mid-session change the cached prefix
+        # under the running device.
+        self._system_prompt = prompt_path.read_text()
+        self._url = url
+        self._timeout_s = timeout_s
+        self._max_tokens = max_tokens
+        self._session = None
+
+    def warm_up(self, timeout_s: float) -> bool:
+        """Pay the TLS handshake and populate the remote prefix cache.
+
+        The same idea as `OllamaIntentParser.warm_up` and for the same
+        reason — the first query should not be the one that pays for the
+        prefix — except that here it also covers the ~95-250 ms of TCP and
+        TLS. Built from `_payload` so the warmed prefix is byte-identical
+        to the one real queries reuse; a warmup that differed would warm
+        nothing. Failures are non-fatal: they resurface on the next real
+        query, where `parse` already handles them.
+        """
+        import requests  # lazy: keeps the module importable off-device
+
+        try:
+            response = self._post(self._payload("ok"), timeout_s)
+            response.raise_for_status()
+            return True
+        except (requests.RequestException, ValueError) as exc:
+            print(f"[mistral] NLU warmup failed: {exc}", file=sys.stderr)
+            return False
+
+    def parse(self, transcript: str) -> IntentResult:
+        import requests  # lazy: keeps the module importable off-device
+
+        try:
+            response = self._post(self._payload(transcript), self._timeout_s)
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"]
+        except (requests.RequestException, ValueError, KeyError, IndexError,
+                TypeError) as exc:
+            # Timeouts land here too — `Timeout` is a `RequestException` —
+            # which is the common case rather than the exceptional one:
+            # the deadline is set to fall back, not to signal a fault.
+            print(f"[mistral] NLU request failed: {exc}", file=sys.stderr)
+            return IntentResult(
+                intent=Intent.UNKNOWN,
+                parameters={},
+                raw_transcript=transcript,
+                raw_llm_response="",
+                failure="transport",
+                source="cloud",
+            )
+
+        return parse_llm_response(raw, transcript, source="cloud")
+
+    def close(self) -> None:
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+
+    # -------------------------------------------------------------- internals
+
+    def _payload(self, transcript: str) -> dict:
+        """The request body. Two messages, system first, transcript last.
+
+        The ordering is the cache contract, not a style choice — see the
+        class docstring.
+        """
+        return {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": self._system_prompt},
+                {"role": "user", "content": transcript},
+            ],
+            "max_tokens": self._max_tokens,
+            # Zero, unlike the answerer's 0.3. A classifier should return
+            # the same label for the same words every time; the variation
+            # that makes prose read better is only a source of
+            # irreproducibility here, and the thesis quotes these numbers.
+            "temperature": 0.0,
+            "response_format": {"type": "json_object"},
+        }
+
+    def _post(self, payload: dict, timeout_s: float):
+        return self._get_session().post(
+            self._url,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=timeout_s,
+        )
+
+    def _get_session(self):
+        """One `Session` per instance — see `MistralAnswerer._get_session`.
+
+        Not shared with the answerer: they are opened by different
+        factories and either may be absent, so a shared session would make
+        one class's lifetime depend on the other's.
+        """
+        if self._session is None:
+            import requests
+            self._session = requests.Session()
+        return self._session
