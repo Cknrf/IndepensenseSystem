@@ -210,10 +210,9 @@ Ipaalam mo sa tagabantay ko na kailangan ko ng tulong
 ## guardian.status_ok
 
 I'm fine
-I'm okay
+I'm safe
 Tell my guardian I'm safe
 Let my guardian know I'm fine
-Everything is okay
 I'm alright
 I'm doing well
 Tell them I'm safe now
@@ -227,7 +226,7 @@ Lahat ay okay
 Okay na ako
 Buti na ako
 Sabihin mo na kami ay safe
-Okay lang
+Maayos na ako
 
 ## system.time
 
@@ -237,12 +236,15 @@ Tell me the time
 What is the time
 Could you tell me the time please
 May I know the time
+what time is it right now
+tell me the current time
 
 Anong oras na ba ngayon
 Alam mo ba kung anong oras na
 Sabihin mo nga ang oras
 Pakisabi ang oras
 Anong oras na po
+anong oras na ba
 
 # Carrier phrases — see the note under `vision.describe`.
 Can you tell me the time right now
@@ -417,6 +419,11 @@ Check the battery for me
 Battery status
 How much charge do you have
 Do you need charging
+check my battery
+how's my battery level
+battery percentage please
+pwede mo bang i check ang battery
+paki check ang baterya
 
 Ilan pa ang natitirang baterya
 Mababa na ba ang baterya
@@ -465,6 +472,8 @@ I cannot hear you
 Speak up
 A bit louder please
 Raise the sound
+can you make it louder
+make it louder
 
 Lakasan mo ang boses mo
 Hindi kita marinig
@@ -474,6 +483,7 @@ Konting lakas pa
 Palakasan mo ang tunog mo
 Lakasan mo ang tunog
 Dagdagan mo ang lakas ng tunog
+pakilakasan ang boses
 
 ## system.volume:down
 
