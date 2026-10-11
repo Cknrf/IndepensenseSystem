@@ -246,6 +246,11 @@ class MistralAnswerer:
 # rather than billed for and waited on.
 _MAX_OUTPUT_TOKENS = 128
 
+# Connect-phase budget, separate from the read budget — see `_post`. Only
+# spent when the pooled socket is gone (first call, or after the provider
+# drops an idle connection), since `warm_up` opens it at startup.
+_CONNECT_TIMEOUT_S = 1.0
+
 
 class MistralIntentParser:
     """An `IntentParser` backed by Mistral, for use in front of Ollama.
@@ -391,6 +396,27 @@ class MistralIntentParser:
         }
 
     def _post(self, payload: dict, timeout_s: float):
+        """POST with the connect and read budgets bounded separately.
+
+        `requests` applies a *scalar* timeout to the connect phase and the
+        read phase independently — it is not a limit on total elapsed
+        time. Passing `2.5` therefore allowed 2.5 s to open the socket
+        and a further 2.5 s of server silence, so the real worst case was
+        ~5 s on a cold connection while the config comment claimed 2.5 s.
+
+        The tuple makes the ceiling explicit: `_CONNECT_TIMEOUT_S` +
+        `timeout_s`. Connect is the generous half because it almost never
+        applies — the session is reused, so after `warm_up` the socket is
+        already open and only the read budget is live. Measured TCP plus
+        TLS over the modem was 95-250 ms, so 1 s is slack rather than a
+        constraint.
+
+        This still is not a wall-clock deadline: a server trickling bytes
+        slower than the read timeout could in principle run longer. It
+        cannot here — the reply is one small non-streamed body — and the
+        probe measures true elapsed time anyway, which is what the 0 of
+        226 over 2.5 s is counting.
+        """
         return self._get_session().post(
             self._url,
             json=payload,
@@ -398,7 +424,7 @@ class MistralIntentParser:
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
             },
-            timeout=timeout_s,
+            timeout=(_CONNECT_TIMEOUT_S, timeout_s),
         )
 
     def _get_session(self):

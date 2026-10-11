@@ -157,7 +157,10 @@ def test_the_configured_timeout_is_applied_to_the_request(prompt_path, monkeypat
 
     parser.parse("what time is it")
 
-    assert sent["timeout"] == 2.5
+    # A tuple, not a scalar: `requests` applies a scalar to the connect
+    # and read phases *independently*, so `2.5` would have permitted ~5 s
+    # on a cold connection. The read half is the configured deadline.
+    assert sent["timeout"] == (1.0, 2.5)
 
 
 # --- success -----------------------------------------------------------------
@@ -281,7 +284,7 @@ def test_warmup_sends_the_same_prefix_real_queries_will_reuse(parser, monkeypatc
     parser.warm_up(timeout_s=10.0)
 
     assert sent["json"]["messages"][0]["content"] == PROMPT_TEXT
-    assert sent["timeout"] == 10.0
+    assert sent["timeout"] == (1.0, 10.0)
 
 
 def test_a_failed_warmup_is_reported_not_raised(parser, monkeypatch):

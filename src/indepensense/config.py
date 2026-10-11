@@ -1326,6 +1326,14 @@ NLU_CLOUD_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system_cloud.md"
 # not make the common case faster, it only makes the bad case worse.
 # Still far better for `_voice_cancel` responsiveness than the 30 s the
 # voice thread can currently spend inside Ollama.
+#
+# This is the **read** budget, not a wall-clock deadline. `requests`
+# applies a scalar timeout to the connect and read phases separately, so
+# the driver passes a tuple and the true ceiling is this plus
+# `mistral._CONNECT_TIMEOUT_S`. The connect half is only ever spent when
+# the pooled socket is gone, which after `warm_up` means almost never —
+# measured 0 of 226 probe queries exceeded 2.5 s of *total* elapsed time,
+# with a 1.55 s maximum.
 NLU_CLOUD_TIMEOUT_S = 2.5
 
 # Semantic fast path in front of the LLM — see intents/embeddings.py for
