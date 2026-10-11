@@ -220,11 +220,21 @@ class OllamaIntentParser:
         return parse_llm_response(raw, transcript)
 
 
-def parse_llm_response(raw: str, transcript: str) -> IntentResult:
+def parse_llm_response(
+    raw: str, transcript: str, source: str = "llm",
+) -> IntentResult:
     """Parse an LLM's raw JSON response into a normalised IntentResult.
 
     Pulled out as a pure function so it can be unit-tested without an LLM
-    or an Ollama server.
+    or an Ollama server. Shared by every LLM-shaped engine — the local
+    Ollama parser and the cloud one both emit the same JSON contract, and
+    a second copy of this would drift from the failure taxonomy that
+    `IntentResult` and `cloud.py` both depend on.
+
+    `source` names the engine for the audit trail, defaulting to the local
+    model so existing call sites keep their meaning. It matters here
+    because the normalising step is where a reply stops being a provider's
+    bytes and starts being a decision the device will act on.
 
     Both degraded paths below log to stderr before returning. Silence here
     is what made the last round of debugging expensive: a malformed reply
@@ -247,6 +257,7 @@ def parse_llm_response(raw: str, transcript: str) -> IntentResult:
             raw_transcript=transcript,
             raw_llm_response=raw,
             failure="malformed",
+            source=source,
         )
 
     intent_name = payload.get("intent", "unknown")
@@ -273,6 +284,7 @@ def parse_llm_response(raw: str, transcript: str) -> IntentResult:
         parameters=parameters,
         raw_transcript=transcript,
         raw_llm_response=raw,
+        source=source,
     )
 
 
