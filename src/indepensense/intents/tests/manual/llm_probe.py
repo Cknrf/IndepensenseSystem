@@ -138,9 +138,9 @@ ENGLISH_CASES = [
     ("I'm hurt, get help",               "emergency.trigger", {}),
 
     # --- guardian.status_ok ---
-    # The all-clear after an alert. Not in `prompts/nlu_system.md`, so only
-    # the fast path can produce it today — these cases are what expose that
-    # gap in the LLM's score instead of leaving it invisible.
+    # The all-clear after an alert. Held out from the prompt, which teaches
+    # "I'm safe now" and "Tell my guardian I'm fine". The near-misses that
+    # must NOT send an all-clear are in the adversarial group.
     ("Tell my guardian everything is fine", "guardian.status_ok", {}),
     ("I'm okay now, no need to worry",   "guardian.status_ok", {}),
 
@@ -278,7 +278,7 @@ TAGALOG_CASES = [
     ("Tulong! Emergency!",                            "emergency.trigger",   {}),
     ("Tulungan mo ako, nadapa ako",                   "emergency.trigger",   {}),
     ("Nasaktan ako, kailangan ko ng tulong",          "emergency.trigger",   {}),
-    # guardian.status_ok — see the English note: LLM-unreachable today.
+    # guardian.status_ok — held out; the prompt teaches "Ligtas na ako".
     ("Okay lang ako",                                 "guardian.status_ok",  {}),
     ("Sabihin mo sa guardian ko na ayos lang ako",    "guardian.status_ok",  {}),
     ("Ilan pa ang natitirang battery",                "device.status",       {"status_field": "battery"}),
@@ -447,6 +447,12 @@ ADVERSARIAL_CASES = [
     ("I read an article about GPS",      "unknown", {}),
     ("how do you say thank you in Filipino", "unknown", {}),
 
+    # guardian.status_ok near-misses. A false all-clear tells the guardian
+    # to stand down during a real emergency, so filler and negated states
+    # must not reach it.
+    ("all good",                         "unknown", {}),
+    ("I'm not fine at all",              "emergency.trigger", {}),
+
     # Tagalog mirrors of the traps above.
     ("tulungan mo akong tumawid",        "unknown", {}),
     ("tulungan mo akong hanapin ang botika", "navigation.start", {"location": "botika"}),
@@ -462,6 +468,7 @@ ADVERSARIAL_CASES = [
     ("naka-save ba ang bahay ko",        "unknown", {}),
     ("i-save mo ang Jollibee bilang paborito ko", "unknown", {}),
     ("ano ang Ingles ng mesa",           "unknown", {}),
+    ("hindi ako ayos",                   "emergency.trigger", {}),
 ]
 
 # (group, transcript, expected_intent, expected_slots). `group` drives the

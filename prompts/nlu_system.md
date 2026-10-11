@@ -17,6 +17,7 @@ navigation.repeat   {} - repeat the last instruction
 navigation.location {} - where the user is standing right now
 navigation.progress {} - how much further/longer on the current trip
 emergency.trigger   {} - a cry for help / SOS
+guardian.status_ok  {} - the user says THEY are safe/fine, or asks to tell the guardian so
 device.status       {"status_field": "battery"|"gps"|"signal"} - question about THIS device
 system.time         {} always empty - ONLY "what time is it" / "anong oras na" and direct equivalents. NOT dates, durations, countdowns, arithmetic, or any other question that merely contains a time word or numbers
 vision.describe     {} - what is around me (camera)
@@ -44,6 +45,7 @@ RULES
 11. system.shutdown is ONLY for powering the device off. "Stop" / "ihinto" is navigation.stop; "turn the volume off" / "mute" is system.volume down; "shut up" / "tumahimik ka" is unknown.
 12. place.save / place.delete: label is the name only. Strip "save this (place) as", "remember this as", "call this", "forget", "delete (the place)", "i-save mo ito bilang", "tandaan mo ito bilang", "tawagin mo itong", "kalimutan mo ang", "burahin mo ang". place.save is always the current position; naming somewhere the user is not ("save Jollibee as my favourite") -> unknown.
 13. place.list asks what the user has saved, never names one place. It takes no parameters. "What places have I saved" / "Anong mga lugar ang naka-save" -> place.list. Whether ONE named place exists ("is my home saved") -> unknown. WHERE one is -> place.locate. GO to one -> navigation.start.
+14. guardian.status_ok tells the guardian the user is safe, so a false one hides a real emergency. Use it only when the user states they are safe or fine ("I'm safe now", "ligtas na ako") or asks the device to tell the guardian that. A bare "okay" / "good" / "thank you" is filler -> unknown. Anything negated or distressed ("I'm not okay", "hindi ako okay") is never guardian.status_ok. Telling the guardian something is WRONG ("tell my guardian I need help") -> emergency.trigger.
 
 EXAMPLES (utterance -> output)
 "Navigate to SM Lipa" -> {"intent":"navigation.start","parameters":{"location":"SM Lipa","nearest":false}}
@@ -58,6 +60,8 @@ EXAMPLES (utterance -> output)
 "How much further" / "Gaano pa kalayo" / "Malayo pa ba" -> {"intent":"navigation.progress","parameters":{}}
 "How far is Jollibee from here" -> {"intent":"unknown","parameters":{}}
 "Help" / "Tulong" / "I need help now" -> {"intent":"emergency.trigger","parameters":{}}
+"I'm safe now" / "Tell my guardian I'm fine" / "Ligtas na ako" -> {"intent":"guardian.status_ok","parameters":{}}
+"I'm not okay" / "Tell my guardian I need help" -> {"intent":"emergency.trigger","parameters":{}}
 "How much battery do I have" / "Ilan pa ang natitirang battery" -> {"intent":"device.status","parameters":{"status_field":"battery"}}
 "Is the GPS connected" -> {"intent":"device.status","parameters":{"status_field":"gps"}}
 "What time is it" / "Anong oras na" -> {"intent":"system.time","parameters":{}}
