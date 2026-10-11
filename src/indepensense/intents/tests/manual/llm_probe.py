@@ -129,9 +129,12 @@ ENGLISH_CASES = [
     # --- device.status ---
     ("How much battery do I have left",  "device.status", {"status_field": "battery"}),
     ("Is the GPS connected",             "device.status", {"status_field": "gps"}),
+    ("Check my battery, please.", "device.status", {"status_field": "battery"}),
+    
 
     # --- system.time ---
     ("What time is it",                  "system.time", {}),
+    ("What time is it right now", "system.time", {}),
 
     # --- vision.describe ---
     ("What's around me",                 "vision.describe", {}),
@@ -166,6 +169,7 @@ ENGLISH_CASES = [
     ("Louder",                           "system.volume", {"direction": "up"}),
     ("Turn the volume down",             "system.volume", {"direction": "down"}),
     ("Set the volume to 60",             "system.volume", {"level": 60}),
+    ("Can you make it louder", "system.volume", {"direction": "up"}),
 
     # --- navigation.progress ---
     ("How much further",                 "navigation.progress", {}),
@@ -218,6 +222,10 @@ TAGALOG_CASES = [
     ("Ano ang nakikita mo",                           "vision.describe",     {}),
     ("Basahin mo ito",                                "vision.read",         {}),
     ("Magpatugtog ka ng musika",                      "unknown",             {}),
+    ("Pakicheck naman ang battery ko", "device.status", {"status_field": "battery"}),
+    ("Pwede mo bang i-check ang battery", "device.status", {"status_field": "battery"}),
+    ("Anong oras na ba", "system.time", {}),
+    ("Pakilakasan ang boses", "system.volume", {"direction": "up"}),
 
     # --- system.language ---
     # The switch phrase is spoken in the language currently ACTIVE, so
@@ -284,6 +292,7 @@ ADVERSARIAL_CASES = [
     ("I'm just asking what is the answer 5 plus 7", "unknown", {}),
     ("I said what's the answer? 5-7",    "unknown", {}),
     ("magkano ang dalawa plus tatlo",    "unknown", {}),
+    ("Uh wait a second", "unknown", {}),
 
     # "help" in non-emergency context
     ("help me find the pharmacy",        "navigation.start", {"location": "pharmacy"}),

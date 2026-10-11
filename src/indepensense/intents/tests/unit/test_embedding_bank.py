@@ -15,6 +15,7 @@ from indepensense.intents.embeddings import (
     BankEntry,
     parse_bank,
 )
+from indepensense.intents.tests.manual.llm_probe import TEST_CASES
 
 
 @pytest.fixture(scope="module")
@@ -92,6 +93,14 @@ def test_open_span_intents_may_not_be_a_fast_path_class(tmp_path, intent):
         parse_bank(path)
 
 
+def test_a_rejected_label_names_the_file_and_line(tmp_path):
+    """The bank is hundreds of lines. The error that stops startup has to
+    say where, or the fix starts with a search."""
+    path = write_bank(tmp_path, "## system.time\nWhat time is it\n\n## navigation.teleport\n")
+    with pytest.raises(ValueError, match=rf"{path}:4: "):
+        parse_bank(path)
+
+
 def test_enum_intent_without_a_slot_value_is_rejected(tmp_path):
     path = write_bank(tmp_path, "## device.status\nHow much battery\n")
     with pytest.raises(ValueError, match="needs a slot value"):
@@ -157,6 +166,20 @@ def test_no_duplicate_examples(bank):
             duplicates.append(f"{entry.text!r} in both {seen[key]} and {entry.bucket}")
         seen[key] = entry.bucket
     assert not duplicates, duplicates
+
+
+def test_the_bank_is_disjoint_from_the_held_out_test_set(bank):
+    """`embedding_probe --check-overlap`, enforced.
+
+    The probe's accuracy number is only a measurement while `llm_probe`'s
+    cases stay out of the bank. Copying a failing case in is the obvious
+    way to "fix" it and turns that number into memorisation without any
+    visible symptom — the score simply goes up. Same normalisation as the
+    probe: case and surrounding whitespace only.
+    """
+    texts = {e.text.strip().lower() for e in bank}
+    clashes = [text for _, text, _, _ in TEST_CASES if text.strip().lower() in texts]
+    assert not clashes, f"held-out cases copied into the bank: {clashes}"
 
 
 def test_every_class_has_escalation_pressure(bank):
