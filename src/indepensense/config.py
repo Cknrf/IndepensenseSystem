@@ -1179,10 +1179,10 @@ CLOUD_LLM_MAX_TOKENS = 100
 #   - cap the provider's max output tokens (~100). Generation time scales
 #     with output length, so this is the largest single lever — and it
 #     keeps answers short enough to speak, which is wanted anyway.
-#   - reuse the HTTP connection. A cold TLS handshake is ~3 round trips
-#     before the request is even sent; against an EU-hosted provider from
-#     the Philippines that is roughly 0.75 s of pure setup. A persistent
-#     session inside the driver removes it from every call after the first.
+#   - reuse the HTTP connection. TCP plus TLS measured 95-250 ms from the
+#     Pi before the request is even sent (2026-10-12, over the modem). A
+#     persistent session inside the driver removes it from every call
+#     after the first.
 CLOUD_LLM_TIMEOUT_S = 10.0
 CLOUD_MAX_RESPONSE_CHARS = 500
 
@@ -1239,6 +1239,71 @@ NLU_COMPACT_PREFILL = NLU_LARGE_MODEL
 NLU_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system.md"
 NLU_TIMEOUT_S = 30.0
 NLU_WARMUP_TIMEOUT_S = 180.0 if NLU_LARGE_MODEL else 90.0
+
+# Cloud NLU: Mistral in front of the local model, with Ollama as the
+# fallback rather than the primary. Off until `llm_probe --cloud` has
+# measured the accuracy gain on the Pi — the number is the justification
+# and nothing else is.
+#
+# Why this is worth a network dependency on the hot path. The local 1.7B
+# holds the escalated ~48% of utterances (the fast path takes the rest)
+# at 80.2% held-out accuracy and, worse, 30% `unknown` recall — so the
+# cloud *answerer* in `intents/cloud.py` is firing on under a third of
+# the open questions it was built for, because the classifier in front of
+# it rarely defers. The gain is therefore two features at once.
+#
+# Measured on the Pi 2026-10-12, over the SIM7600 (`--interface wwan0`;
+# `wlan0` is the metric-600 default and wins at a desk, so an unbound
+# measurement is not the field case), warm connection, real ~2,600-token
+# prompt, n=15:
+#
+#                        median    worst    TCP connect
+#     wwan0 (modem)      743 ms   1263 ms     35-50 ms
+#     wlan0 (WiFi)       577 ms    978 ms     33-45 ms
+#     local Qwen 1.7B   1-2000 ms      —            —
+#
+# Three results worth keeping. The modem costs only ~170 ms over WiFi, so
+# cellular is not the constraint it was assumed to be. Round-trip is
+# ~40 ms, not the ~250 ms the driver docstring used to claim. And the
+# cloud path is *faster* than local, not a latency cost to be traded
+# against accuracy — the original framing of this change had it backwards.
+#
+# The unobvious win is CPU. Ollama holds all four cores for 1-2 s per
+# command, competing with the 100 Hz main loop that runs fall detection
+# and obstacle polling. A cloud call leaves the Pi idle while it waits,
+# so the safety loop keeps its timing. See architecture decision #1.
+NLU_CLOUD_ENABLED = False
+# Pinned, not `mistral-small-latest`. The alias resolves to this today,
+# but it moves — and a thesis that quotes an accuracy figure needs the
+# model that produced it to still exist. Same reasoning as the local
+# model directories in decision #3: the weights in use are the ones that
+# were tested. Re-pin deliberately, re-run the probe, update the table.
+NLU_CLOUD_MODEL = "mistral-small-2603"
+# A separate prompt from the local model's, not a shared one.
+#
+# `nlu_system.md` tells the classifier five times, twice in capitals, to
+# answer `unknown` when unsure. That is right for Qwen 3 1.7B, which
+# guesses dangerously without it. On the cloud model it is the single
+# largest source of error: 15 of its 17 probe failures were `unknown` on
+# utterances it plainly understood ("are we there yet", "what objects can
+# you see"). A more capable model obeys a deferral instruction *better*,
+# so this is not fixed by paying for a larger one.
+#
+# The cloud prompt replaces the blanket bias with a targeted one: caution
+# is reserved for the four intents whose cost when wrong is real —
+# `system.shutdown`, `guardian.status_ok`, `place.delete` and a *missed*
+# `emergency.trigger` — and withdrawn from the ones where a mistake costs
+# seconds. Two files is the price of the two models needing opposite
+# things; the drift risk is held by a unit test asserting both declare
+# the same intent set.
+NLU_CLOUD_PROMPT_PATH = PROJECT_ROOT / "prompts" / "nlu_system_cloud.md"
+# 2.5 s, from the distribution above: ~3x the measured median, well clear
+# of the 1,263 ms worst case. Deliberately generous, because a fallback
+# costs this *plus* the local model's 1-2 s — so a tight deadline does
+# not make the common case faster, it only makes the bad case worse.
+# Still far better for `_voice_cancel` responsiveness than the 30 s the
+# voice thread can currently spend inside Ollama.
+NLU_CLOUD_TIMEOUT_S = 2.5
 
 # Semantic fast path in front of the LLM — see intents/embeddings.py for
 # the full rationale and prompts/nlu_examples.md for the example bank.
