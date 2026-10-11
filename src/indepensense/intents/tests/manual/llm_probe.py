@@ -107,44 +107,72 @@ ENGLISH_CASES = [
     ("Guide me to the nearest hospital", "navigation.start", {"location": "hospital", "nearest": True}),
     ("How do I get to the pharmacy",     "navigation.start", {"location": "pharmacy"}),
     ("Bring me to school",               "navigation.start", {"location": "school"}),
+    ("Walk me to the nearest bus stop",  "navigation.start", {"location": "bus stop", "nearest": True}),
+    ("I want to go to Lipa Cathedral",   "navigation.start", {"location": "Lipa Cathedral", "nearest": False}),
+    ("Find me the closest ATM",          "navigation.start", {"location": "ATM", "nearest": True}),
 
     # --- navigation.location ---
     ("Where am I?",                      "navigation.location", {}),
     ("What's my current address",        "navigation.location", {}),
     ("Tell me my location",              "navigation.location", {}),
+    ("What street is this",              "navigation.location", {}),
+    ("Can you tell me where I am",       "navigation.location", {}),
 
     # --- navigation.stop ---
     ("Cancel navigation",                "navigation.stop", {}),
     ("Stop the trip",                    "navigation.stop", {}),
+    ("End the route",                    "navigation.stop", {}),
+    ("I don't need directions anymore",  "navigation.stop", {}),
 
     # --- navigation.repeat ---
     ("Repeat the last instruction",      "navigation.repeat", {}),
     ("Say that again",                   "navigation.repeat", {}),
+    ("I didn't catch that",              "navigation.repeat", {}),
+    ("Could you repeat the direction",   "navigation.repeat", {}),
 
     # --- emergency.trigger ---
     ("Help me, this is an emergency",    "emergency.trigger", {}),
     ("I need help now",                  "emergency.trigger", {}),
     ("SOS",                              "emergency.trigger", {}),
+    ("Please help me, I fell down",      "emergency.trigger", {}),
+    ("I'm hurt, get help",               "emergency.trigger", {}),
+
+    # --- guardian.status_ok ---
+    # The all-clear after an alert. Not in `prompts/nlu_system.md`, so only
+    # the fast path can produce it today — these cases are what expose that
+    # gap in the LLM's score instead of leaving it invisible.
+    ("Tell my guardian everything is fine", "guardian.status_ok", {}),
+    ("I'm okay now, no need to worry",   "guardian.status_ok", {}),
 
     # --- device.status ---
     ("How much battery do I have left",  "device.status", {"status_field": "battery"}),
     ("Is the GPS connected",             "device.status", {"status_field": "gps"}),
     ("Check my battery, please.", "device.status", {"status_field": "battery"}),
     
+    ("Is the battery almost empty",      "device.status", {"status_field": "battery"}),
+    ("Do you have a GPS fix",            "device.status", {"status_field": "gps"}),
+    ("Do we have internet",              "device.status", {"status_field": "signal"}),
+    ("How strong is the signal",         "device.status", {"status_field": "signal"}),
 
     # --- system.time ---
     ("What time is it",                  "system.time", {}),
     ("What time is it right now", "system.time", {}),
+    ("Tell me what time it is",          "system.time", {}),
+    ("Got the time?",                    "system.time", {}),
 
     # --- vision.describe ---
     ("What's around me",                 "vision.describe", {}),
     ("Describe my surroundings",         "vision.describe", {}),
     ("What do you see",                  "vision.describe", {}),
+    ("Describe the room I'm in",         "vision.describe", {}),
+    ("What objects can you see",         "vision.describe", {}),
 
     # --- vision.read ---
     ("Read this",                        "vision.read", {}),
     ("What does this sign say",          "vision.read", {}),
     ("Read the menu for me",             "vision.read", {}),
+    ("Read the label on this bottle",    "vision.read", {}),
+    ("What is written on this sign",     "vision.read", {}),
 
     # --- system.language ---
     # A misclassification here is worse than most: if the model cannot
@@ -154,6 +182,11 @@ ENGLISH_CASES = [
     ("Speak English please",             "system.language", {"language": "en"}),
     ("Switch to Tagalog",                "system.language", {"language": "tl"}),
     ("Can you speak Filipino",           "system.language", {"language": "tl"}),
+    ("Change to English",                "system.language", {"language": "en"}),
+    ("I prefer Filipino",                "system.language", {"language": "tl"}),
+    # An unsupported language is passed through by name so the executor can
+    # say so. The fast path must escalate it — "Japanese" is not a label.
+    ("Switch to Japanese",               "system.language", {"language": "Japanese"}),
 
     # --- unknown (clear non-commands) ---
     ("Play some music",                  "unknown", {}),
@@ -170,11 +203,17 @@ ENGLISH_CASES = [
     ("Turn the volume down",             "system.volume", {"direction": "down"}),
     ("Set the volume to 60",             "system.volume", {"level": 60}),
     ("Can you make it louder", "system.volume", {"direction": "up"}),
+    ("Raise the volume a bit",           "system.volume", {"direction": "up"}),
+    ("Make it softer",                   "system.volume", {"direction": "down"}),
+    ("Lower your voice",                 "system.volume", {"direction": "down"}),
+    ("Volume 80",                        "system.volume", {"level": 80}),
 
     # --- navigation.progress ---
     ("How much further",                 "navigation.progress", {}),
     ("How far do I still have to go",    "navigation.progress", {}),
     ("How much longer",                  "navigation.progress", {}),
+    ("How many meters are left",         "navigation.progress", {}),
+    ("Are we there yet",                 "navigation.progress", {}),
 
     # --- place.save / place.delete ---
     ("Save this place as home",          "place.save", {"label": "home"}),
@@ -194,33 +233,67 @@ ENGLISH_CASES = [
     ("Where is the pharmacy I saved", "place.locate", {"label": "the pharmacy"}),
     ("Say the names of the places I kept", "place.list", {}),
     ("Do you still remember my home",    "unknown", {}),
+    ("Save this place as Grandma's house", "place.save", {"label": "Grandma's house"}),
+    ("Delete the place saved as gym",    "place.delete", {"label": "gym"}),
+    ("List all the places I saved",      "place.list", {}),
+    ("Where is my office",               "place.locate", {"label": "my office"}),
+    ("Did you save my office",           "unknown", {}),
 
     # --- system.shutdown ---
     ("Shut down the device",             "system.shutdown", {}),
     ("Turn off IndepenSense",            "system.shutdown", {}),
+    ("Power off the wearable",           "system.shutdown", {}),
 
     # --- system.help ---
     ("What can you do",                  "system.help", {}),
     ("What can I ask you",               "system.help", {}),
+    ("What are your commands",           "system.help", {}),
+    ("How does this thing work",         "system.help", {}),
 
     ("How tall is Mount Apo",            "unknown", {}),
     ("How many days until Christmas",    "unknown", {}),
     ("What is the capital of Japan",      "unknown", {}),
+    ("Call my mom",                      "unknown", {}),
+    ("What's the weather tomorrow",      "unknown", {}),
+    ("Sing me a song",                   "unknown", {}),
 
 ]
 
 TAGALOG_CASES = [
     ("Dalhin mo ako sa Jollibee",                    "navigation.start",    {"location": "Jollibee"}),
     ("Puntahan mo ang pinakamalapit na ospital",     "navigation.start",    {"location": "ospital", "nearest": True}),
+    ("Gabayan mo ako sa palengke",                    "navigation.start",    {"location": "palengke", "nearest": False}),
+    ("Papuntang munisipyo",                           "navigation.start",    {"location": "munisipyo"}),
+    ("Dalhin mo ako sa pinakamalapit na botika",      "navigation.start",    {"location": "botika", "nearest": True}),
     ("Nasaan ako",                                    "navigation.location", {}),
     ("Nasaan ako ngayon",                             "navigation.location", {}),
+    ("Saan na ako ngayon",                            "navigation.location", {}),
+    ("Anong lugar ito",                               "navigation.location", {}),
     ("Ihinto ang navigation",                         "navigation.stop",     {}),
+    ("Kanselahin ang biyahe",                         "navigation.stop",     {}),
+    ("Huwag mo na akong ihatid doon",                 "navigation.stop",     {}),
     ("Ulitin mo yung sinabi",                         "navigation.repeat",   {}),
+    ("Ano ulit",                                      "navigation.repeat",   {}),
+    ("Pakiulit ang huling direksyon",                 "navigation.repeat",   {}),
     ("Tulong! Emergency!",                            "emergency.trigger",   {}),
+    ("Tulungan mo ako, nadapa ako",                   "emergency.trigger",   {}),
+    ("Nasaktan ako, kailangan ko ng tulong",          "emergency.trigger",   {}),
+    # guardian.status_ok — see the English note: LLM-unreachable today.
+    ("Okay lang ako",                                 "guardian.status_ok",  {}),
+    ("Sabihin mo sa guardian ko na ayos lang ako",    "guardian.status_ok",  {}),
     ("Ilan pa ang natitirang battery",                "device.status",       {"status_field": "battery"}),
+    ("Malakas pa ba ang baterya",                     "device.status",       {"status_field": "battery"}),
+    ("Naka-lock na ba ang GPS",                       "device.status",       {"status_field": "gps"}),
+    ("May signal ba dito",                            "device.status",       {"status_field": "signal"}),
     ("Anong oras na",                                 "system.time",         {}),
+    ("Ano na ang oras",                               "system.time",         {}),
+    ("Pakisabi kung anong oras na",                   "system.time",         {}),
     ("Ano ang nakikita mo",                           "vision.describe",     {}),
+    ("Ano ang nasa paligid ko",                       "vision.describe",     {}),
+    ("Ilarawan mo ang nasa harap ko",                 "vision.describe",     {}),
     ("Basahin mo ito",                                "vision.read",         {}),
+    ("Pakibasa ang karatula",                         "vision.read",         {}),
+    ("Ano ang nakasulat sa papel",                    "vision.read",         {}),
     ("Magpatugtog ka ng musika",                      "unknown",             {}),
     ("Pakicheck naman ang battery ko", "device.status", {"status_field": "battery"}),
     ("Pwede mo bang i-check ang battery", "device.status", {"status_field": "battery"}),
@@ -236,11 +309,19 @@ TAGALOG_CASES = [
     ("Mag-Ingles ka naman",                           "system.language",     {"language": "en"}),
     ("Magsalita ka ng Tagalog",                       "system.language",     {"language": "tl"}),
     ("Tagalog na lang",                               "system.language",     {"language": "tl"}),
+    ("Ingles na lang",                                "system.language",     {"language": "en"}),
+    ("Mag-Filipino ka",                               "system.language",     {"language": "tl"}),
+    ("Bumalik ka sa Tagalog",                         "system.language",     {"language": "tl"}),
 
     ("Palakasin mo ang tunog",                        "system.volume",       {"direction": "up"}),
     ("Pahinaan mo ang tunog",                         "system.volume",       {"direction": "down"}),
+    ("Lakasan mo pa ang boses",                       "system.volume",       {"direction": "up"}),
+    ("Hinaan mo ng kaunti",                           "system.volume",       {"direction": "down"}),
+    ("Gawin mong 50 ang volume",                      "system.volume",       {"level": 50}),
 
     ("Gaano pa kalayo",                               "navigation.progress", {}),
+    ("Ilang metro pa",                                "navigation.progress", {}),
+    ("Matagal pa ba",                                 "navigation.progress", {}),
 
     ("I-save mo ito bilang bahay",                    "place.save",          {"label": "bahay"}),
     ("Kalimutan mo ang bahay",                        "place.delete",        {"label": "bahay"}),
@@ -249,23 +330,34 @@ TAGALOG_CASES = [
      {"label": "klinika ko"}),
     ("Pakisabi ang mga lugar na tinago mo",           "place.list",          {}),
     ("Natatandaan mo pa ba ang klinika ko",           "unknown",             {}),
+    ("Tandaan mo ito bilang paaralan",                "place.save",          {"label": "paaralan"}),
+    ("Burahin mo ang opisina",                        "place.delete",        {"label": "opisina"}),
+    ("Ilista mo ang mga lugar ko",                    "place.list",          {}),
+    ("Nasaan ang bahay ni Lola",                      "place.locate",        {"label": "bahay ni Lola"}),
 
     ("Ano ang kaya mong gawin",                       "system.help",         {}),
     ("Paano ito gamitin",                             "system.help",         {}),
+    ("Anong mga pwede kong iutos",                    "system.help",         {}),
+    ("Paano kita gagamitin",                          "system.help",         {}),
 
     ("Patayin mo ang IndepenSense",                   "system.shutdown",     {}),
+    ("Isara mo ang IndepenSense",                     "system.shutdown",     {}),
 
     # --- unknown, bound for the cloud fallback ---
     ("Gaano katangkad ang Bundok Apo",                "unknown",             {}),
     ("Ilang araw na lang bago mag-Pasko",             "unknown",             {}),
+    ("Padalhan mo ng mensahe si Kuya",                "unknown",             {}),
+    ("Ano ang panahon bukas",                         "unknown",             {}),
+    ("Magkuwento ka ng biro",                         "unknown",             {}),
 
 ]
 
 # Adversarial: verify Phase 1 prompt hardening. These are transcripts where a
 # naive LLM might latch onto a keyword ("time", "help", "location") and pick
 # the wrong intent. After the "prefer unknown when in doubt" prompt rewrite,
-# these should all resolve as expected. English-only for now — the Tagalog
-# equivalents are a known gap (see module docstring).
+# these should all resolve as expected. Mostly English; the Tagalog block at
+# the end mirrors the same traps, since a keyword the model over-trusts in
+# one language is usually over-trusted in the other.
 ADVERSARIAL_CASES = [
     # system.shutdown near-misses. Powering off is irreversible for the
     # user, so the phrases one word away from it matter as much as the
@@ -344,6 +436,32 @@ ADVERSARIAL_CASES = [
     ("Read this English sign",           "vision.read", {}),
     ("Take me to English Street",        "navigation.start", {"location": "English Street"}),
     ("I speak Tagalog at home",          "unknown", {}),
+
+    # More English near-misses, one per intent that a keyword could pull in.
+    ("help me cross the road",           "unknown", {}),
+    ("help me read the menu",            "vision.read", {}),
+    ("what's the date today",            "unknown", {}),
+    ("remind me at noon to eat",         "unknown", {}),
+    ("turn off the lights",              "unknown", {}),
+    ("my phone's battery is dying",      "unknown", {}),
+    ("I read an article about GPS",      "unknown", {}),
+    ("how do you say thank you in Filipino", "unknown", {}),
+
+    # Tagalog mirrors of the traps above.
+    ("tulungan mo akong tumawid",        "unknown", {}),
+    ("tulungan mo akong hanapin ang botika", "navigation.start", {"location": "botika"}),
+    ("tulungan mo akong basahin ang menu", "vision.read", {}),
+    ("ihinto mo",                        "navigation.stop", {}),
+    ("isa-isa lang",                     "unknown", {}),
+    ("mamaya na lang",                   "unknown", {}),
+    ("lowbat na ang telepono ko",        "unknown", {}),
+    ("ang ganda ng panahon ngayon",      "unknown", {}),
+    ("inaantok na ako",                  "unknown", {}),
+    ("nasaan ang Jollibee",              "place.locate", {"label": "Jollibee"}),
+    ("gaano kalayo ang SM mula dito",    "unknown", {}),
+    ("naka-save ba ang bahay ko",        "unknown", {}),
+    ("i-save mo ang Jollibee bilang paborito ko", "unknown", {}),
+    ("ano ang Ingles ng mesa",           "unknown", {}),
 ]
 
 # (group, transcript, expected_intent, expected_slots). `group` drives the

@@ -103,7 +103,7 @@ ESCALATE_EXPECTED = {
 }
 
 # Threshold grids for `--sweep`. Deliberately coarse: the goal is to find
-# the knee of the coverage/precision curve, and a fine grid over 98 cases
+# the knee of the coverage/precision curve, and a fine grid over ~200 cases
 # would be fitting noise.
 #
 # The score grid starts high and the margin grid is the fine one, because
