@@ -221,6 +221,10 @@ from indepensense.config import (
     MMS_VOICES,
     MPU6050_ADDRESS,
     MPU6050_I2C_BUS,
+    NLU_CLOUD_ENABLED,
+    NLU_CLOUD_MODEL,
+    NLU_CLOUD_PROMPT_PATH,
+    NLU_CLOUD_TIMEOUT_S,
     NLU_COMPACT_PREFILL,
     NLU_EMBEDDING_BANK_PATH,
     NLU_EMBEDDING_MARGIN_THRESHOLD,
@@ -296,9 +300,10 @@ from indepensense.intents import messages
 from indepensense.intents.base import Intent, IntentParser, IntentResult
 from indepensense.intents.cloud import OfflineGuard
 from indepensense.credential import load_device_credential
-from indepensense.intents.mistral import MistralAnswerer
+from indepensense.intents.mistral import MistralAnswerer, MistralIntentParser
 from indepensense.intents.executor import IntentExecutor
 from indepensense.intents.embeddings import EmbeddingMatcher, build_matcher
+from indepensense.intents.fallback import FallbackIntentParser
 from indepensense.intents.parser import OllamaIntentParser
 from indepensense.intents.tiered import TieredIntentParser, describe
 from indepensense.language import LanguageState
@@ -4057,22 +4062,82 @@ The comparisons are inclusive, so a threshold names the percentage
         `_open_*` rather than `_try_open_*` because the LLM stage is not
         optional — a wearable that cannot classify speech has no voice
         interface at all. The *fast path* is optional, and that is
-        handled one level down by `_try_open_embedding_matcher`.
+        handled one level down by `_try_open_embedding_matcher`, and so
+        is the cloud stage, by `_try_open_cloud_parser`.
+
+        Three engines, composed so each only sees what the one before it
+        declined:
+
+            matcher  -> cloud -> Ollama
+
+        The fast path still answers ~52% of utterances locally in ~30 ms
+        and never reaches the network. Only the escalated remainder is
+        worth a round trip, which is what keeps the common case off the
+        modem entirely.
         """
+        local = OllamaIntentParser(
+            model=NLU_MODEL,
+            ollama_url=OLLAMA_URL,
+            prompt_path=NLU_PROMPT_PATH,
+            timeout_s=NLU_TIMEOUT_S,
+            # Deferred to `_warm_up_nlu` on its own thread — see the
+            # module docstring. Constructing with `True` would block
+            # `start()`, and with it every safety feature, on the LLM.
+            warmup=False,
+            compact_prefill=NLU_COMPACT_PREFILL,
+        )
+
+        cloud = self._try_open_cloud_parser()
         return TieredIntentParser(
             matcher=self._try_open_embedding_matcher(),
-            llm=OllamaIntentParser(
-                model=NLU_MODEL,
-                ollama_url=OLLAMA_URL,
-                prompt_path=NLU_PROMPT_PATH,
-                timeout_s=NLU_TIMEOUT_S,
-                # Deferred to `_warm_up_nlu` on its own thread — see the
-                # module docstring. Constructing with `True` would block
-                # `start()`, and with it every safety feature, on the LLM.
-                warmup=False,
-                compact_prefill=NLU_COMPACT_PREFILL,
-            ),
+            llm=local if cloud is None else FallbackIntentParser(cloud, local),
         )
+
+    def _try_open_cloud_parser(self):
+        """Cloud NLU in front of the local model, or None to stay local.
+
+        `_try_open_*`, and the degraded state is the device's previous
+        behaviour exactly: every escalated utterance goes to Ollama. A
+        missing key or a disabled switch must never abort startup, for
+        the same reason as `_try_open_cloud_answerer` — this is an
+        accuracy improvement sitting in front of a working parser, not a
+        dependency of the voice interface.
+
+        Ollama is constructed either way and kept as the fallback. It
+        costs its ~1.9 GB resident and its warmup, which cloud-only would
+        reclaim — but cloud-only would also take offline destination
+        navigation with it, and `config.SAVED_PLACES_PATH` calls the
+        offline destination source much of why that feature exists.
+        """
+        if not NLU_CLOUD_ENABLED:
+            return None
+
+        api_key = os.environ.get(CLOUD_LLM_API_KEY_ENV)
+        if not api_key:
+            print(
+                f"  Cloud NLU enabled but {CLOUD_LLM_API_KEY_ENV} is not set. "
+                f"Classifying locally.",
+                flush=True,
+            )
+            return None
+
+        try:
+            parser = MistralIntentParser(
+                api_key=api_key,
+                model=NLU_CLOUD_MODEL,
+                prompt_path=NLU_CLOUD_PROMPT_PATH,
+                url=CLOUD_LLM_URL,
+                timeout_s=NLU_CLOUD_TIMEOUT_S,
+            )
+        except Exception as exc:
+            # Includes a missing prompt file, which is a deploy error
+            # rather than a runtime one — logged and degraded, because
+            # the local model can still answer every utterance.
+            print(f"  Cloud NLU unavailable ({exc}). Classifying locally.", flush=True)
+            return None
+
+        print(f"  Cloud NLU ready ({NLU_CLOUD_MODEL}).", flush=True)
+        return parser
 
     def _try_open_embedding_matcher(self) -> EmbeddingMatcher | None:
         """Semantic fast path, or None to send every utterance to the LLM.
