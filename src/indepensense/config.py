@@ -860,18 +860,23 @@ MMS_VOICES = {
 
 # Remote TTS: the self-hosted OmniVoice Filipino endpoint on `gpuer`.
 #
-# **Off, and not ready to be switched on at runtime.** With this True the
-# router hands Tagalog to the network with no local fallback, so an
-# offline wearable cannot speak any sentence that is not already in the
-# clip store. Pre-rendered static messages would still play; templated
-# ones — place names, distances, the turn instructions said during a trip
-# — would not. Flipping this belongs after a `FallbackIntentParser`-shaped
-# wrapper exists for TTS, not before.
+# Tagalog only. English stays on Piper, which is both fast (0.07-0.30 s)
+# and good enough — the exception is bounded to the language whose local
+# quality was the actual problem, which is a far easier thing to defend
+# than moving synthesis wholesale.
 #
-# What it is for meanwhile is `tools/render_messages.py`, which this flag
-# also governs. Speech is rendered once and replayed, so the static
-# catalogue can be synthesised through OmniVoice ahead of time and then
-# costs a file read forever — its pronunciation without its latency.
+# Safe to run because the fallback exists: `_voice_chain` puts
+# `omnivoice:07` first and `mms:mms-tts-tgl` behind it, `clips.find_any`
+# accepts a clip in either, and `clips.render_first` files whatever it
+# produces under the voice that produced it. Offline, pre-rendered
+# OmniVoice clips still play and anything uncached falls through to MMS,
+# so no sentence becomes unspeakable.
+#
+# Most of the benefit arrives at render time, not runtime. Speech is
+# rendered once and replayed, so `tools/render_messages.py` synthesises
+# the static catalogue through OmniVoice ahead of time and it costs a
+# file read forever after — its pronunciation without its latency. Only
+# the 35 templated messages with open slots ever reach the network.
 #
 # Not chosen for speed. Measured 2026-10-12 on a short EU hop, excluding
 # the wearable's cellular leg: 1.08-1.29 s to generate, 1.70-1.94 s total,
@@ -884,17 +889,32 @@ MMS_VOICES = {
 # The endpoint has no authentication. Tolerable here because the request
 # body is text the device is about to say aloud in public anyway; it would
 # not be tolerable for speech-to-text, where the body is the user's voice.
-REMOTE_TTS_ENABLED = False
+REMOTE_TTS_ENABLED = True
 REMOTE_TTS_URL = "https://gpuer.techco.fi:8700/tts"
 REMOTE_TTS_MODEL = "omnivoice"
 # Language -> voice name on the server. `GET /health` lists what exists.
 REMOTE_TTS_VOICES = {
     "tl": "07",
 }
-# Generous: the server serves one request at a time and queues the rest,
-# and the only caller today is a sequential batch render where waiting
-# costs nothing. A runtime caller needs its own, much shorter deadline.
-REMOTE_TTS_TIMEOUT_S = 60.0
+
+# Two budgets, because the two callers have opposite constraints.
+#
+# RUNTIME is the announcer, where a person has pressed a button and is
+# waiting to be answered. **Provisional**: measured 1.70-1.94 s total
+# from a laptop on a short EU hop, which excludes the wearable's cellular
+# leg entirely. Add a Philippines-to-Finland round trip and ~127 KB of
+# audio over the modem and 2.5-3.5 s is the honest guess, so 6 s is
+# roughly 2x headroom. Falling back costs this *plus* MMS's 2.23 s, which
+# is why it is not tighter — a tight deadline does not speed up the
+# common case, it only makes the bad one worse. Re-measure on the device
+# and replace this number; it is the one figure here that is an estimate
+# rather than an observation.
+#
+# RENDER is `tools/render_messages.py`: a sequential batch, offline from
+# the user's point of view, where the server queues requests one at a
+# time and waiting costs nothing but the operator's patience.
+REMOTE_TTS_TIMEOUT_S = 6.0
+REMOTE_TTS_RENDER_TIMEOUT_S = 120.0
 # Where `tools/fetch_models.py` gets each MMS voice from. Only the tool
 # reads this; the runtime loads the directory above and never sees a
 # repo id.

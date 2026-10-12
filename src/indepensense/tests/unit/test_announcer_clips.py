@@ -240,9 +240,17 @@ def test_the_static_set_is_derived_from_the_message_catalogue():
     from indepensense.intents import messages
     from indepensense.voice import clips
 
+    from indepensense.app import _voice_chain
+
     names = _static_clip_names(("en", "tl"))
 
-    assert len(names) == len(messages.static_keys()) * 2
+    # One name per message per language per voice in that language's
+    # chain — a remotely-served language has two, so a hardcoded factor
+    # would re-break the moment REMOTE_TTS_ENABLED moves.
+    expected = len(messages.static_keys()) * sum(
+        len(_voice_chain(language)) for language in ("en", "tl")
+    )
+    assert len(names) == expected
     assert clips.filename(messages.get("emergency.sent", "tl"), "tl", _voice("tl")) in names
 
 

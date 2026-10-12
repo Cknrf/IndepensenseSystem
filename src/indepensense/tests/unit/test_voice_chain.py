@@ -21,7 +21,12 @@ def remote_on(monkeypatch):
     )
 
 
-def test_without_remote_each_language_has_one_voice():
+def test_without_remote_each_language_has_one_voice(monkeypatch):
+    """Forced off rather than read from config: this pins the behaviour
+    of the flag, so it must not depend on what the flag happens to be
+    set to today."""
+    monkeypatch.setattr(app_module, "_remote_spec", lambda: None)
+
     assert app_module._voice_chain("en") == ["piper:en_US-lessac-medium"]
     assert app_module._voice_chain("tl") == ["mms:mms-tts-tgl"]
 

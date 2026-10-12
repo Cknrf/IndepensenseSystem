@@ -46,7 +46,7 @@ from indepensense.config import (
     PIPER_VOICES,
     REMOTE_TTS_ENABLED,
     REMOTE_TTS_MODEL,
-    REMOTE_TTS_TIMEOUT_S,
+    REMOTE_TTS_RENDER_TIMEOUT_S,
     REMOTE_TTS_URL,
     REMOTE_TTS_VOICES,
     SUPPORTED_LANGUAGES,
@@ -58,9 +58,11 @@ from indepensense.voice.router import build_tts, remote_spec, voice_id
 
 # Resolved once: every hash and every render in this run must agree about
 # which languages are served remotely, and `main` reads it in two places.
+# The render budget, not the runtime one: this is a sequential batch the
+# user is not waiting on, and the server queues requests one at a time.
 _REMOTE = remote_spec(
     REMOTE_TTS_ENABLED, REMOTE_TTS_URL, REMOTE_TTS_VOICES,
-    REMOTE_TTS_MODEL, REMOTE_TTS_TIMEOUT_S,
+    REMOTE_TTS_MODEL, REMOTE_TTS_RENDER_TIMEOUT_S,
 )
 
 def main(argv: list[str] | None = None) -> int:
