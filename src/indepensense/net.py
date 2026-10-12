@@ -25,6 +25,7 @@ third-party target adds a dependency that can fail on its own, and when
 it does the error is silent in one caller and a spoken refusal in the
 other.
 """
+import socket
 import sys
 import threading
 import time
@@ -174,3 +175,51 @@ def reset_breakers() -> None:
     """
     with _breakers_lock:
         _breakers.clear()
+
+
+# RFC 5737 documentation space. Never assigned to a real host, so it
+# matches a default route if one exists and nothing else — unlike a
+# well-known resolver, which a carrier may blackhole with a specific
+# route. See `net.py`'s opening docstring for how that bit us before.
+_ROUTE_PROBE_ADDR = ("192.0.2.1", 33434)
+
+
+def has_network_route() -> bool:
+    """True if the kernel can pick a route off this machine.
+
+    **Sends nothing.** `connect()` on a UDP socket transmits no packets;
+    it only asks the kernel which interface and source address it would
+    use. With no SIM and no WiFi there is no default route, the call
+    fails immediately, and the answer costs ~0.2 ms.
+
+    This is the cheap half of staying usable offline. The expensive
+    failure is DNS: `socket.create_connection` resolves the hostname
+    before it applies any timeout, so on a dead link a lookup blocks for
+    however long `resolv.conf` retries — commonly 10-20 s — three times
+    per voice command. `HostBreaker` limits that to the *first* command;
+    this avoids it even on the first, for the case that actually matters
+    in the field, which is having no connection at all.
+
+    Deliberately not a reachability test. A route existing does not mean
+    the internet works, and proving that it does would mean sending
+    something and waiting — exactly the cost being avoided. The breaker
+    covers the route-exists-but-broken case; this covers no-route, and
+    between them the only unbounded stall left is the first command on a
+    link that is up but silent.
+
+    Unlike the breaker, a false answer here corrects itself instantly:
+    there is no cooldown, so the moment the modem reconnects the next
+    command uses the cloud again.
+    """
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    except OSError:
+        return True   # cannot tell; let the caller try rather than refuse
+    try:
+        probe.settimeout(0.05)
+        probe.connect(_ROUTE_PROBE_ADDR)
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()

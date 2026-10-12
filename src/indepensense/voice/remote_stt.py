@@ -66,7 +66,9 @@ and it belongs upstream of this driver rather than here.
 import sys
 from pathlib import Path
 
-from indepensense.net import breaker_for, require_https
+from indepensense.net import (
+    breaker_for, has_network_route, require_https,
+)
 from indepensense.voice.base import Transcript
 
 # Opus at 16 kHz mono. The endpoint accepts any rate and both channel
@@ -131,6 +133,10 @@ class RemoteSTT:
         if initial_prompt:
             fields["prompt"] = initial_prompt
 
+        # Checked before the breaker: no route is instant and self-
+        # healing, where the breaker holds for 30 s after it trips.
+        if not has_network_route():
+            raise RuntimeError("remote STT skipped: no network route")
         if not self._breaker.allow():
             raise RuntimeError("remote STT skipped: host failed recently")
 

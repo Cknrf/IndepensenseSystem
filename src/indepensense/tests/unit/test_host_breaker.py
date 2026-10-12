@@ -91,3 +91,63 @@ def test_reset_forgets_everything():
     net.reset_breakers()
 
     assert net.breaker_for("https://gpuer.example:8700/tts").allow()
+
+
+# --- the no-route short circuit -----------------------------------------------
+
+def test_the_route_check_sends_nothing_and_is_fast():
+    """A UDP connect() transmits no packets — it only asks the kernel
+    which interface it would use. That is what makes it usable on the
+    voice thread before every cloud call."""
+    import time
+
+    t = time.perf_counter()
+    net.has_network_route()
+    elapsed_ms = (time.perf_counter() - t) * 1000
+
+    assert elapsed_ms < 50, f"took {elapsed_ms:.1f} ms; must be negligible"
+
+
+def test_no_route_is_reported_as_no_route(monkeypatch):
+    """With no SIM and no WiFi the kernel has no default route and
+    connect() fails immediately — the case that hung the device."""
+    class _NoRoute:
+        def settimeout(self, _): pass
+        def connect(self, _): raise OSError(101, "Network is unreachable")
+        def close(self): pass
+
+    monkeypatch.setattr(net.socket, "socket", lambda *a, **kw: _NoRoute())
+
+    assert net.has_network_route() is False
+
+
+def test_an_unusable_socket_layer_does_not_refuse_the_call(monkeypatch):
+    """If the check itself cannot run, let the caller try rather than
+    deciding on its behalf that the network is down — a broken probe
+    must not become a broken device."""
+    def _boom(*a, **kw):
+        raise OSError("no sockets today")
+
+    monkeypatch.setattr(net.socket, "socket", _boom)
+
+    assert net.has_network_route() is True
+
+
+def test_the_route_check_has_no_cooldown(monkeypatch):
+    """Unlike the breaker, this corrects itself instantly: the moment the
+    modem reconnects the next command uses the cloud again, with no 30 s
+    wait."""
+    state = {"up": False}
+
+    class _Sock:
+        def settimeout(self, _): pass
+        def connect(self, _):
+            if not state["up"]:
+                raise OSError(101, "Network is unreachable")
+        def close(self): pass
+
+    monkeypatch.setattr(net.socket, "socket", lambda *a, **kw: _Sock())
+
+    assert net.has_network_route() is False
+    state["up"] = True
+    assert net.has_network_route() is True

@@ -53,7 +53,9 @@ other driver's docstring.
 import sys
 from pathlib import Path
 
-from indepensense.net import breaker_for, require_https
+from indepensense.net import (
+    breaker_for, has_network_route, require_https,
+)
 
 # What `router.voice_id` names clips rendered here. Includes the voice so
 # that changing it re-renders rather than silently serving the old audio,
@@ -139,6 +141,10 @@ class RemoteTTS:
             _write_empty_wav(output_path)
             return
 
+        # Checked before the breaker: no route is instant and self-
+        # healing, where the breaker holds for 30 s after it trips.
+        if not has_network_route():
+            raise RuntimeError("remote TTS skipped: no network route")
         if not self._breaker.allow():
             raise RuntimeError("remote TTS skipped: host failed recently")
 

@@ -75,7 +75,7 @@ from pathlib import Path
 
 from indepensense.intents.base import CloudAnswer, Intent, IntentResult
 from indepensense.intents.parser import parse_llm_response
-from indepensense.net import breaker_for
+from indepensense.net import breaker_for, has_network_route
 
 # Sent as the system message. Written for a device that speaks its output
 # aloud to a blind user, which drives every constraint here:
@@ -348,13 +348,14 @@ class MistralIntentParser:
     def parse(self, transcript: str) -> IntentResult:
         import requests  # lazy: keeps the module importable off-device
 
-        if not self._breaker.allow():
+        if not has_network_route() or not self._breaker.allow():
             # Skipped without a request, because the cost being avoided is
             # an unbounded DNS stall on the voice thread — see
             # `net.HostBreaker`. Reported as `transport` like any other
             # unreachable provider, so `FallbackIntentParser` hands over
             # to the local model exactly as it would on a timeout.
-            print("[mistral] skipped: host failed recently", file=sys.stderr)
+            print("[mistral] skipped: no route or host failed recently",
+                  file=sys.stderr)
             return IntentResult(
                 intent=Intent.UNKNOWN, parameters={}, raw_transcript=transcript,
                 raw_llm_response="", failure="transport", source="cloud",
@@ -362,9 +363,16 @@ class MistralIntentParser:
 
         try:
             response = self._post(self._payload(transcript), self._timeout_s)
+            # Recorded the moment a reply arrives, before its status is
+            # examined. The breaker exists to avoid an unbounded DNS
+            # stall, and a server that answers 429 or 500 proves there is
+            # no such stall — the host is reachable, it is just unhappy.
+            # Retrying that costs one bounded round trip, where treating
+            # it as unreachable would disable the cloud for 30 s over a
+            # problem the next request might not even hit.
+            self._breaker.record_success()
             response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"]
-            self._breaker.record_success()
         except (requests.RequestException, ValueError, KeyError, IndexError,
                 TypeError) as exc:
             # Timeouts land here too — `Timeout` is a `RequestException` —
