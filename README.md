@@ -521,6 +521,7 @@ the suite if the first two disagree.
 | [`docs/photon.md`](docs/photon.md) | Photon install, index data, systemd service |
 | [`docs/sim7600.md`](docs/sim7600.md) | SIM7600 module setup — cellular data and GPS |
 | [`docs/tts-api.md`](docs/tts-api.md) | Public remote TTS API on gpuer — MOSS-TTS-v1.5 and OmniVoice Filipino, `https://gpuer.techco.fi:8700/tts` |
+| [`docs/stt-evaluation.md`](docs/stt-evaluation.md) | Public Tagalog STT API on gpuer (Whisper large-v3-turbo, `https://gpuer.techco.fi:8710/stt`) and the evaluation behind it: turbo vs large-v3 vs NCSpeech FastConformer on Tagalog, Taglish, noise and Batangas place names |
 | [`docs/audio-portaudio.md`](docs/audio-portaudio.md) | **Open problem** — short audio cues are silently discarded; the workaround, the evidence, and the contradiction still unexplained |
 | [`docs/deferred.md`](docs/deferred.md) | Work consciously parked, and why — the source for Future Work |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreement and architecture decisions in force |
