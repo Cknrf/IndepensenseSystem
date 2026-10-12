@@ -217,4 +217,4 @@ def test_the_timeout_bounds_connect_and_read_separately(clip, monkeypatch):
 
     RemoteSTT(URL, timeout_s=20.0, compress=False).transcribe(clip, language="tl")
 
-    assert sent["timeout"] == (3.0, 20.0)
+    assert sent["timeout"] == (2.0, 20.0)

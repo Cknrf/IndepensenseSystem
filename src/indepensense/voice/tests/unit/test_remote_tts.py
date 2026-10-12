@@ -181,4 +181,4 @@ def test_the_timeout_bounds_connect_and_read_separately(tmp_path, monkeypatch):
 
     RemoteTTS(URL, "tl", "07", timeout_s=6.0).synthesize("hi", tmp_path / "a.wav")
 
-    assert sent["timeout"] == (3.0, 6.0)
+    assert sent["timeout"] == (2.0, 6.0)

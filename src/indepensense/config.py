@@ -986,12 +986,18 @@ REMOTE_STT_LANGUAGES = ("tl",)
 # side. ~160 KB of WAV becomes ~10 KB for the same transcript. Falls back
 # to sending WAV if the installed libsndfile cannot write Opus.
 REMOTE_STT_COMPRESS = True
-# Provisional, like REMOTE_TTS_TIMEOUT_S. The server reports 0.15-0.25 s
-# of processing for a 3-9 s clip, so the round trip and a ~10 KB upload
-# dominate; 20 s is loose on purpose because the fallback costs this plus
-# the local model's 5.29 s, and because this has not been measured from
-# the device. Re-measure over the modem and tighten it.
-REMOTE_STT_TIMEOUT_S = 20.0
+# The read budget. Provisional, but bounded by something firmer than a
+# guess at the latency: this is a blocking call on the *voice thread*,
+# and `_voice_cancel` cannot interrupt an HTTP request mid-flight. Every
+# second here is a second in which the repeat and emergency buttons do
+# nothing, which architecture decision #1 says they must never be.
+#
+# The server reports 0.15-0.25 s of processing for a 3-9 s clip and the
+# upload is ~10 KB of Opus, so ~0.5-1.5 s is the expected total. A
+# request still silent at 5 s is broken rather than slow, and waiting
+# longer only delays a fallback that was going to happen anyway. Worst
+# case is this plus `_CONNECT_TIMEOUT_S` plus the local model's 5.29 s.
+REMOTE_STT_TIMEOUT_S = 5.0
 
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 

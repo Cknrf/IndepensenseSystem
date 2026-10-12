@@ -79,7 +79,7 @@ _UPLOAD_TYPE = "audio/ogg"
 # constant in `voice/remote.py`. `requests` applies a scalar timeout per
 # phase, not to total elapsed time, so one number would mean double the
 # ceiling the config appears to set.
-_CONNECT_TIMEOUT_S = 3.0
+_CONNECT_TIMEOUT_S = 2.0
 
 
 class RemoteSTT:

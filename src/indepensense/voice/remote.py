@@ -66,7 +66,7 @@ ENGINE_NAME = "omnivoice"
 # to open the socket and the same again waiting for audio — double the
 # ceiling anyone reading the config would expect. Only spent when the
 # pooled socket is gone, which a batch render pays once.
-_CONNECT_TIMEOUT_S = 3.0
+_CONNECT_TIMEOUT_S = 2.0
 
 
 class RemoteTTS:
