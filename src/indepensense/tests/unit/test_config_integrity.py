@@ -65,3 +65,29 @@ def test_the_two_gpuer_urls_are_not_the_same_name():
     assert not config_module.TTS_API_BASE_URL.endswith("/tts"), (
         "tts_api_bench appends its own path to this"
     )
+
+
+def test_no_cloud_model_is_a_floating_alias():
+    """`-latest` moves, and a thesis that quotes an accuracy figure needs
+    the model that produced it to still exist.
+
+    This is the same argument architecture decision 3 makes for the local
+    models, which load from directories laid out by `fetch_models` rather
+    than resolving a Hugging Face repo id at runtime: the weights in use
+    should be the ones that were tested. A provider alias is the cloud
+    version of the same hazard, and it drifts without any commit to show
+    for it.
+
+    Re-pinning is a deliberate act: change the ID, re-run `llm_probe`,
+    update the measured table in `config.py`.
+    """
+    models = {
+        name: value for name, value in vars(config_module).items()
+        if name.endswith("_MODEL") and isinstance(value, str)
+    }
+    floating = {n: v for n, v in models.items() if v.endswith("-latest")}
+
+    assert not floating, (
+        f"floating model aliases: {floating}. Pin the dated ID and re-run "
+        f"the probe that produced the numbers in config.py."
+    )

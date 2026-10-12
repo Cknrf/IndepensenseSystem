@@ -1294,13 +1294,24 @@ CLOUD_LLM_API_KEY_ENV = "INDEPENSENSE_CLOUD_API_KEY"
 # is markedly faster and cheaper for that. Revisit only if answer quality
 # proves inadequate — not for its own sake.
 #
+# Pinned to the dated ID rather than `mistral-small-latest`, for the same
+# reason `NLU_CLOUD_MODEL` is: the alias moves, and a thesis that quotes
+# a figure needs the model that produced it to still exist. Confirmed
+# 2026-10-13 that `-latest` resolved to this.
+#
+# Deliberately a separate literal from `NLU_CLOUD_MODEL` rather than an
+# alias of it. The two happen to be the same model today, but they are
+# different jobs — free prose against classification over a fixed label
+# set — and either could move without the other. (It also could not be
+# an alias: `NLU_CLOUD_MODEL` is defined further down this file.)
+#
 # 100 max tokens is a latency control first and a cost control second.
 # Generation time scales with output length, so this is the biggest lever
 # available; the system prompt also asks for at most 40 words, because
 # `max_tokens` truncates mid-sentence while an instruction yields a
 # complete short answer.
 CLOUD_LLM_URL = "https://api.mistral.ai/v1/chat/completions"
-CLOUD_LLM_MODEL = "mistral-small-latest"
+CLOUD_LLM_MODEL = "mistral-small-2603"
 CLOUD_LLM_MAX_TOKENS = 100
 
 # 10 s, and the constraint is the user's patience, not the provider's.
