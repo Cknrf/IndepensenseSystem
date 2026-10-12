@@ -91,6 +91,25 @@ Environment="PYTHONUNBUFFERED=1"
 #
 # It is only half the fix — the directory exists only while that user has a
 # session. See `loginctl enable-linger` in this directory's README.
+# Bound how long a name lookup may stall. glibc resolves before any
+# socket timeout applies — `socket.create_connection` calls getaddrinfo
+# first — so none of the app's own deadlines cover DNS. On a link that
+# blackholes packets, which is what a pulled SIM leaves behind when the
+# modem keeps a stale default route, the resolver never answers and the
+# defaults retry for a long time. Measured on this device, 2026-10-13,
+# against a blackholed nameserver:
+#
+#     default                            20.0 s per lookup
+#     timeout:1 attempts:1                2.0 s per lookup
+#
+# A voice command makes three lookups (STT, NLU, TTS), so that is a
+# minute against six seconds. `net.HostBreaker` already limits the cost
+# to the first command after the link dies; this bounds that one too.
+#
+# Set here rather than in /etc/resolv.conf because Tailscale owns that
+# file and overwrites it — and because scoping it to this unit leaves
+# the rest of the Pi's DNS behaviour alone.
+Environment="RES_OPTIONS=timeout:1 attempts:1"
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
 ExecStart=/home/cknrf/Desktop/thesis/IndepensenseSystem/.venv/bin/python -m indepensense.app
 Restart=on-failure
