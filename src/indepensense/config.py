@@ -133,9 +133,6 @@ OBSTACLE_RHYTHM_START_CM = {
 #   50 cm: ~4 Hz (very close)
 #   <20 cm: 8 Hz (contact/imminent)
 OBSTACLE_RHYTHM_MAX_HZ = 8.0  # Fastest rhythm (contact distance)
-# Smoothing: median of recent readings reduces cane sway jitter (hand movement
-# in centimetres), preventing frequency stutter during normal grip adjustments.
-OBSTACLE_RHYTHM_SMOOTHING_N = 3
 # Each pulse. Long enough for a coin motor to spin up and be felt (they
 # take ~30-50 ms), short enough to leave a gap at 8 Hz (125 ms period).
 OBSTACLE_RHYTHM_PULSE_S = 0.08
@@ -1541,10 +1538,14 @@ BACKEND_PROBE_URL = BACKEND_URL
 # which is the reason not to raise it casually.
 REACHABILITY_PROBE_TIMEOUT_S = 2.0
 
-# Remote TTS on the gpuer server (MOSS-TTS-v1.5 and the OmniVoice Filipino
-# fine-tune). Not used by the runtime: only `voice/tests/manual/tts_api_bench`
-# reads it. See docs/tts-api.md.
-REMOTE_TTS_URL = "https://gpuer.techco.fi:8700"
+# Base URL of the gpuer TTS API, for `voice/tests/manual/tts_api_bench`,
+# which appends its own path and compares models. Distinct from
+# `REMOTE_TTS_URL` above, which is the full endpoint the runtime driver
+# posts to — the two were briefly the same name, and since Python
+# silently keeps the last assignment the driver inherited this base,
+# posted to the root, and every Tagalog render failed with a 404.
+# `test_config_has_no_duplicate_assignments` now makes that impossible.
+TTS_API_BASE_URL = "https://gpuer.techco.fi:8700"
 
 # Per-device credential, written by provisioning as one line:
 #

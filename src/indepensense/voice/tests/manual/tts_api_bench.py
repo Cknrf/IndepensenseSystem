@@ -1,6 +1,6 @@
 """Manual benchmark: which remote TTS model is faster, MOSS-TTS-v1.5 or OmniVoice?
 
-Both run behind the API on the gpuer server (`config.REMOTE_TTS_URL`,
+Both run behind the API on the gpuer server (`config.TTS_API_BASE_URL`,
 documented in docs/tts-api.md). This sends the same sentences to each and
 reports request time and real-time factor, **per language**, because the
 two languages give different results and averaging them would describe
@@ -62,7 +62,7 @@ from pathlib import Path
 
 import requests
 
-from indepensense.config import PERF_LOG_DIR, REMOTE_TTS_URL
+from indepensense.config import PERF_LOG_DIR, TTS_API_BASE_URL
 from indepensense.intents.messages import LANGUAGES, MESSAGES
 from indepensense.voice.tests.manual.latency_bench import format_stats, summarise
 
@@ -174,8 +174,8 @@ def _parse_args():
     parser = argparse.ArgumentParser(
         description="Compare MOSS-TTS-v1.5 and OmniVoice on the remote TTS API.",
     )
-    parser.add_argument("--url", default=REMOTE_TTS_URL,
-                        help=f"API base URL (default: {REMOTE_TTS_URL})")
+    parser.add_argument("--url", default=TTS_API_BASE_URL,
+                        help=f"API base URL (default: {TTS_API_BASE_URL})")
     parser.add_argument("--model", choices=[*MODELS, "both"], default="both")
     parser.add_argument("--language", choices=[*LANGUAGES, "both"], default="both")
     parser.add_argument("--sentences", type=int, default=15,
