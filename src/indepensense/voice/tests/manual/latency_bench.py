@@ -173,8 +173,26 @@ def audio_duration_s(path: Path) -> float:
 
 
 def find_clips(directory: Path, pattern: str, limit: int | None) -> list[Path]:
-    """Recordings to replay, oldest first so runs are reproducible."""
-    clips = sorted(directory.glob(pattern))
+    """Recordings to replay, oldest first so runs are reproducible.
+
+    Dotfiles are skipped. A corpus that has been through macOS on a
+    non-native filesystem — a USB stick, an SMB share — carries an
+    AppleDouble `._<name>.wav` sidecar beside every real recording,
+    holding the resource fork rather than audio. They match `*.wav`, so
+    `glob` returns them, and the first one reaching faster-whisper aborts
+    the whole run with `InvalidDataError` after the models have already
+    loaded. Found on the deployed Pi, where 1,415 of 1,467 matches were
+    sidecars and only 52 were recordings.
+
+    Filtering on the leading dot rather than the `._` prefix
+    specifically, because every convention for "this file is not content"
+    on these platforms starts the same way, and a benchmark should not
+    die on one of them two minutes into loading models.
+    """
+    clips = sorted(
+        path for path in directory.glob(pattern)
+        if not path.name.startswith(".")
+    )
     return clips[:limit] if limit else clips
 
 
