@@ -85,7 +85,7 @@ def test_initial_index_skips_first_straight():
 # --- announce cue ------------------------------------------------------------
 
 def test_announce_fires_within_threshold():
-    m = NavigationMonitor(announce_distance_m=100.0, haptic_distance_m=20.0, advance_distance_m=5.0)
+    m = NavigationMonitor(announce_distance_m=100.0, turn_now_distance_m=20.0, advance_distance_m=5.0)
     m.set_route(_make_route(), "Test")
 
     # Position 80m from midpoint — inside announce threshold.
@@ -123,29 +123,29 @@ def test_announce_does_not_fire_outside_threshold():
     assert cues == []
 
 
-# --- haptic cue --------------------------------------------------------------
+# --- turn_now cue --------------------------------------------------------------
 
-def test_haptic_fires_within_haptic_threshold_with_direction():
-    m = NavigationMonitor(announce_distance_m=100.0, haptic_distance_m=20.0, advance_distance_m=5.0)
+def test_turn_now_fires_within_turn_now_threshold_with_direction():
+    m = NavigationMonitor(announce_distance_m=100.0, turn_now_distance_m=20.0, advance_distance_m=5.0)
     m.set_route(_make_route(), "Test")
 
-    # Position ~15m south of midpoint — inside 20m haptic threshold.
+    # Position ~15m south of midpoint — inside the 20 m turn_now threshold.
     very_close = Coordinate(lat=14.00117, lon=121.0000)  # ~14.5m from midpoint
     cues = m.check(very_close)
 
-    haptics = [c for c in cues if c.kind == "haptic"]
-    assert len(haptics) == 1
-    assert haptics[0].direction == "left"
+    turn_cues = [c for c in cues if c.kind == "turn_now"]
+    assert len(turn_cues) == 1
+    assert turn_cues[0].direction == "left"
 
 
-def test_haptic_does_not_repeat():
+def test_turn_now_does_not_repeat():
     m = NavigationMonitor()
     m.set_route(_make_route(), "Test")
 
     very_close = Coordinate(lat=14.00117, lon=121.0000)
-    m.check(very_close)  # first call fires haptic
+    m.check(very_close)  # first call fires turn_now
     cues = m.check(very_close)  # second should not
-    assert not any(c.kind == "haptic" for c in cues)
+    assert not any(c.kind == "turn_now" for c in cues)
 
 
 # --- advancement -------------------------------------------------------------
@@ -213,7 +213,7 @@ def test_arrive_cue_names_destination():
 
 # --- direction mapping guard ------------------------------------------------
 
-def test_haptic_direction_matches_instruction():
+def test_turn_now_direction_matches_instruction():
     """Haptic cue's direction field must match the instruction's."""
     right_route = Route(
         distance_m=145.0,
@@ -229,9 +229,9 @@ def test_haptic_direction_matches_instruction():
 
     very_close = Coordinate(lat=14.00117, lon=121.0000)
     cues = m.check(very_close)
-    haptics = [c for c in cues if c.kind == "haptic"]
-    assert len(haptics) == 1
-    assert haptics[0].direction == "right"
+    turn_cues = [c for c in cues if c.kind == "turn_now"]
+    assert len(turn_cues) == 1
+    assert turn_cues[0].direction == "right"
 
 
 # --- distance rounding ------------------------------------------------------
@@ -272,14 +272,14 @@ def test_set_route_resets_state():
     """Calling set_route on an active monitor resets latches and cursor."""
     m = NavigationMonitor()
     m.set_route(_make_route(), "First")
-    # Fire a haptic + advance a bit.
+    # Fire a turn_now + advance a bit.
     m.check(Coordinate(lat=14.00117, lon=121.0000))
 
     m.set_route(_make_route(), "Second")
     assert m.current_index() == 1
-    # Same position should now announce/haptic again (fresh latches).
+    # Same position should now announce/turn_now again (fresh latches).
     cues = m.check(Coordinate(lat=14.00117, lon=121.0000))
-    assert any(c.kind == "haptic" for c in cues)
+    assert any(c.kind == "turn_now" for c in cues)
 
 
 # --- off-route detection ----------------------------------------------------
@@ -491,7 +491,7 @@ def test_the_destination_name_is_available_while_active():
 # can say so in about five.
 #
 # Additive by design: every assertion below about advancement, announces and
-# haptics elsewhere in this file still holds, because passing no heading
+# turn_cues elsewhere in this file still holds, because passing no heading
 # changes nothing.
 
 def _turning_route() -> Route:

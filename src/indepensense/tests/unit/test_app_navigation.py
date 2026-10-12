@@ -1,8 +1,10 @@
 """Unit tests for navigation cue routing in `app.py`.
 
 `NavigationMonitor` decides *what* cue to fire and is tested separately.
-This covers what `app.py` does with those cues: which motor a direction
-maps to, and when speech is suppressed because the user is mid-command.
+This covers what `app.py` does with those cues: what each one says, and
+when speech is suppressed because the user is mid-command. Every cue is
+speech now — the motors carried direction until it was found that all
+three share the cane handle and arrive at the hand as one buzz.
 """
 import threading
 import time
@@ -11,6 +13,7 @@ import pytest
 
 from indepensense.app_mock import MockApp
 from indepensense.feedback.mock import MockBuzzer, MockVibrationMotor
+from indepensense.intents import messages
 from indepensense.navigation.monitor import NavigationCue
 from indepensense.sensors.base import GPSFix
 
@@ -35,21 +38,6 @@ class _RecordingApp(MockApp):
             self.critical.append(text)
 
 
-def _wait_until(predicate, timeout_s: float = 2.0) -> bool:
-    """Poll `predicate` until true or the timeout expires.
-
-    Haptic patterns run on spawned threads now — asserting on motor events
-    the instant `_fire_navigation_cue` returns would be racing the very
-    thread that exists to keep the main loop free.
-    """
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return predicate()
-
-
 @pytest.fixture
 def app():
     instance = _RecordingApp()
@@ -60,22 +48,6 @@ def app():
     return instance
 
 
-# --- direction to motor ------------------------------------------------------
-
-def test_directions_map_to_their_own_motor(app):
-    assert app._motor_for_direction("left") is app.left_motor
-    assert app._motor_for_direction("right") is app.right_motor
-    assert app._motor_for_direction("straight") is app.front_motor
-
-
-def test_unknown_directions_map_to_nothing(app):
-    """Better a missing cue than the wrong one — a left-turn buzz on the
-    right side of the body would actively mislead."""
-    assert app._motor_for_direction("arrive") is None
-    assert app._motor_for_direction("backwards") is None
-    assert app._motor_for_direction(None) is None
-
-
 # --- cue routing -------------------------------------------------------------
 
 def test_announce_is_spoken(app):
@@ -83,31 +55,44 @@ def test_announce_is_spoken(app):
     assert app.spoken == ["In 90 meters, turn left"]
 
 
-def test_haptic_pulses_only_the_matching_motor(app):
-    app._fire_navigation_cue(NavigationCue(kind="haptic", direction="left"))
+def test_turn_now_speaks_the_direction_alone(app):
+    """Two words at the junction. The street name and the distance were
+    spoken 80 m back; repeating them here would still be playing while
+    the user is in the road."""
+    app._fire_navigation_cue(NavigationCue(kind="turn_now", direction="left"))
 
-    assert _wait_until(lambda: app.left_motor.events)
-    assert app.right_motor.events == []
-    assert app.front_motor.events == []
+    assert app.spoken == ["Turn left."]
+
+
+def test_turn_now_with_an_unknown_direction_says_nothing(app):
+    """Better silence than the wrong instruction: "arrive" reaching this
+    branch and being read as a turn would send the user off a kerb."""
+    app._fire_navigation_cue(NavigationCue(kind="turn_now", direction="arrive"))
+    app._fire_navigation_cue(NavigationCue(kind="turn_now", direction=None))
+
     assert app.spoken == []
 
 
-def test_arrive_speaks_and_pulses_every_motor(app):
-    """Arrival is the cue the user most needs, so it is both spoken and
-    unmistakable to feel."""
+def test_turn_now_uses_the_same_words_as_turn_to_face(app):
+    """One phrase to learn, not two. Both paths go through
+    `_ORIENTATION_MESSAGE_KEYS` precisely so they cannot drift."""
+    app._fire_navigation_cue(NavigationCue(kind="turn_now", direction="right"))
+
+    assert app.spoken == [
+        messages.get("nav.turn_right", app.language.current)
+    ]
+
+
+def test_arrive_is_spoken(app):
     app._fire_navigation_cue(NavigationCue(kind="arrive", text="You have arrived at Home."))
 
     assert app.spoken == ["You have arrived at Home."]
-    for motor in (app.front_motor, app.left_motor, app.right_motor):
-        assert _wait_until(lambda m=motor: m.events)
 
 
-def test_off_route_speaks_and_pulses(app):
+def test_off_route_is_spoken(app):
     app._fire_navigation_cue(NavigationCue(kind="off_route", text="You are off the planned route."))
 
     assert app.spoken == ["You are off the planned route."]
-    for motor in (app.front_motor, app.left_motor, app.right_motor):
-        assert _wait_until(lambda m=motor: m.events)
 
 
 def test_an_unrecognised_cue_kind_is_ignored(app):
@@ -131,42 +116,55 @@ def test_off_route_is_suppressed_while_voice_is_busy(app):
     assert app.spoken == []
 
 
-def test_haptic_still_fires_while_voice_is_busy(app):
-    """The reason haptics exist: a silent channel that works when the
-    audio one is occupied."""
+def test_turn_now_is_suppressed_while_voice_is_busy(app):
+    """It used to fire regardless, because it was a motor pulse and could
+    not collide with speech. Now it can, and it is the one cue it is safe
+    to drop: the turn is 20 m ahead and the monitor is still polling."""
     app._voice_active.set()
-    app._fire_navigation_cue(NavigationCue(kind="haptic", direction="right"))
-    assert _wait_until(lambda: app.right_motor.events)
+    app._fire_navigation_cue(NavigationCue(kind="turn_now", direction="right"))
+
+    assert app.spoken == []
 
 
-def test_arrival_still_pulses_while_voice_is_busy(app):
-    """Speech is deferred but the haptic half is not — the user should
-    still learn they arrived."""
+def test_arrival_is_spoken_even_while_voice_is_busy(app):
+    """Arrival fires exactly once ever — `check()` clears the route in the
+    same breath as emitting it — so deferring it loses it outright. It
+    used to survive a busy pipeline as a motor pulse; nothing else covers
+    it now, so this one cue ignores the guard."""
     app._voice_active.set()
     app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
 
-    assert app.spoken == []
-    assert _wait_until(lambda: app.front_motor.events)
+    assert app.spoken == ["arrived"]
 
 
 # --- containment -------------------------------------------------------------
 
-def test_a_raising_motor_does_not_propagate(app):
+def test_a_raising_announce_does_not_propagate(app):
     """Cue firing runs on the main loop; an exception here would take
     down fall and obstacle detection with it."""
-    class _BrokenMotor(MockVibrationMotor):
-        def pulse(self, *args, **kwargs):
-            raise OSError("GPIO gone")
+    def _boom(text, critical=False):
+        raise OSError("audio gone")
 
-    app.left_motor = _BrokenMotor()
-    app._fire_navigation_cue(NavigationCue(kind="haptic", direction="left"))
-
-
-def test_missing_motors_are_survivable(app):
-    app.front_motor = app.left_motor = app.right_motor = None
-    app._fire_navigation_cue(NavigationCue(kind="haptic", direction="left"))
+    app._announce = _boom
+    app._fire_navigation_cue(NavigationCue(kind="turn_now", direction="left"))
     app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
-    assert app.spoken == ["arrived"]
+
+
+def test_no_motor_is_touched_by_any_navigation_cue(app):
+    """The motors are obstacle-only now. A navigation cue reaching them
+    would be the directional encoding creeping back in."""
+    for cue in (
+        NavigationCue(kind="announce", text="In 90 meters, turn left"),
+        NavigationCue(kind="turn_now", direction="left"),
+        NavigationCue(kind="arrive", text="arrived"),
+        NavigationCue(kind="off_route", text="off route"),
+        NavigationCue(kind="missed_turn", text="Turn left", direction="left"),
+    ):
+        app._fire_navigation_cue(cue)
+
+    time.sleep(0.05)   # a spawned haptic would have landed by now
+    for motor in (app.front_motor, app.left_motor, app.right_motor):
+        assert motor.events == []
 
 
 # --- polling ----------------------------------------------------------------
@@ -249,7 +247,7 @@ def test_cues_from_the_monitor_reach_the_actuators(app):
         def check(self, position, now=None, heading=None):
             return [
                 NavigationCue(kind="announce", text="In 50 meters, turn right"),
-                NavigationCue(kind="haptic", direction="right"),
+                NavigationCue(kind="turn_now", direction="right"),
             ]
 
     app.nav_monitor = _CueingMonitor()
@@ -257,17 +255,7 @@ def test_cues_from_the_monitor_reach_the_actuators(app):
     app._last_nav_check = 0.0
     app._check_navigation()
 
-    assert app.spoken == ["In 50 meters, turn right"]
-    assert _wait_until(lambda: app.right_motor.events)
-
-
-def test_warning_lock_is_released_after_a_cue(app):
-    """Cue firing takes `_warning_lock` to avoid racing obstacle patterns
-    on the same actuators. Holding it would deadlock every later
-    warning."""
-    app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
-    assert app._warning_lock.acquire(timeout=1.0)
-    app._warning_lock.release()
+    assert app.spoken == ["In 50 meters, turn right", "Turn right."]
 
 
 # --- missed turns ------------------------------------------------------------
@@ -275,9 +263,10 @@ def test_warning_lock_is_released_after_a_cue(app):
 # The monitor decides whether a turn was missed; this covers what `app.py`
 # does with the verdict.
 
-def test_a_missed_turn_is_spoken_and_pulsed(app):
-    """Both channels: the correction matters enough that a user who missed
-    the speech should still feel which side they should have gone."""
+def test_a_missed_turn_is_spoken(app):
+    """It names the turn that was missed rather than issuing a correction:
+    the wearable cannot reroute, so it says what it believes happened and
+    lets the user decide."""
     app._fire_navigation_cue(
         NavigationCue(kind="missed_turn", text="Turn left onto Rizal Street",
                       direction="left")
@@ -285,16 +274,6 @@ def test_a_missed_turn_is_spoken_and_pulsed(app):
 
     assert len(app.spoken) == 1
     assert "Rizal Street" in app.spoken[0]
-    assert _wait_until(lambda: app.left_motor.events)
-
-
-def test_a_missed_turn_pulses_the_side_it_should_have_been(app):
-    app._fire_navigation_cue(
-        NavigationCue(kind="missed_turn", text="Turn right onto B", direction="right")
-    )
-
-    assert _wait_until(lambda: app.right_motor.events)
-    assert app.left_motor.events == []
 
 
 def test_a_missed_turn_is_deferred_while_the_user_is_talking(app):
@@ -309,8 +288,8 @@ def test_a_missed_turn_is_deferred_while_the_user_is_talking(app):
     assert app.spoken == []
 
 
-def test_a_missed_turn_with_no_motor_still_speaks(app):
-    app.left_motor = None
+def test_a_missed_turn_with_no_motors_at_all_still_speaks(app):
+    app.front_motor = app.left_motor = app.right_motor = None
 
     app._fire_navigation_cue(
         NavigationCue(kind="missed_turn", text="Turn left", direction="left")

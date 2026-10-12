@@ -327,9 +327,28 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Mukhang nalampasan mo ang liko. Ang tagubilin ay: {instruction}.",
     },
 
-    # Turn-to-face. Only two spoken lines in the whole interaction — the
-    # turning itself is haptic, because a spoken angle lags the movement it
-    # describes and competes with traffic. See navigation/orientation.py.
+    # Turn-to-face, and the at-the-turn cue. Two words each, deliberately:
+    # these are *repeated* until the user comes round, so every syllable is
+    # paid for on each cycle. All three are static (no placeholder), which
+    # is what makes repeating them affordable — they are pre-rendered clips
+    # replayed from disk, not synthesis. See navigation/orientation.py.
+    #
+    # "Turn around" is an order here, where `nav.missed_turn` above refuses
+    # to give one. The difference is that the device knows where the user
+    # is pointing and that they have not started walking yet; mid-route it
+    # knows neither.
+    "nav.turn_left": {
+        "en": "Turn left.",
+        "tl": "Kumaliwa ka po.",
+    },
+    "nav.turn_right": {
+        "en": "Turn right.",
+        "tl": "Kumanan ka po.",
+    },
+    "nav.turn_around": {
+        "en": "Turn around.",
+        "tl": "Umikot ka po.",
+    },
     "nav.walk_straight_ahead": {
         "en": "Walk straight ahead.",
         "tl": "Dumiretso ka na po.",

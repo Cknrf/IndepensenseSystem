@@ -36,7 +36,7 @@ The core objective of this thesis is to develop a lightweight, real-time assisti
 ## System Objectives
 
 - Provide real-time obstacle detection using sensors and computer vision
-- Assist navigation through directional feedback (audio + vibration)
+- Assist navigation through spoken turn-by-turn guidance, with vibration reserved for obstacle proximity
 - Detect falls or abnormal motion using an IMU
 - Enable emergency SOS alert triggering
 - Allow guardians to monitor user status remotely
@@ -59,7 +59,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Real-time obstacle detection, alerting on an obstacle getting *closer* rather than on one merely being present — a tier fires once on entry and re-arms only after the obstacle recedes past a hysteresis band, so a cane that is never quite still does not buzz continuously. Head height gets an extra far tier (200 cm) because the cane cannot reach it. The chest IMU classifies the wearer as still or walking: setting off with an obstacle already in range re-alerts it. While walking, the closest obstacle drives a proximity rhythm — short pulses that speed up as it gets closer (about 1/s at 100 cm, 3–5/s on all three motors inside 50 cm, 8/s inside 30 cm), the parking-sensor pattern of commercial travel aids. Standing still stays quiet apart from a danger reminder every 15 s
 - Obstacle warnings are **haptic only**. The buzzer is reserved for emergencies, because it is the only output a bystander can perceive and that exclusivity is what gives it meaning — a sound that fires on both an awning and a medical emergency tells a bystander nothing by its presence, and trains the wearer to tune it out. The danger tier pulses all three motors, which is the most distinctive pattern the device has
 - Multi-sensor distance estimation
-- Vibration directional feedback, with speech for turn-by-turn instructions
+- Spoken turn-by-turn instructions: the street name and distance at 100 m, then the direction on its own ("turn left") at 20 m. **Navigation never uses the vibration motors.** All three sit in the one cane handle and their vibration couples through its shell, so the hand feels a single buzz and cannot tell the left motor from the right — the direction was in the wiring diagram, not in anything the wearer could perceive. The motors keep obstacle proximity, where the signal is intensity rather than direction
 - Turn-by-turn cueing with off-route warnings
 - Destination confirmation before routing — the chosen place is read back with its distance, and nothing starts until the user presses to confirm
 - Candidate re-ranking, so "the nearest Jollibee" is decided locally by distance rather than by the geocoder's own relevance score
@@ -67,7 +67,7 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Progress on demand: how much further there is to walk, measured along the route rather than as the crow flies
 
 **Compass-assisted navigation** *(active: the magnetometer is calibrated on the assembled unit — `COMPASS_CALIBRATED = True` in `config.py`)*
-- Turn-to-face guidance: before the first step, a motor pulses on the side to turn toward, faster as the user comes round
+- Turn-to-face guidance: before the first step, the device repeats a two-word instruction — "turn left", or "turn around" past 135° — with a shorter gap as the user comes round, stopping at ±15° with "walk straight ahead". ±15° rather than an exact bearing because the target bearing is itself computed from a GPS fix with several metres of error, measured to a point 15 m away: the uncertainty in the number the user is being asked to face is already about 15°, so demanding tighter would be spinning them to chase GPS noise
 - Departure heading passed to the router, so a route does not open by telling the user to turn around
 - Turn verification — the compass notices a missed turn in about five seconds, where position-based off-route detection takes fifteen to thirty
 
@@ -122,7 +122,7 @@ This repository holds the **on-device runtime** — everything that runs on the 
 - QMC5883P magnetometer — 3-axis compass for heading (standalone; sold as a QMC5883L but answers at 0x2C, and the MPU9250 bought before it was a relabelled MPU6500 with no magnetometer at all)
 - Raspberry Pi Camera Module — computer vision input
 - SIM7600 module — cellular data + GPS
-- 3× Vibration motors — front / left / right directional feedback
+- 3× Vibration motors — obstacle proximity. Mounted in the one cane handle, so they act as a single vibrator with three intensity steps rather than three directional channels
 - Buzzer — audio alerts
 - NEWMSNR Ear Clip Earphones Wired Long Wear — USB open-ear headset, mic + speaker in one device (the Pi 5 has no 3.5 mm jack; open-ear keeps the user's ambient hearing)
 - Push-to-talk + SOS buttons + Repeat/stop button (replays the last response, or interrupts speech in progress)

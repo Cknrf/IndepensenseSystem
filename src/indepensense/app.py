@@ -20,7 +20,7 @@ well-scoped background threads for I/O concerns:
     parse → execute → TTS → play. Emergency signal aborts mid-way.
     Two sub-steps also run here and also block only this thread:
     destination confirmation (speak the choice, wait for a press) and
-    turn-to-face orientation (pulse the user round to the route's
+    turn-to-face orientation (speak the user round to the route's
     opening bearing). Both are bounded and both abort on emergency.
   - Emergency button callback: sets cancel flag AND runs the emergency
     handler directly. This preempts voice AND fires the alert without
@@ -31,8 +31,8 @@ well-scoped background threads for I/O concerns:
     flight, or replays the last response — whichever applies. Every
     press answers with a cue, because silence is also what a dead
     device sounds like.
-  - Warning-pattern threads (per obstacle event, and per navigation
-    haptic): play a vibration + buzzer pattern under a mutex so
+  - Warning-pattern threads (per obstacle event): play a vibration
+    pattern under a mutex so
     overlapping patterns don't race. Every driver's `pulse`/`beep`
     sleeps for the pattern's duration, so these can never be called
     from the loop directly.
@@ -80,6 +80,18 @@ that channel on them tells a bystander nothing by its presence and trains
 the wearer to tune it out. The danger tier already pulses all three
 motors, which is the most distinctive haptic available; adding a beep
 bought intensity, not information. See `_play_warning_pattern`.
+
+**And obstacles are the only thing the motors signal.** Navigation used
+to pulse them too, with the direction carried by *which* of the three
+fired. All three are mounted in the one cane handle and their vibration
+couples through its shell, so the hand feels a single buzz and cannot
+tell the left motor from the right — the device has one vibrator with
+three intensity steps, and the directional encoding was a property of the
+wiring diagram rather than of anything the wearer could perceive. Every
+navigation cue is therefore now speech (`_fire_navigation_cue`,
+`_orient_towards_route`), and the motor count survives as loudness: front
+alone for the warning tier, all three for danger. Intensity is a thing
+one coupled handle *can* express.
 
 Thresholds: 200 cm (far, TOP only), 100 cm (warning) and 50 cm (danger).
 Alerts fire on an obstacle getting *closer*, not on one being present:
@@ -245,6 +257,7 @@ from indepensense.config import (
     OBSTACLE_RHYTHM_START_CM,
     OLLAMA_URL,
     ORIENTATION_ALIGNED_TOLERANCE_DEG,
+    ORIENTATION_AROUND_DEG,
     ORIENTATION_BANDS,
     ORIENTATION_MIN_TARGET_DISTANCE_M,
     ORIENTATION_RELEASE_TOLERANCE_DEG,
@@ -493,6 +506,19 @@ def _notify_systemd(state: str) -> None:
 _BOOT_CLIPS: tuple[str, ...] = (
     "system.starting", "language.greeting", "system.voice_unavailable"
 )
+
+# Turn directions → the message spoken for them. Shared by turn-to-face
+# orientation and the at-the-turn cue, which is the point: the wearer hears
+# the same two words whether they are being pointed at the route or told a
+# turn has arrived, so there is one phrase to learn rather than two.
+# A direction with no entry here is spoken as nothing rather than crashing
+# — `.get` returning None is handled at both call sites.
+_ORIENTATION_MESSAGE_KEYS: dict[str | None, str] = {
+    "left": "nav.turn_left",
+    "right": "nav.turn_right",
+    "around": "nav.turn_around",
+    "straight": "nav.walk_straight_ahead",
+}
 
 # Obstacle tiers, ordered. `None` is "clear", so comparing ranks answers
 # "did this get worse?" without a chain of string equality checks.
@@ -1139,7 +1165,7 @@ class App:
         self.ocr: TesseractOCR | None = None
 
         # Navigation monitor: tracks user progress against the active route
-        # and returns cues (announce / haptic / arrive) as they get near
+        # and returns cues (announce / turn_now / arrive) as they get near
         # each turn. Owned here so it can be given to the executor
         # (which calls set_route/clear on intent) AND polled from the
         # main loop (which fires the cues).
@@ -1169,7 +1195,7 @@ class App:
         self._last_heading_check = 0.0
         self._last_heading_deg: float | None = None
 
-        # Obstacle detection: two DYP-A22 sensors + haptic + audio feedback.
+        # Obstacle detection: two DYP-A22 sensors + haptic feedback.
         self.top_sensor: DYPA22 | None = None
         self.bottom_sensor: DYPA22 | None = None
         self.buzzer: GPIOBuzzer | None = None
@@ -1726,7 +1752,7 @@ class App:
                 self._check_battery_and_alert()
 
                 # Navigation cues — check every ~1 s against the active
-                # route. Fires announce/haptic/arrive as user approaches
+                # route. Fires announce/turn_now/arrive as user approaches
                 # turns. No-op when there's no active navigation.
                 self._check_navigation()
 
@@ -2314,17 +2340,25 @@ The comparisons are inclusive, so a threshold names the percentage
         - "announce": speak the text (skipped if the voice pipeline is
           busy — we don't want to talk over a user's command or a
           response mid-play).
-        - "haptic": pulse the direction-matching motor.
-        - "arrive": speak + pulse all motors (louder cue for the finish).
-        - "off_route": speak + a distinctive all-motor pulse.
+        - "turn_now": speak the direction on its own, at the turn.
+        - "arrive", "missed_turn", "off_route": speak the text.
+
+        **Every cue here is speech.** All five used to add a motor pattern
+        alongside, with the direction encoded in *which* motor fired. The
+        three motors share one cane handle and their vibration couples
+        through it, so the hand feels one buzz and cannot tell left from
+        right — the direction was never actually delivered. Four of these
+        cues already spoke the same information, so the pattern was
+        duplicated emphasis; `turn_now` carried nothing else and is now
+        spoken too. The motors keep obstacle proximity, where the signal is
+        intensity rather than direction, and that is all they are.
 
         **This runs on the 100 Hz loop, so nothing here may block.** It
         used to: speech went through `_speak_error` (~3-4 s of synthesis
         and playback) and the motor pulses slept inline (~0.3-0.5 s), which
         stopped fall detection and obstacle polling for the whole of every
-        turn instruction. Speech now goes to the `Announcer`; haptics go to
-        a spawned thread under `_warning_lock`, matching what
-        `_check_obstacle_sensor` has always done.
+        turn instruction. Speech goes to the `Announcer`, which is what
+        makes every branch here an append and a return.
         """
         try:
             if cue.kind == "announce":
@@ -2336,26 +2370,33 @@ The comparisons are inclusive, so a threshold names the percentage
                     return
                 print(f"[nav] announce: {cue.text}", flush=True)
                 self._announce(cue.text)
-            elif cue.kind == "haptic":
-                motor = self._motor_for_direction(cue.direction)
-                if motor is not None:
-                    print(f"[nav] haptic: {cue.direction}", flush=True)
-                    self._spawn_haptic(
-                        f"nav-haptic-{cue.direction}",
-                        lambda m=motor: m.pulse(times=2, duration_s=0.2, gap_s=0.1),
-                    )
+            elif cue.kind == "turn_now":
+                # The instruction was spoken a long block ago, at
+                # `announce_distance_m`. This is "it is here, now" — two
+                # words, the same ones turn-to-face uses, so the direction
+                # arrives without re-reading the whole sentence.
+                key = _ORIENTATION_MESSAGE_KEYS.get(cue.direction)
+                if key is None or self._voice_active.is_set():
+                    return
+                print(f"[nav] turn_now: {cue.direction}", flush=True)
+                self._announce(messages.get(key, self.language.current))
             elif cue.kind == "arrive":
+                # The only cue here with no voice-busy guard, because it
+                # is the only one that can never fire twice: `check()`
+                # calls `clear()` in the same breath as emitting it. Every
+                # other cue deferred for a busy pipeline comes round again
+                # on a later poll; this one is simply lost, and the user
+                # walks past their destination never having been told.
+                # It used to survive a busy pipeline as a motor pulse.
+                # Queued rather than critical — the announcer serialises,
+                # so it lands after the user's answer instead of over it.
                 print(f"[nav] arrive: {cue.text}", flush=True)
-                self._spawn_haptic(
-                    "nav-arrive", lambda: self._pulse_all_motors(duration_s=0.4),
-                )
-                if not self._voice_active.is_set() and cue.text is not None:
+                if cue.text is not None:
                     self._announce(cue.text)
             elif cue.kind == "missed_turn":
-                # The compass says they carried straight on. Say so and
-                # pulse the side they should have gone, so the correction
-                # is available through both channels. Off-route detection
-                # is still running underneath as the slower backstop.
+                # The compass says they carried straight on. Off-route
+                # detection is still running underneath as the slower
+                # backstop.
                 if self._voice_active.is_set():
                     print(
                         f"[nav] deferred missed_turn (voice busy): {cue.text}",
@@ -2363,12 +2404,6 @@ The comparisons are inclusive, so a threshold names the percentage
                     )
                     return
                 print(f"[nav] missed_turn: {cue.text}", flush=True)
-                motor = self._motor_for_direction(cue.direction)
-                if motor is not None:
-                    self._spawn_haptic(
-                        f"nav-missed-{cue.direction}",
-                        lambda m=motor: m.pulse(times=3, duration_s=0.15, gap_s=0.1),
-                    )
                 self._announce(
                     messages.get(
                         "nav.missed_turn",
@@ -2384,9 +2419,6 @@ The comparisons are inclusive, so a threshold names the percentage
                     )
                     return
                 print(f"[nav] off_route: {cue.text}", flush=True)
-                self._spawn_haptic(
-                    "nav-off-route", lambda: self._pulse_all_motors(duration_s=0.3),
-                )
                 if cue.text is not None:
                     self._announce(cue.text)
         except Exception as exc:
@@ -2434,20 +2466,6 @@ The comparisons are inclusive, so a threshold names the percentage
                     print(f"[haptic:{name}] error: {exc}", file=sys.stderr, flush=True)
 
         threading.Thread(target=_run, name=name, daemon=True).start()
-
-    def _motor_for_direction(self, direction: str | None):
-        """Map a direction string to the motor that should fire.
-
-        Returns None for unknown directions or when the motor is not
-        available (e.g. running without hardware).
-        """
-        if direction == "left":
-            return self.left_motor
-        if direction == "right":
-            return self.right_motor
-        if direction == "straight":
-            return self.front_motor
-        return None
 
     # ---------------------------------------------------------------- obstacles
 
@@ -2667,12 +2685,17 @@ The comparisons are inclusive, so a threshold names the percentage
         of this module.
 
         Every obstacle cue on the front motor is a *single* pulse, and
-        what varies is its length. Pulse counts are already spoken for by
-        navigation — two front pulses mean "straight on", three on a side
-        motor mean "missed turn" — so an obstacle cue that counted pulses
-        would read as a direction. Length is also what now tells head
-        height (long) from foot level (short), the TOP-specific pattern
-        the branch on `sensor_name` was kept for once the beep was gone.
+        what varies is its length — long for head height, short for foot
+        level, which is the TOP-specific pattern the branch on
+        `sensor_name` was kept for once the beep was gone.
+
+        Counting pulses was previously ruled out because navigation owned
+        pulse counts (two meant "straight on", three meant "missed turn").
+        Navigation no longer pulses at all, so the collision is gone — but
+        the reason not to count stands on its own: the three motors share
+        the cane handle and arrive as one buzz, so a count is the *only*
+        thing the hand can resolve besides length, and spending it on a
+        tier the user already hears as "longer" buys nothing.
         """
         with self._warning_lock:
             try:
@@ -3655,17 +3678,27 @@ The comparisons are inclusive, so a threshold names the percentage
         the 100 Hz loop keeps detecting falls and obstacles while the user
         stands in the street turning around.
 
-        The turning itself is silent: a motor pulses on the side to turn
-        toward, faster as they come round. Only the finish is spoken. See
-        `navigation/orientation.py` for why rate-coded haptics rather than
-        a spoken angle.
+        The cue is a two-word instruction — "turn left" — repeated with a
+        shorter gap as they come round. See `navigation/orientation.py` for
+        why speech rather than the motor pulse this used to be, and why two
+        words rather than a spoken angle.
+
+        **Spoken with `_play_clip`, not `_announce`.** This is the one
+        place that repeats the same line while the thing it describes is
+        changing, so a queue is the wrong structure: at a 0.35 s gap the
+        announcer's eight-deep buffer fills in three seconds and the user
+        hears "turn left" long after they have finished turning left.
+        Playing on this thread makes the next compass read happen *after*
+        the last cue was heard, which is the property that matters. The
+        voice thread is allowed to block; it is already sitting here for up
+        to `ORIENTATION_TIMEOUT_S`.
 
         Returns without doing anything when the compass cannot be trusted,
         which is every run until `config.COMPASS_CALIBRATED` is set — so
         this is inert today and the wearable behaves exactly as it did.
 
         Four ways out, and none of them leave the user stuck:
-          - aligned: front pulse + "walk straight ahead"
+          - aligned: "walk straight ahead"
           - `ORIENTATION_TIMEOUT_S` elapsed: "start walking, I'll guide you"
           - PTT pressed: the user already knows the way
           - emergency: abandon everything
@@ -3701,6 +3734,7 @@ The comparisons are inclusive, so a threshold names the percentage
                 aligned_tolerance_deg=ORIENTATION_ALIGNED_TOLERANCE_DEG,
                 release_tolerance_deg=ORIENTATION_RELEASE_TOLERANCE_DEG,
                 bands=ORIENTATION_BANDS,
+                around_deg=ORIENTATION_AROUND_DEG,
             )
 
             if self.ptt_button is not None:
@@ -3715,16 +3749,12 @@ The comparisons are inclusive, so a threshold names the percentage
                 heading = self.trusted_heading()
                 if heading is None:
                     # The compass dropped out mid-turn. Better to let them
-                    # walk than to buzz at them with nothing behind it.
+                    # walk than to keep talking with nothing behind it.
                     break
 
                 cue = guide.cue(heading, bearing)
                 if cue.aligned:
                     print(f"[orient] aligned at {heading:.0f}°", flush=True)
-                    self._spawn_haptic(
-                        "orient-aligned",
-                        lambda: self._pulse_all_motors(duration_s=0.3),
-                    )
                     self._announce(
                         messages.get(
                             "nav.walk_straight_ahead", self.language.current,
@@ -3732,21 +3762,24 @@ The comparisons are inclusive, so a threshold names the percentage
                     )
                     return
 
-                motor = self._motor_for_direction(cue.direction)
-                if motor is not None:
-                    motor.pulse(times=1, duration_s=0.08)
+                key = _ORIENTATION_MESSAGE_KEYS.get(cue.direction)
+                if key is not None:
+                    print(f"[orient] {cue.direction} ({heading:.0f}°)", flush=True)
+                    self._play_clip(key)
                 # Sleeping on the cancel event rather than `time.sleep` so
-                # an emergency press is felt within the pulse gap rather
-                # than after it.
-                self._voice_cancel.wait(timeout=cue.pulse_interval_s)
+                # an emergency press lands within the gap rather than after
+                # it. The clip itself is not interruptible — it is under a
+                # second, and `stop_playback()` from here would race the
+                # announcer for the same stream.
+                self._voice_cancel.wait(timeout=cue.repeat_interval_s)
 
             print("[orient] gave up — letting them walk.", flush=True)
             self._announce(
                 messages.get("nav.orientation_gave_up", self.language.current)
             )
         except Exception as exc:
-            # This is guidance, not safety. A compass or motor failure here
-            # must not cost the user the route they just asked for.
+            # This is guidance, not safety. A compass or playback failure
+            # here must not cost the user the route they just asked for.
             print(f"[orient] error: {exc}", file=sys.stderr, flush=True)
         finally:
             self._reclaim_ptt_button()

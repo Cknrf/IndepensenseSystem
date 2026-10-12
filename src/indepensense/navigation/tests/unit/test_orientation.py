@@ -102,17 +102,35 @@ def test_outside_tolerance_names_the_side_to_turn():
     assert cue.direction == "right"
 
 
-def test_a_leftward_error_pulses_the_left_side():
+def test_a_leftward_error_cues_the_left_side():
     assert OrientationGuide().cue(90.0, 0.0).direction == "left"
 
 
-def test_pulses_get_faster_as_the_user_comes_round():
-    """The whole interaction rests on this being perceptible: turn until
-    the buzzing speeds up, then stop."""
+def test_a_large_error_cues_turn_around_rather_than_a_side():
+    """170° out is technically a short turn to one side, and naming that
+    side reads as a nudge — the user stops a long way short. "Turn
+    around" is what a sighted person would say."""
+    assert OrientationGuide().cue(0.0, 170.0).direction == "around"
+    assert OrientationGuide().cue(170.0, 0.0).direction == "around"
+
+
+def test_the_around_threshold_is_where_sides_stop_being_named():
+    """Just inside it still names a side; just outside does not. The
+    boundary itself is the contract — a test only of the extremes would
+    pass with the threshold anywhere."""
+    guide = OrientationGuide(around_deg=100.0)
+    assert guide.cue(0.0, 95.0).direction == "right"
+    assert OrientationGuide(around_deg=100.0).cue(0.0, 105.0).direction == "around"
+
+
+def test_repeats_get_faster_as_the_user_comes_round():
+    """The whole interaction rests on this being perceptible: the
+    instruction comes round again sooner, so the user turns until the
+    repeats tighten up, then stops."""
     guide = OrientationGuide()
-    far = guide.cue(0.0, 170.0).pulse_interval_s
-    middle = guide.cue(0.0, 60.0).pulse_interval_s
-    near = guide.cue(0.0, 25.0).pulse_interval_s
+    far = guide.cue(0.0, 170.0).repeat_interval_s
+    middle = guide.cue(0.0, 60.0).repeat_interval_s
+    near = guide.cue(0.0, 25.0).repeat_interval_s
 
     assert far > middle > near
 
@@ -120,7 +138,7 @@ def test_pulses_get_faster_as_the_user_comes_round():
 def test_an_aligned_cue_carries_no_direction_or_interval():
     cue = OrientationGuide().cue(90.0, 90.0)
     assert cue.direction is None
-    assert cue.pulse_interval_s is None
+    assert cue.repeat_interval_s is None
 
 
 def test_a_bearing_of_zero_is_honoured():

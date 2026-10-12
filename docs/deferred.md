@@ -345,16 +345,62 @@ proposal — the danger tier lost the beep too. See the outcome at the top
 of this entry.)*
 
 ### Left / right obstacle sensing
-**Status:** blocked · **Raised:** 2026-09-12
+**Status:** blocked · **Raised:** 2026-09-12 · **Re-scoped:** 2026-10-12
 
-Both DYP-A22 sensors face forward (top and bottom). The three vibration motors
-can express left / right, but nothing ever gives them a left / right *obstacle*
-— only navigation turns use the side motors. So the user learns something is
-ahead but never which way to step around it.
+Both DYP-A22 sensors face forward (top and bottom), so the user learns
+something is ahead but never which way to step around it.
 
-**Blocked on:** hardware. Either two more ultrasonic sensors angled outward, or
-derive coarse direction from YOLO bbox position (see *Positional scene
-description* above), which needs no new parts.
+This used to be blocked on sensing alone, on the assumption that the three
+vibration motors could express the answer once something produced it. They
+cannot — see *Directional vibration was never perceptible* below — so the entry
+now carries **two** blockers, and the second is the harder one: even a perfect
+left / right obstacle reading has no haptic channel to arrive on, and speech is
+a poor fit for a cue that may fire several times a block.
+
+**Blocked on:** (1) sensing — either two more ultrasonic sensors angled
+outward, or coarse direction from YOLO bbox position (see *Positional scene
+description* above), which needs no new parts; (2) an output channel that can
+carry a side. Physically separating one motor from the handle — a wrist or
+shoulder mount — is the obvious candidate and is a build change, not a code
+change.
+
+### Directional vibration was never perceptible
+**Status:** resolved by design 2026-10-12 · **Raised:** 2026-10-12
+
+**Outcome: navigation no longer drives the vibration motors at all.** Turn
+cues, arrival, off-route, missed turns and turn-to-face orientation are
+speech; `_motor_for_direction` is deleted.
+
+The three motors are mounted in the one cane handle. Their vibration couples
+through its shell, so whichever one fires, the hand feels the same
+undifferentiated buzz — the wearer cannot tell the left motor from the right.
+Every "left motor → turn left" mapping in the system was a property of the
+wiring diagram rather than of anything the user could perceive, and had been
+since the motors were mounted.
+
+What the device actually has is **one vibrator with three intensity steps**.
+That is a real channel and obstacle proximity uses it properly: front motor
+alone in the warning band, all three in danger, with rate carrying distance.
+Intensity and rate are things a single coupled handle can express. Direction
+is not.
+
+Two consequences worth recording. The arrival cue lost its silent fallback —
+it fires exactly once ever, because `check()` clears the route in the same
+breath, so it is now the one navigation cue that speaks even while the voice
+pipeline is busy rather than being dropped. And turn-to-face orientation had
+no non-haptic half at all: its spoken replacement is two-word static clips
+repeated at a rate-coded gap, which works only because a message with no
+placeholder is pre-rendered by `render_messages` and replayed from disk
+instead of synthesised. The ~2 s-of-Piper objection that originally ruled
+speech out was an argument against synthesising a *sentence* per repeat, and
+it does not survive the clip cache.
+
+**What it costs, recorded honestly:** navigation guidance is now entirely
+auditory, on a street corner, through an open-ear headset chosen precisely so
+ambient sound is not blocked. A user in traffic noise can miss a turn cue in a
+way a buzz on the wrist would not have allowed. The mitigation is a motor
+mounted somewhere the handle does not damp — see *Left / right obstacle
+sensing* above, which is blocked on the same build change.
 
 ### Compass deviation table as a calibration fallback
 **Status:** parked · **Raised:** 2026-09-12

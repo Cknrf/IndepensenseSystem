@@ -18,7 +18,6 @@ import pytest
 import indepensense.app as app_module
 from indepensense.app import Announcer
 from indepensense.app_mock import MockApp
-from indepensense.feedback.mock import MockVibrationMotor
 from indepensense.navigation.monitor import NavigationCue
 
 
@@ -107,15 +106,13 @@ def test_say_returns_immediately_even_when_synthesis_is_slow(announcer, audio):
 
 
 def test_the_main_loop_cue_path_does_not_block(tmp_path, audio):
-    """`_fire_navigation_cue` runs on the main loop. Firing a cue that
-    speaks AND pulses every motor must still return promptly."""
+    """`_fire_navigation_cue` runs on the main loop, and every cue it
+    fires is now speech — so the announcer is the only thing standing
+    between a turn instruction and a stalled fall detector."""
     instance = MockApp()
     instance.tts = _FakeTTS(delay_s=1.0)
     instance.announcer = Announcer(instance.tts, tmp_path / "messages", tmp_path / "cache")
     instance.announcer.start()
-    instance.front_motor = MockVibrationMotor()
-    instance.left_motor = MockVibrationMotor()
-    instance.right_motor = MockVibrationMotor()
     try:
         started = time.monotonic()
         instance._fire_navigation_cue(
@@ -125,7 +122,6 @@ def test_the_main_loop_cue_path_does_not_block(tmp_path, audio):
 
         assert elapsed < 0.05, f"cue blocked the loop for {elapsed:.2f}s"
         # and the work still happens, just elsewhere
-        assert _wait_until(lambda: instance.front_motor.events)
         assert _wait_until(lambda: audio["played"] == ["You have arrived."])
     finally:
         instance.announcer.stop(timeout_s=2.0)

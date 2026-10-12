@@ -497,12 +497,24 @@ ORIENTATION_ALIGNED_TOLERANCE_DEG = 15.0
 # way.
 ORIENTATION_RELEASE_TOLERANCE_DEG = 30.0
 
-# (error greater than N degrees, seconds between pulses). Widest first.
+# (error greater than N degrees, seconds of silence *after* the spoken cue
+# before repeating it). Widest first.
+#
+# These were 0.8 / 0.4 / 0.2 when the cue was a motor pulse. A two-word
+# clip takes most of a second to play, so anything near 0.2 would be the
+# next cue talking over the last one rather than a faster cadence. The
+# ratios are kept — what the user is asked to notice is still that the
+# repeats come closer together as they come round.
 ORIENTATION_BANDS = (
-    (90.0, 0.8),
-    (30.0, 0.4),
-    (0.0, 0.2),
+    (90.0, 1.2),
+    (30.0, 0.7),
+    (0.0, 0.35),
 )
+
+# Past this much error, the cue becomes "turn around" instead of naming a
+# side. 170° described as "turn right" is the short way round but reads as
+# a nudge, and the user stops a long way short.
+ORIENTATION_AROUND_DEG = 135.0
 
 # Give up after this long and let them start walking. It must never trap
 # somebody standing in the street: a compass that cannot settle, or a user

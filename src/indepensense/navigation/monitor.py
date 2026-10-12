@@ -1,8 +1,8 @@
 """Turn-by-turn navigation progress monitor.
 
 Given a `Route` and successive GPS positions, decides when to speak the
-next turn instruction and when to fire directional haptics. Pure logic —
-no threads, no network, no hardware access. The application layer is
+next turn instruction and when to say the direction on its own. Pure
+logic — no threads, no network, no hardware access. The application is
 responsible for calling `check()` periodically with the latest GPS fix
 and acting on the returned cues.
 
@@ -14,15 +14,16 @@ Three thresholds gate the cues per instruction:
   - `NAV_ANNOUNCE_DISTANCE_M` (100 m) — speak the instruction once. The
     text includes the current remaining distance so the user hears
     "In 87 meters, turn left onto Main Street", not a bare "turn left".
-  - `NAV_HAPTIC_DISTANCE_M` (20 m) — pulse the direction-matching motor
-    once. Left turn → left motor. Right → right. Straight → front. This
-    is a silent cue the user can feel through the cane even in noisy
-    environments where the announce speech might be missed.
+  - `NAV_TURN_NOW_DISTANCE_M` (20 m) — say the direction on its own,
+    once: "turn left". The announce 80 m back carried the street name and
+    a distance; this is the shortest thing that can be said at the moment
+    the turn arrives, and short matters because the user is at a junction
+    listening to traffic.
   - `NAV_ADVANCE_DISTANCE_M` (5 m) — advance the internal cursor to the
     next instruction. We assume the user has taken the turn once they
     get within 5 m of it.
 
-Both announce and haptic latch — each instruction only fires each cue
+Both announce and turn_now latch — each instruction only fires each cue
 once, so a user lingering at a turn doesn't get spam.
 
 Turn verification
@@ -40,8 +41,8 @@ That is a much faster signal than position, because heading changes at the
 corner while position takes tens of metres to diverge.
 
 It is strictly additive: without a heading — which is the case whenever
-the compass is uncalibrated — advancement, announces, haptics and arrival
-behave exactly as they did before it existed.
+the compass is uncalibrated — advancement, announces, turn cues and
+arrival behave exactly as they did before it existed.
 
 Assumptions and known limitations
 ---------------------------------
@@ -81,7 +82,7 @@ from indepensense.routing.base import (
 # Thresholds — imported by app.py via config; also inlined here as
 # defaults so the monitor can be constructed without app-level config.
 _DEFAULT_ANNOUNCE_M = 100.0
-_DEFAULT_HAPTIC_M = 20.0
+_DEFAULT_TURN_NOW_M = 20.0
 _DEFAULT_ADVANCE_M = 5.0
 
 # Off-route detection defaults. Chosen so that a legitimate GPS jitter
@@ -117,10 +118,10 @@ class NavigationCue:
 
     `kind` is one of:
       - "announce"  — speak `text` through TTS.
-      - "haptic"    — pulse the motor identified by `direction`.
+      - "turn_now"  — speak `direction` on its own, at the turn.
       - "arrive"    — final destination reached. `text` gives the spoken
-                      confirmation; app should also fire the arrival
-                      haptic (all motors) and clear active-navigation state.
+                      confirmation; app should also clear
+                      active-navigation state.
       - "off_route" — user has deviated substantially from the planned
                       route. `text` gives a spoken warning; the wearable
                       does NOT auto-reroute. Fires once per deviation
@@ -203,7 +204,7 @@ class NavigationMonitor:
     def __init__(
         self,
         announce_distance_m: float = _DEFAULT_ANNOUNCE_M,
-        haptic_distance_m: float = _DEFAULT_HAPTIC_M,
+        turn_now_distance_m: float = _DEFAULT_TURN_NOW_M,
         advance_distance_m: float = _DEFAULT_ADVANCE_M,
         off_route_distance_m: float = _DEFAULT_OFF_ROUTE_DISTANCE_M,
         on_route_recovery_m: float = _DEFAULT_ON_ROUTE_RECOVERY_M,
@@ -213,7 +214,7 @@ class NavigationMonitor:
         turn_verify_min_leg_m: float = _DEFAULT_TURN_VERIFY_MIN_LEG_M,
     ):
         self._announce_distance_m = announce_distance_m
-        self._haptic_distance_m = haptic_distance_m
+        self._turn_now_distance_m = turn_now_distance_m
         self._advance_distance_m = advance_distance_m
         self._off_route_distance_m = off_route_distance_m
         self._on_route_recovery_m = on_route_recovery_m
@@ -229,7 +230,7 @@ class NavigationMonitor:
         self._current_index: int = 0
         # Per-instruction latches so each cue fires exactly once.
         self._announced: set[int] = set()
-        self._haptic_fired: set[int] = set()
+        self._turn_now_fired: set[int] = set()
 
         # Off-route state:
         # - `_off_route_since`: monotonic timestamp of first-observed
@@ -254,7 +255,7 @@ class NavigationMonitor:
         self._destination_name = destination_name
         self._current_index = self._initial_index(route)
         self._announced.clear()
-        self._haptic_fired.clear()
+        self._turn_now_fired.clear()
         self._off_route_since = None
         self._off_route_warned = False
         self._pending_turn = None
@@ -265,7 +266,7 @@ class NavigationMonitor:
         self._destination_name = ""
         self._current_index = 0
         self._announced.clear()
-        self._haptic_fired.clear()
+        self._turn_now_fired.clear()
         self._off_route_since = None
         self._off_route_warned = False
         self._pending_turn = None
@@ -336,7 +337,7 @@ class NavigationMonitor:
         """Given the user's current position, return cues to fire.
 
         Multiple cues can fire in one call — e.g. if the user is within
-        both the announce AND the haptic threshold on first check, both
+        both the announce AND the turn_now threshold on first check, both
         return. Advances through multiple instructions if the user is
         very close to several in a row (rare, but possible on short
         routes).
@@ -418,13 +419,13 @@ class NavigationMonitor:
                 self._announced.add(self._current_index)
                 cues.append(self._build_announce_cue(instr, distance))
 
-            # Haptic (once) at the haptic threshold. Skip for "arrive"
-            # since the arrival cue is a different pattern (all motors).
-            if (distance <= self._haptic_distance_m
-                    and self._current_index not in self._haptic_fired
+            # Direction alone (once) at the turn_now threshold. Skip
+            # for "arrive", which speaks its own confirmation.
+            if (distance <= self._turn_now_distance_m
+                    and self._current_index not in self._turn_now_fired
                     and instr.direction in ("left", "right", "straight")):
-                self._haptic_fired.add(self._current_index)
-                cues.append(NavigationCue(kind="haptic", direction=instr.direction))
+                self._turn_now_fired.add(self._current_index)
+                cues.append(NavigationCue(kind="turn_now", direction=instr.direction))
 
             # Advance to next instruction if we're at the turn point.
             if distance <= self._advance_distance_m:
@@ -598,7 +599,7 @@ class NavigationMonitor:
 
         GraphHopper's first instruction is usually "Continue on X" (the
         user's current heading — not a turn). If we started tracking at
-        index 0, we'd immediately announce/haptic at the user's own
+        index 0, we'd immediately announce at the user's own
         position. Skip past it if it's clearly a starter step.
 
         Falls back to 0 for degenerate routes with just one instruction

@@ -8,21 +8,35 @@ assumption true.
 
 Pure decision logic: given how far off the user's facing is, say which way
 to turn and how urgently. No threads, no hardware, no speech. The
-application layer reads the compass, fires the motor, and calls back.
+application layer reads the compass, speaks the cue, and calls back.
 
-Why haptic rate-coding
-----------------------
+Why repeated two-word speech
+----------------------------
 
-The feedback is a motor pulsing on the side to turn toward, faster as the
-error shrinks, rather than a spoken angle. Three reasons, in order of
-weight:
+The feedback is a short spoken instruction — "turn left" — repeated at a
+rate that rises as the error shrinks, until the user is facing the right
+way.
 
-  * A spoken "turn right about ninety degrees" is ~2 s of Piper, so the
-    feedback lags the movement it is describing and the user is already
-    past it. Pulses track the turn continuously.
-  * It survives traffic. This is used standing on a street corner.
-  * It asks nothing of the user but "turn until the buzzing speeds up,
-    then stop" — no counting, no arithmetic, no memory of what was said.
+This was a motor pulsing on the side to turn toward. The three motors are
+all mounted in the same cane handle, so their vibration couples through
+the shell and arrives at the hand as one undifferentiated buzz: the user
+cannot tell the left motor from the right. Directional haptics were a
+wiring diagram, not a perception, and the device effectively has one
+vibrator with three intensity steps. That is still useful for obstacle
+proximity, where the signal *is* intensity, and useless for direction.
+
+Speech was previously rejected here because "turn right about ninety
+degrees" is ~2 s of Piper, so the feedback lags the movement it describes.
+Two things defuse that. The instruction no longer carries an angle, so it
+is two words rather than a sentence; and because it has no placeholder it
+is a *static* message, pre-rendered by `tools/render_messages.py` and
+replayed from disk. The repeat costs a file read, not a synthesis.
+
+What carries over from the haptic design is the rate-coding and the
+affordance behind it: the user is asked only to "turn until it speeds up,
+then stop" — no angle to retain, no arithmetic. What is lost is
+non-auditory signalling on a noisy street corner, which is a real cost and
+the reason the aligned cue is a different sentence rather than silence.
 
 Hysteresis
 ----------
@@ -33,25 +47,36 @@ told to turn back, overshoots the other way, and oscillates — the device
 nagging at somebody who is, to any practical purpose, pointing the right
 way. Alignment is sticky on purpose.
 """
-import math
 from dataclasses import dataclass
 
-# Error bands, in degrees, and the pulse interval each maps to. Ordered
-# widest-first; the first band the error falls inside wins.
+# Error bands, in degrees, and the gap *after* each spoken cue before the
+# next one. Ordered widest-first; the first band the error falls inside
+# wins.
 #
-# The values are a starting point, not a finding — whether 800 ms reads as
-# "slower" than 400 ms to somebody wearing this is a question only a person
+# These are gaps, not periods: the caller speaks a clip that takes most of
+# a second and then waits. A period shorter than the clip is not a faster
+# cadence, it is overlapping speech — which is why none of these can be
+# driven down to the 0.2 s the motor pulses used.
+#
+# The values are a starting point, not a finding — whether 1.2 s reads as
+# "slower" than 0.6 s to somebody wearing this is a question only a person
 # in a corridor can answer. They live in `config.py` for exactly that
 # reason; these defaults exist so the module can be constructed and tested
 # without app-level config.
 _DEFAULT_BANDS: tuple[tuple[float, float], ...] = (
-    (90.0, 0.8),      # more than 90° out: keep turning, no hurry
-    (30.0, 0.4),      # getting closer
-    (0.0, 0.2),       # nearly there — urgency is the signal to slow down
+    (90.0, 1.2),      # more than 90° out: keep turning, no hurry
+    (30.0, 0.7),      # getting closer
+    (0.0, 0.35),      # nearly there — urgency is the signal to slow down
 )
 
 _DEFAULT_ALIGNED_TOLERANCE_DEG = 15.0
 _DEFAULT_RELEASE_TOLERANCE_DEG = 30.0
+
+# Past this, "left" and "right" stop being useful: a 170° turn described as
+# "turn right" is technically the short way round but reads as a small
+# correction, and the user stops early. "Turn around" is the instruction a
+# sighted person would give, and it needs no sense of which way.
+_DEFAULT_AROUND_DEG = 135.0
 
 
 @dataclass(frozen=True)
@@ -59,12 +84,14 @@ class OrientationCue:
     """What to do about the user's current facing.
 
     `aligned` true means stop turning and walk. Otherwise `direction` is
-    "left" or "right" — the shorter way round — and `pulse_interval_s` is
-    how long to wait before pulsing again.
+    "left", "right" — the shorter way round — or "around" when the user is
+    facing far enough away that neither side reads as a big enough move;
+    `repeat_interval_s` is how long to wait after speaking before saying it
+    again.
     """
     aligned: bool
     direction: str | None = None
-    pulse_interval_s: float | None = None
+    repeat_interval_s: float | None = None
 
 
 def heading_error(current_deg: float, target_deg: float) -> float:
@@ -96,6 +123,7 @@ class OrientationGuide:
         aligned_tolerance_deg: float = _DEFAULT_ALIGNED_TOLERANCE_DEG,
         release_tolerance_deg: float = _DEFAULT_RELEASE_TOLERANCE_DEG,
         bands: tuple[tuple[float, float], ...] = _DEFAULT_BANDS,
+        around_deg: float = _DEFAULT_AROUND_DEG,
     ):
         if release_tolerance_deg < aligned_tolerance_deg:
             raise ValueError(
@@ -106,6 +134,7 @@ class OrientationGuide:
         self._aligned_tolerance = aligned_tolerance_deg
         self._release_tolerance = release_tolerance_deg
         self._bands = bands
+        self._around_deg = around_deg
         self._has_aligned = False
 
     @property
@@ -125,11 +154,14 @@ class OrientationGuide:
             self._has_aligned = True
             return OrientationCue(aligned=True)
 
-        direction = "right" if error > 0 else "left"
+        if magnitude >= self._around_deg:
+            direction = "around"
+        else:
+            direction = "right" if error > 0 else "left"
         return OrientationCue(
             aligned=False,
             direction=direction,
-            pulse_interval_s=self._interval_for(magnitude),
+            repeat_interval_s=self._interval_for(magnitude),
         )
 
     def _interval_for(self, magnitude: float) -> float:

@@ -2,12 +2,16 @@
 
 The decision logic is pure and tested in
 `navigation/tests/unit/test_orientation.py`. This covers the loop around
-it: reading the compass, pulsing the right motor, and — most importantly —
-every way it can stop, because a user standing in the street being buzzed
-at indefinitely is the failure this must not have.
+it: reading the compass, speaking the right instruction, and — most
+importantly — every way it can stop, because a user standing in the street
+being talked at indefinitely is the failure this must not have.
 
-Time is real here but tiny: the pulse intervals and timeout are overridden
-per test so the whole file runs in well under a second.
+The cue is spoken with `_play_clip`, not `_announce`, so both are captured
+separately: the distinction is load-bearing (see the method's docstring)
+and a test that collapsed them would not notice it being undone.
+
+Time is real here but tiny: the repeat intervals and timeout are
+overridden per test so the whole file runs in well under a second.
 """
 import threading
 import time
@@ -27,6 +31,7 @@ class _OrientingApp(MockApp):
     def __init__(self, headings):
         super().__init__()
         self.spoken: list[str] = []
+        self.played: list[str] = []
         # Consumed one per loop iteration; the last value repeats forever
         # so a test can settle on a heading without knowing the iteration
         # count.
@@ -35,6 +40,9 @@ class _OrientingApp(MockApp):
 
     def _announce(self, text: str, critical: bool = False) -> None:
         self.spoken.append(text)
+
+    def _play_clip(self, key: str, **fields) -> None:
+        self.played.append(key)
 
     def trusted_heading(self):
         self.heading_reads += 1
@@ -103,35 +111,57 @@ def test_already_facing_the_right_way_says_walk_ahead():
     assert app.spoken == ["Walk straight ahead."]
 
 
-def test_alignment_pulses_every_motor():
-    app = _app([0.0])
-    app._orient_towards_route()
-
-    for motor in (app.front_motor, app.left_motor, app.right_motor):
-        assert _wait_until(lambda m=motor: m.events)
-
-
-def test_facing_east_pulses_the_left_motor():
+def test_facing_east_says_turn_left():
     """Route is north, user faces east — the short way round is left.
 
-    Deliberately never aligns: the alignment cue pulses every motor on a
-    spawned thread, which would race this assertion.
+    Deliberately never aligns, so the loop runs to its cap repeating the
+    one instruction.
     """
     app = _app([90.0])
 
     app._orient_towards_route()
 
-    assert app.left_motor.events
-    assert app.right_motor.events == []
+    assert set(app.played) == {"nav.turn_left"}
 
 
-def test_facing_west_pulses_the_right_motor():
+def test_facing_west_says_turn_right():
     app = _app([270.0])
 
     app._orient_towards_route()
 
-    assert app.right_motor.events
-    assert app.left_motor.events == []
+    assert set(app.played) == {"nav.turn_right"}
+
+
+def test_facing_backwards_says_turn_around():
+    """180° out, where naming a side is technically correct and useless:
+    "turn right" reads as a nudge and the user stops a long way short."""
+    app = _app([180.0])
+
+    app._orient_towards_route()
+
+    assert set(app.played) == {"nav.turn_around"}
+
+
+def test_the_instruction_repeats_until_they_come_round():
+    """The whole premise of the design — one cue is not guidance, a
+    cadence is."""
+    app = _app([90.0])
+
+    app._orient_towards_route()
+
+    assert len(app.played) > 1
+
+
+def test_no_motor_is_touched_while_orienting():
+    """The three motors share the cane handle, so "left motor" and "right
+    motor" feel identical in the hand. Reaching for one here would be the
+    directional encoding creeping back in."""
+    app = _app([90.0, 90.0, 0.0])
+
+    app._orient_towards_route()
+
+    for motor in (app.front_motor, app.left_motor, app.right_motor):
+        assert motor.events == []
 
 
 def test_turning_into_alignment_finishes_and_speaks():
@@ -145,8 +175,8 @@ def test_turning_into_alignment_finishes_and_speaks():
 
 # --- the ways out ------------------------------------------------------------
 
-def test_it_gives_up_rather_than_buzzing_forever():
-    """A user standing in the street being buzzed at indefinitely is the
+def test_it_gives_up_rather_than_talking_forever():
+    """A user standing in the street being talked at indefinitely is the
     failure this must never have."""
     app = _app([180.0])        # never turns
 
@@ -224,8 +254,7 @@ def test_an_uncalibrated_compass_skips_orientation(monkeypatch):
     app._orient_towards_route()
 
     assert app.spoken == []
-    assert app.left_motor.events == []
-    assert app.right_motor.events == []
+    assert app.played == []
 
 
 def test_no_gps_fix_skips_orientation():
@@ -248,7 +277,7 @@ def test_no_active_route_skips_orientation():
 
 
 def test_a_compass_that_drops_out_mid_turn_lets_them_walk():
-    """Better to let the user set off than to buzz at them with nothing
+    """Better to let the user set off than to keep talking with nothing
     behind it."""
     app = _OrientingApp([180.0, None])
     app.gps_cache = _StubCache(_fix())
@@ -262,19 +291,15 @@ def test_a_compass_that_drops_out_mid_turn_lets_them_walk():
     assert app.spoken == ["Start walking, and I will guide you from there."]
 
 
-def test_missing_motors_are_survivable():
+def test_a_playback_failure_still_lets_them_walk():
+    """This is guidance, not safety: a dead speaker must not cost the user
+    the route they just asked for."""
     app = _app([90.0, 90.0, 0.0])
-    app.front_motor = app.left_motor = app.right_motor = None
 
-    app._orient_towards_route()
+    def _boom(key, **fields):
+        raise OSError("PortAudio gone")
 
-    assert app.spoken == ["Walk straight ahead."]
+    app._play_clip = _boom
+    app._orient_towards_route()      # must not raise
 
-
-def _wait_until(predicate, timeout_s: float = 2.0) -> bool:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return predicate()
+    assert app.ptt_button._handlers["pressed"] == app._on_ptt_press
