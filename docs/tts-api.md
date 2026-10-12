@@ -39,15 +39,38 @@ curl -X POST https://gpuer.techco.fi:8700/tts -H 'Content-Type: application/json
 
 Returns `{"status":"ok","models":["moss","omnivoice"]}` once both models are loaded.
 
-## Measured latency
+## Benchmark: which model is faster
 
-Measured end to end from a laptop over the internet, one request at a time, for a ~4–8 s sentence:
+**OmniVoice is faster: about 2.5× on the median, and on every single sentence tested (90 of 90).** MOSS also had one runaway generation, which OmniVoice never did.
 
-| Model | Request time |
-|---|---|
-| `omnivoice` | ~2.5 s |
-| `moss` (Tagalog) | ~5.7 s |
-| `moss` (English, short) | ~2.7 s |
+Run on 2026-10-12, from a laptop in Finland over the public endpoint.
+
+### Method
+
+- **Corpus:** the wearable's own static responses from `intents/messages.py`, the sentences it actually speaks. 15 English and 15 Tagalog, sampled with a fixed seed, mean length 51 and 65 characters.
+- **Repeats:** each sentence was sent 3 times to each model, so n = 45 per model per language.
+- **Order:** the two models alternate on every sentence, and the order flips each repeat. Any drift, such as load from other tenants on the GPU, therefore hits both equally.
+- **Warmup:** one warmup request per model is sent first and discarded.
+- **Stats:** computed with `summarise` from `voice/tests/manual/latency_bench.py`, the same median/p95 code as the on-device benchmark.
+- **Request time:** full HTTPS round trip, including network. The network alone (`GET /health`) had a median of 0.22 s, the same for both models.
+- **Real-time factor:** request time ÷ length of the returned audio. Below 1× means the clip is generated faster than it plays back.
+
+### Results
+
+| Language | Model | Request median | Request p95 | Audio median | RTF median | RTF p95 |
+|---|---|---|---|---|---|---|
+| English | `omnivoice` | **1.16 s** | 1.84 s | 2.92 s | **0.41×** | 0.74× |
+| English | `moss` | 2.82 s | 4.65 s | 3.12 s | 0.90× | 1.83× |
+| Tagalog | `omnivoice` | **1.20 s** | 2.30 s | 3.60 s | **0.34×** | 0.67× |
+| Tagalog | `moss` | 3.49 s | 6.66 s | 4.24 s | 0.81× | 2.01× |
+
+Paired per sentence and repeat, OmniVoice was faster in all 45 of 45 English and all 45 of 45 Tagalog cases. The median MOSS/OmniVoice time ratio was 2.47× in English and 2.65× in Tagalog.
+
+**OmniVoice stays below real time even at p95. MOSS goes above it at p95:** its p95 RTF is about 2×, so a long sentence can take twice its spoken length to arrive. That is the difference between a cue that arrives before it is needed and one that arrives late.
+
+**MOSS can fail to stop.** On one of its three repeats of "I can't change the volume right now.", MOSS produced 101.5 s of audio and took 42 s to answer. The other two repeats of the same sentence were normal. MOSS is an autoregressive 8B model with `max_new_tokens=4096`, and it occasionally misses its end-of-speech token. The table's medians are unaffected; its English max is 41.97 s. OmniVoice's worst request in 90 was 3.37 s.
+
+These numbers measure speed only. No listening test has been done, so they say nothing about which voice sounds better in Tagalog.
 
 ## Deployment on gpuer
 
