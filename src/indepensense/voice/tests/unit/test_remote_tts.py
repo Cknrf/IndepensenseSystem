@@ -182,3 +182,21 @@ def test_the_timeout_bounds_connect_and_read_separately(tmp_path, monkeypatch):
     RemoteTTS(URL, "tl", "07", timeout_s=6.0).synthesize("hi", tmp_path / "a.wav")
 
     assert sent["timeout"] == (2.0, 6.0)
+
+
+def test_a_failure_stops_the_next_call_reaching_the_network(tts, tmp_path, monkeypatch):
+    """Same guard as the STT driver. The announcer would otherwise pay an
+    unbounded DNS stall for every sentence the clip store misses."""
+    calls = []
+
+    def _post(self, *a, **kw):
+        calls.append(1)
+        raise requests.ConnectionError("network is unreachable")
+
+    monkeypatch.setattr(requests.Session, "post", _post)
+
+    for i in range(4):
+        with pytest.raises(Exception):
+            tts.synthesize("Magandang umaga po", tmp_path / f"{i}.wav")
+
+    assert len(calls) == 1, "only the first attempt should touch the network"

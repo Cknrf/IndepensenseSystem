@@ -53,7 +53,7 @@ other driver's docstring.
 import sys
 from pathlib import Path
 
-from indepensense.net import require_https
+from indepensense.net import breaker_for, require_https
 
 # What `router.voice_id` names clips rendered here. Includes the voice so
 # that changing it re-renders rather than silently serving the old audio,
@@ -104,6 +104,11 @@ class RemoteTTS:
         self._model = model
         self._timeout_s = timeout_s
         self._session = None
+        # Shared with anything else talking to this host — see
+        # `net.breaker_for`. Without it an unreachable endpoint costs an
+        # unbounded DNS stall on the announcer thread for *every*
+        # sentence, not just the first.
+        self._breaker = breaker_for(url)
 
     @property
     def voice_id(self) -> str:
@@ -134,11 +139,19 @@ class RemoteTTS:
             _write_empty_wav(output_path)
             return
 
-        response = self._get_session().post(
-            self._url,
-            json={"text": body, "model": self._model, "voice": self.voice},
-            timeout=(_CONNECT_TIMEOUT_S, self._timeout_s),
-        )
+        if not self._breaker.allow():
+            raise RuntimeError("remote TTS skipped: host failed recently")
+
+        try:
+            response = self._get_session().post(
+                self._url,
+                json={"text": body, "model": self._model, "voice": self.voice},
+                timeout=(_CONNECT_TIMEOUT_S, self._timeout_s),
+            )
+        except BaseException:
+            self._breaker.record_failure()
+            raise
+        self._breaker.record_success()
 
         if not response.ok:
             raise RuntimeError(

@@ -75,6 +75,7 @@ from pathlib import Path
 
 from indepensense.intents.base import CloudAnswer, Intent, IntentResult
 from indepensense.intents.parser import parse_llm_response
+from indepensense.net import breaker_for
 
 # Sent as the system message. Written for a device that speaks its output
 # aloud to a blind user, which drives every constraint here:
@@ -321,6 +322,7 @@ class MistralIntentParser:
         self._timeout_s = timeout_s
         self._max_tokens = max_tokens
         self._session = None
+        self._breaker = breaker_for(url)
 
     def warm_up(self, timeout_s: float) -> bool:
         """Pay the TLS handshake and populate the remote prefix cache.
@@ -346,15 +348,29 @@ class MistralIntentParser:
     def parse(self, transcript: str) -> IntentResult:
         import requests  # lazy: keeps the module importable off-device
 
+        if not self._breaker.allow():
+            # Skipped without a request, because the cost being avoided is
+            # an unbounded DNS stall on the voice thread — see
+            # `net.HostBreaker`. Reported as `transport` like any other
+            # unreachable provider, so `FallbackIntentParser` hands over
+            # to the local model exactly as it would on a timeout.
+            print("[mistral] skipped: host failed recently", file=sys.stderr)
+            return IntentResult(
+                intent=Intent.UNKNOWN, parameters={}, raw_transcript=transcript,
+                raw_llm_response="", failure="transport", source="cloud",
+            )
+
         try:
             response = self._post(self._payload(transcript), self._timeout_s)
             response.raise_for_status()
             raw = response.json()["choices"][0]["message"]["content"]
+            self._breaker.record_success()
         except (requests.RequestException, ValueError, KeyError, IndexError,
                 TypeError) as exc:
             # Timeouts land here too — `Timeout` is a `RequestException` —
             # which is the common case rather than the exceptional one:
             # the deadline is set to fall back, not to signal a fault.
+            self._breaker.record_failure()
             print(f"[mistral] NLU request failed: {exc}", file=sys.stderr)
             return IntentResult(
                 intent=Intent.UNKNOWN,

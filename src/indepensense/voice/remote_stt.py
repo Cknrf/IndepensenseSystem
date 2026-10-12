@@ -66,7 +66,7 @@ and it belongs upstream of this driver rather than here.
 import sys
 from pathlib import Path
 
-from indepensense.net import require_https
+from indepensense.net import breaker_for, require_https
 from indepensense.voice.base import Transcript
 
 # Opus at 16 kHz mono. The endpoint accepts any rate and both channel
@@ -104,6 +104,7 @@ class RemoteSTT:
         self._timeout_s = timeout_s
         self._compress = compress
         self._session = None
+        self._breaker = breaker_for(url)
         # Logged once rather than per utterance — a device that cannot
         # encode Opus would otherwise print on every command.
         self._warned_compress = False
@@ -130,12 +131,20 @@ class RemoteSTT:
         if initial_prompt:
             fields["prompt"] = initial_prompt
 
-        response = self._get_session().post(
-            self._url,
-            files={"file": (name, payload, content_type)},
-            data=fields,
-            timeout=(_CONNECT_TIMEOUT_S, self._timeout_s),
-        )
+        if not self._breaker.allow():
+            raise RuntimeError("remote STT skipped: host failed recently")
+
+        try:
+            response = self._get_session().post(
+                self._url,
+                files={"file": (name, payload, content_type)},
+                data=fields,
+                timeout=(_CONNECT_TIMEOUT_S, self._timeout_s),
+            )
+        except BaseException:
+            self._breaker.record_failure()
+            raise
+        self._breaker.record_success()
         if not response.ok:
             raise RuntimeError(
                 f"remote STT {response.status_code}: {_detail(response)}"

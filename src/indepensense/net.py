@@ -26,6 +26,8 @@ it does the error is silent in one caller and a spoken refusal in the
 other.
 """
 import sys
+import threading
+import time
 from urllib.parse import urlparse
 
 # Hosts where plaintext HTTP never leaves the machine, so there is no hop
@@ -82,3 +84,93 @@ def probe_reachable(url: str, timeout_s: float = 2.0) -> bool:
     except requests.RequestException as exc:
         print(f"[net] probe to {url} failed: {exc}", file=sys.stderr)
         return False
+
+
+class HostBreaker:
+    """Per-host failure memory, so a dead service is skipped rather than
+    re-attempted on every utterance.
+
+    The problem this exists for is not slowness, it is that **nothing in
+    `requests` bounds DNS resolution**. `socket.create_connection` calls
+    `getaddrinfo` before it applies the timeout, so on a link that
+    blackholes packets — no route, SIM pulled, carrier dropped — name
+    resolution blocks for however long `resolv.conf` says to retry,
+    typically 5 s per attempt times two attempts per nameserver. A
+    connect timeout of 2 s does not help; it has not started yet.
+
+    Offline, that cost landed three times per utterance: speech-to-text
+    and intent parsing on the voice thread, synthesis on the announcer.
+    A single command could stall for a minute before any fallback ran,
+    which read as the device hanging rather than degrading.
+
+    So the first failure is remembered. For `cooldown_s` afterwards the
+    host is presumed down and callers go straight to their local path,
+    turning "every utterance is unusable" into "one utterance is slow,
+    then the device works offline". The next attempt after the cooldown
+    is what reopens it: there is no probe, because a probe would pay the
+    same DNS stall this exists to avoid.
+
+    Keyed per host rather than globally. A Mistral outage must not stop
+    the device trying its own TTS server, and vice versa — they fail
+    independently and only a dead *link* fails both, which the first
+    failure of either will discover anyway.
+    """
+
+    def __init__(self, cooldown_s: float = 30.0):
+        self._cooldown_s = cooldown_s
+        self._open_until = 0.0
+        self._lock = threading.Lock()
+
+    def allow(self) -> bool:
+        """False while the host is presumed down."""
+        with self._lock:
+            return time.monotonic() >= self._open_until
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._open_until = 0.0
+
+    def record_failure(self) -> None:
+        """One failure is enough.
+
+        Not a counter: the failure mode being defended against is a link
+        that is simply gone, where every attempt costs tens of seconds.
+        Requiring two failures before protecting the user would mean two
+        of those, and the cost of being wrong is only that the device
+        runs on its local models for `cooldown_s` — degraded, not broken.
+        """
+        with self._lock:
+            self._open_until = time.monotonic() + self._cooldown_s
+
+
+_breakers: dict[str, HostBreaker] = {}
+_breakers_lock = threading.Lock()
+
+
+def breaker_for(url: str, cooldown_s: float = 30.0) -> HostBreaker:
+    """The breaker for this URL's host, created once and shared.
+
+    Shared across callers of the same host on purpose: the TTS and STT
+    endpoints sit on one machine, so a failure reaching one is evidence
+    about the other, and sharing means a single stalled call protects
+    both for the rest of the cooldown.
+    """
+    host = urlparse(url).hostname or url
+    with _breakers_lock:
+        breaker = _breakers.get(host)
+        if breaker is None:
+            breaker = _breakers[host] = HostBreaker(cooldown_s)
+        return breaker
+
+
+def reset_breakers() -> None:
+    """Forget every host's failure state.
+
+    Two callers. The tests, which must not let one case's failure leak
+    into the next through module-level state. And anything that learns
+    the link is back — a modem reconnect, an interface coming up — where
+    waiting out a cooldown that is already stale costs the user a slow
+    utterance for no reason.
+    """
+    with _breakers_lock:
+        _breakers.clear()

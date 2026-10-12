@@ -74,3 +74,23 @@ def _isolate_clip_directories(tmp_path, monkeypatch):
     if app is not None:
         monkeypatch.setattr(app, "MESSAGE_AUDIO_DIR", messages_dir, raising=False)
         monkeypatch.setattr(app, "CLIP_CACHE_DIR", cache_dir, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_host_breakers():
+    """Clear the per-host circuit breakers between tests.
+
+    `net._breakers` is module-level and shared by host, which is right
+    at runtime — the TTS and STT endpoints are one machine, so a failure
+    reaching either is evidence about both. In a test suite it means one
+    case's simulated outage silently disables the remote path for every
+    case after it, which surfaces as unrelated tests asserting a
+    fallback they never asked for.
+
+    Autouse for the same reason the clip directories are: correctness
+    must not depend on each new test file remembering.
+    """
+    from indepensense import net
+    net.reset_breakers()
+    yield
+    net.reset_breakers()

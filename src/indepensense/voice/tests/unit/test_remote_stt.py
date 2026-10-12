@@ -218,3 +218,24 @@ def test_the_timeout_bounds_connect_and_read_separately(clip, monkeypatch):
     RemoteSTT(URL, timeout_s=4.0, compress=False).transcribe(clip, language="tl")
 
     assert sent["timeout"] == (2.0, 4.0)
+
+
+def test_a_failure_stops_the_next_call_reaching_the_network(clip, monkeypatch):
+    """The fix for the offline hang. Without this every utterance pays an
+    unbounded DNS stall; with it, one does and the rest go straight to
+    the local model."""
+    calls = []
+
+    def _post(self, *a, **kw):
+        calls.append(1)
+        raise requests.ConnectionError("network is unreachable")
+
+    monkeypatch.setattr(requests.Session, "post", _post)
+    local = FakeLocal()
+    routed = RoutedSTT(local, RemoteSTT(URL, compress=False), ("tl",))
+
+    for _ in range(4):
+        assert routed.transcribe(clip, language="tl").text == "local transcript"
+
+    assert len(calls) == 1, "only the first attempt should touch the network"
+    assert len(local.calls) == 4
