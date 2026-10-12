@@ -65,16 +65,34 @@ from pathlib import Path
 SCRATCH_DIR_NAME = ".partial"
 
 
-def digest(text: str, language: str) -> str:
-    """Stable identity for one sentence spoken in one language.
+def digest(text: str, language: str, voice: str) -> str:
+    """Stable identity for one sentence, in one language, in one voice.
 
     The language is part of the hash, not just the directory, because
     the English and Tagalog voices render different audio and a message
     that happens to be identical in both — a place name, a brand — must
     still produce two clips.
 
-    The NUL separator keeps the two fields from running together: with a
-    plain concatenation, language "en" + text "glish..." and language
+    **The voice is part of it for a stronger reason: without it, two
+    engines silently share a filename.** The hash used to be text plus
+    language, so re-rendering the catalogue with a different Tagalog
+    voice overwrote the old clips, and anything synthesised at runtime by
+    the *other* engine landed on the same names. The store became a
+    mixture with no way to tell which engine produced any given file, and
+    the user heard the voice change between a pre-rendered static message
+    and a templated one in the same breath. It also meant changing voice
+    invalidated nothing: every existing clip stayed in place and stayed
+    wrong, which is the opposite of the guarantee that editing a
+    message's *text* gives.
+
+    With the voice in the hash, two engines cannot collide, switching
+    voices invalidates through an ordinary cache miss, and both sets can
+    coexist so a change is reversible. Use the identity from
+    `router.voice_id`, not a free-form string — it is derived from the
+    configured voice files, so it changes exactly when the audio would.
+
+    The NUL separators keep the fields from running together: with plain
+    concatenation, language "en" + text "glish..." and language
     "english" + text "..." would collide. Unlikely with two languages,
     free to prevent.
 
@@ -83,22 +101,30 @@ def digest(text: str, language: str) -> str:
     sentence spoken in another's voice — worth the eight extra
     characters over the 8 the old startup clips used.
     """
-    return hashlib.sha256(f"{language}\x00{text}".encode()).hexdigest()[:16]
+    return hashlib.sha256(
+        f"{voice}\x00{language}\x00{text}".encode()
+    ).hexdigest()[:16]
 
 
-def filename(text: str, language: str) -> str:
-    return f"{digest(text, language)}.wav"
+def filename(text: str, language: str, voice: str) -> str:
+    return f"{digest(text, language, voice)}.wav"
 
 
-def find(text: str, language: str, *directories: Path) -> Path | None:
-    """First directory containing a clip of this exact sentence.
+def find(
+    text: str, language: str, voice: str, *directories: Path,
+) -> Path | None:
+    """First directory containing a clip of this sentence in this voice.
 
     Order matters and is the caller's choice: pass the permanent
     directory before the cache, so a static message that also happens to
     have been cached is served from the copy that will not be swept out
     from under it.
+
+    A clip of the same sentence in a *different* voice is not a hit. That
+    is the point — it is how a voice change re-renders instead of serving
+    the old audio forever.
     """
-    name = filename(text, language)
+    name = filename(text, language, voice)
     for directory in directories:
         candidate = directory / name
         if candidate.exists():
@@ -106,7 +132,7 @@ def find(text: str, language: str, *directories: Path) -> Path | None:
     return None
 
 
-def render(tts, text: str, language: str, directory: Path) -> Path:
+def render(tts, text: str, language: str, voice: str, directory: Path) -> Path:
     """Synthesise into `directory` and return the finished clip.
 
     Writes to a temporary file and renames into place. `os.replace` is
@@ -139,7 +165,7 @@ def render(tts, text: str, language: str, directory: Path) -> Path:
     one. Same filesystem, so the rename is still atomic.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    final = directory / filename(text, language)
+    final = directory / filename(text, language, voice)
     scratch_dir = directory / SCRATCH_DIR_NAME
     scratch_dir.mkdir(parents=True, exist_ok=True)
     # pid and thread id so concurrent writers never share a temporary.

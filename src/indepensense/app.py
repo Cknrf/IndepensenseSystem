@@ -354,7 +354,7 @@ from indepensense.voice.audio import (
 )
 from indepensense.voice import clips
 from indepensense.voice.base import TTSEngine
-from indepensense.voice.router import MultiEngineTTS, build_tts
+from indepensense.voice.router import MultiEngineTTS, build_tts, voice_id
 from indepensense.voice.volume import VolumeState
 from indepensense.voice.whisper import FasterWhisperSTT
 
@@ -390,10 +390,23 @@ def _static_clip_names(languages) -> frozenset[str]:
     millisecond, computed once per boot.
     """
     return frozenset(
-        clips.filename(messages.get(key, language), language)
+        clips.filename(messages.get(key, language), language, _voice_id(language))
         for key in messages.static_keys()
         for language in languages
     )
+
+
+
+def _voice_id(language: str) -> str:
+    """Clip-naming identity of the voice configured for `language`.
+
+    A thin binding of `router.voice_id` to this module's configuration,
+    so the many clip call sites below do not each repeat the two voice
+    maps. Kept next to them rather than in `config.py`, which holds
+    values rather than functions, and resolvable without a loaded model
+    because `_boot_clip_names` hashes before the voice stack exists.
+    """
+    return voice_id(language, PIPER_VOICES, MMS_VOICES)
 
 
 def _notify_systemd(state: str) -> None:
@@ -894,18 +907,19 @@ class Announcer:
                 continue
 
             (text, language, critical), epoch = taken
+            voice = _voice_id(language)
             try:
                 # A hit here is the whole point: the 61 static messages
                 # and any template output said twice cost a file read
                 # instead of 0.2-2.3 s of synthesis.
-                path = clips.find(text, language, self._message_dir, self._cache_dir)
+                path = clips.find(text, language, voice, self._message_dir, self._cache_dir)
                 if path is None:
                     if not self._await_tts():
                         return
-                    name = clips.filename(text, language)
+                    name = clips.filename(text, language, voice)
                     static = name in self._static_names
                     path = clips.render(
-                        self._tts, text, language,
+                        self._tts, text, language, voice,
                         self._message_dir if static else self._cache_dir,
                     )
                     if not static:
@@ -3780,7 +3794,7 @@ The comparisons are inclusive, so a threshold names the percentage
         language = self.language.current
         text = messages.get(key, language, **fields)
         try:
-            path = clips.find(text, language, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR)
+            path = clips.find(text, language, _voice_id(language), MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR)
             if path is None:
                 # Expected on a fresh install, or until `render_messages`
                 # is run after editing the text. Worth a line: it is the
@@ -3795,7 +3809,7 @@ The comparisons are inclusive, so a threshold names the percentage
                 # directly rather than matching a filename.
                 static = key in messages.static_keys()
                 path = clips.render(
-                    self.tts, text, language,
+                    self.tts, text, language, _voice_id(language),
                     MESSAGE_AUDIO_DIR if static else CLIP_CACHE_DIR,
                 )
             play(path)
@@ -3821,7 +3835,7 @@ The comparisons are inclusive, so a threshold names the percentage
         """
         language = self.language.current
         text = messages.get("system.starting", language)
-        path = clips.find(text, language, MESSAGE_AUDIO_DIR)
+        path = clips.find(text, language, _voice_id(language), MESSAGE_AUDIO_DIR)
         if path is None:
             print(
                 "  (no startup clip yet — it will be rendered at the end "
@@ -3852,10 +3866,10 @@ The comparisons are inclusive, so a threshold names the percentage
         for key in _BOOT_CLIPS:
             for language in self.language.supported:
                 text = messages.get(key, language)
-                if clips.find(text, language, MESSAGE_AUDIO_DIR) is not None:
+                if clips.find(text, language, _voice_id(language), MESSAGE_AUDIO_DIR) is not None:
                     continue
                 try:
-                    clips.render(self.tts, text, language, MESSAGE_AUDIO_DIR)
+                    clips.render(self.tts, text, language, _voice_id(language), MESSAGE_AUDIO_DIR)
                     print(f"  Rendered '{key}' for '{language}'.", flush=True)
                 except Exception as exc:
                     print(

@@ -12,6 +12,10 @@ import pytest
 from indepensense.voice import clips
 from indepensense.voice.mock import MockTTS
 
+# Any stable identity will do here; `router.voice_id` builds the real ones.
+VOICE = "piper:test-voice"
+OTHER_VOICE = "mms:other-voice"
+
 
 @pytest.fixture
 def dirs(tmp_path):
@@ -32,56 +36,56 @@ def _wav(path, seconds=1.0):
 # --- naming ------------------------------------------------------------------
 
 def test_the_same_sentence_names_the_same_clip():
-    assert clips.filename("Alert sent.", "en") == clips.filename("Alert sent.", "en")
+    assert clips.filename("Alert sent.", "en", VOICE) == clips.filename("Alert sent.", "en", VOICE)
 
 
 def test_editing_the_text_names_a_different_clip():
     """The whole reason the hash is of the text and not of the message
     key: a reworded sentence must not keep playing its old recording."""
-    assert clips.filename("Alert sent.", "en") != clips.filename("Alert sent!", "en")
+    assert clips.filename("Alert sent.", "en", VOICE) != clips.filename("Alert sent!", "en", VOICE)
 
 
 def test_each_language_gets_its_own_clip():
     """Two voices, two recordings — even where the text coincides, which
     it does for place names and brands."""
-    assert clips.filename("Jollibee", "en") != clips.filename("Jollibee", "tl")
+    assert clips.filename("Jollibee", "en", VOICE) != clips.filename("Jollibee", "tl", VOICE)
 
 
 def test_the_language_cannot_bleed_into_the_text():
     """A plain concatenation would make these two collide."""
-    assert clips.digest("glish hello", "en") != clips.digest("hello", "english")
+    assert clips.digest("glish hello", "en", VOICE) != clips.digest("hello", "english", VOICE)
 
 
 # --- lookup ------------------------------------------------------------------
 
 def test_a_missing_clip_is_not_found(dirs):
-    assert clips.find("never said", "en", *dirs) is None
+    assert clips.find("never said", "en", VOICE, *dirs) is None
 
 
 def test_a_rendered_clip_is_found_again(dirs):
     _, cache = dirs
-    clips.render(MockTTS(), "Alert sent.", "en", cache)
+    clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
 
-    assert clips.find("Alert sent.", "en", *dirs) is not None
+    assert clips.find("Alert sent.", "en", VOICE, *dirs) is not None
 
 
 def test_the_permanent_copy_wins_over_the_cached_one(dirs):
     """Order is the caller's guarantee that a static message is served
     from the directory the sweep cannot touch."""
     messages_dir, cache = dirs
-    clips.render(MockTTS(), "Alert sent.", "en", cache)
-    clips.render(MockTTS(), "Alert sent.", "en", messages_dir)
+    clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
+    clips.render(MockTTS(), "Alert sent.", "en", VOICE, messages_dir)
 
-    assert clips.find("Alert sent.", "en", *dirs).parent == messages_dir
+    assert clips.find("Alert sent.", "en", VOICE, *dirs).parent == messages_dir
 
 
 def test_an_edited_message_misses_its_old_clip(dirs):
     """Re-running the renderer is what repairs this; until then the
     sentence synthesises live rather than playing the stale wording."""
     messages_dir, cache = dirs
-    clips.render(MockTTS(), "Battery low.", "en", messages_dir)
+    clips.render(MockTTS(), "Battery low.", "en", VOICE, messages_dir)
 
-    assert clips.find("Battery is low.", "en", *dirs) is None
+    assert clips.find("Battery is low.", "en", VOICE, *dirs) is None
 
 
 # --- rendering ---------------------------------------------------------------
@@ -90,14 +94,14 @@ def test_rendering_creates_the_directory(dirs):
     _, cache = dirs
     assert not cache.exists()
 
-    clips.render(MockTTS(), "Alert sent.", "en", cache)
+    clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
 
     assert cache.exists()
 
 
 def test_rendering_leaves_a_playable_wav(dirs):
     _, cache = dirs
-    path = clips.render(MockTTS(), "Alert sent.", "en", cache)
+    path = clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
 
     with wave.open(str(path), "rb") as handle:
         assert handle.getnframes() > 0
@@ -105,7 +109,7 @@ def test_rendering_leaves_a_playable_wav(dirs):
 
 def test_rendering_leaves_no_temporary_behind(dirs):
     _, cache = dirs
-    clips.render(MockTTS(), "Alert sent.", "en", cache)
+    clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
 
     assert list((cache / clips.SCRATCH_DIR_NAME).glob("*")) == []
 
@@ -128,7 +132,7 @@ def test_the_engine_is_handed_a_path_that_looks_like_a_wav(dirs):
                 )
             super().synthesize(text, output_path, language=language)
 
-    clips.render(_ExtensionSensitiveTTS(), "Alert sent.", "tl", cache)
+    clips.render(_ExtensionSensitiveTTS(), "Alert sent.", "tl", VOICE, cache)
 
     assert seen == [".wav"]
 
@@ -144,7 +148,7 @@ def test_a_half_written_clip_is_invisible_to_a_wav_glob(dirs):
             super().synthesize(text, output_path, language=language)
             assert list(cache.glob("*.wav")) == [], "temporary is visible"
 
-    clips.render(_SlowTTS(), "Alert sent.", "en", cache)
+    clips.render(_SlowTTS(), "Alert sent.", "en", VOICE, cache)
 
 
 def test_a_failed_render_leaves_nothing_at_all(dirs):
@@ -160,9 +164,9 @@ def test_a_failed_render_leaves_nothing_at_all(dirs):
             raise RuntimeError("voice died mid-sentence")
 
     with pytest.raises(RuntimeError):
-        clips.render(_Broken(), "Alert sent.", "en", cache)
+        clips.render(_Broken(), "Alert sent.", "en", VOICE, cache)
 
-    assert clips.find("Alert sent.", "en", cache) is None
+    assert clips.find("Alert sent.", "en", VOICE, cache) is None
     assert list((cache / clips.SCRATCH_DIR_NAME).glob("*")) == []
 
 
@@ -170,8 +174,8 @@ def test_rendering_twice_is_idempotent(dirs):
     """Two threads can be asked for the same sentence at once — the
     announcer and the voice pipeline both speak."""
     _, cache = dirs
-    first = clips.render(MockTTS(), "Alert sent.", "en", cache)
-    second = clips.render(MockTTS(), "Alert sent.", "en", cache)
+    first = clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
+    second = clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
 
     assert first == second
     assert len(list(cache.glob("*.wav"))) == 1
@@ -238,7 +242,7 @@ def test_the_sweep_never_reaches_the_static_messages(dirs):
     `emergency.delivery.all_failed` and its neighbours — needed at the
     one moment there is no time to synthesise them."""
     messages_dir, cache = dirs
-    rare = clips.render(MockTTS(), "I could not reach anyone.", "en", messages_dir)
+    rare = clips.render(MockTTS(), "I could not reach anyone.", "en", VOICE, messages_dir)
     os.utime(rare, (1_000, 1_000))         # untouched for years
     _wav(cache / "recent.wav")
 
@@ -246,3 +250,50 @@ def test_the_sweep_never_reaches_the_static_messages(dirs):
 
     assert rare.exists()
     assert list(cache.glob("*.wav")) == []
+
+
+# --- the voice is part of a clip's identity ----------------------------------
+
+def test_two_voices_never_share_a_clip():
+    """The guarantee the voice in the digest exists to give.
+
+    Without it, re-rendering the catalogue with a different Tagalog voice
+    overwrote the old clips, and anything the *other* engine synthesised
+    at runtime landed on the same names — leaving a store nobody could
+    attribute and a user who heard the voice change mid-session between a
+    pre-rendered static message and a templated one.
+    """
+    assert (clips.filename("Alert sent.", "en", VOICE)
+            != clips.filename("Alert sent.", "en", OTHER_VOICE))
+
+
+def test_changing_voice_misses_the_old_clip(dirs):
+    """A voice change must re-render, not serve the previous engine's audio.
+
+    This is the same invalidation that editing a message's text already
+    gave, extended to the other thing that changes what a clip sounds
+    like. Before, switching voices invalidated nothing at all.
+    """
+    messages_dir, cache = dirs
+    clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
+
+    assert clips.find("Alert sent.", "en", OTHER_VOICE, cache) is None
+    assert clips.find("Alert sent.", "en", VOICE, cache) is not None
+
+
+def test_both_voices_can_coexist(dirs):
+    """So a voice change is reversible without re-rendering everything."""
+    messages_dir, cache = dirs
+    a = clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
+    b = clips.render(MockTTS(), "Alert sent.", "en", OTHER_VOICE, cache)
+
+    assert a != b
+    assert a.exists() and b.exists()
+
+
+def test_the_voice_cannot_bleed_into_the_language():
+    """Same NUL-separator argument as language and text: the fields are
+    concatenated, so without a separator a voice ending in the language's
+    first characters would collide."""
+    assert (clips.digest("hello", "en", "piperen")
+            != clips.digest("hello", "enen", "piper"))

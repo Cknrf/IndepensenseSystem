@@ -75,3 +75,40 @@ def build_tts(
     for language, model_dir in mms_voices.items():
         engines[language] = MmsTTS(model_dir=model_dir, language=language)
     return MultiEngineTTS(engines)
+
+
+def voice_id(
+    language: str,
+    piper_voices: dict[str, Path],
+    mms_voices: dict[str, Path],
+) -> str:
+    """Identity of the voice that will speak `language`, for clip naming.
+
+    Lives beside `build_tts` and mirrors its precedence — MMS overrides
+    Piper for any language both declare — because the two must agree.
+    If this named a voice the router would not actually use, every clip
+    would be filed under the wrong identity and the cache would serve
+    audio from one engine while claiming another.
+
+    Derived from the configured *voice file* rather than the engine
+    class, so it changes exactly when the audio would: swapping
+    `en_US-lessac-medium` for another Piper voice is as much a change as
+    swapping Piper for MMS, and both must invalidate.
+
+    Takes the maps as arguments for the same reason `build_tts` does —
+    `App._open_tts` stays the only place configuration becomes a device,
+    and the manual test scripts cannot accidentally resolve against a
+    different set than the one running.
+
+    Computable without loading a model, which `app._boot_clip_names`
+    depends on: the boot clips are hashed before the voice stack exists.
+    """
+    if language in mms_voices:
+        return f"mms:{mms_voices[language].name}"
+    if language in piper_voices:
+        return f"piper:{piper_voices[language].stem}"
+    # A language with no configured voice renders nothing, so nothing
+    # will ever be filed under this. Named rather than raising because
+    # the caller is usually hashing, not synthesising, and a hash of an
+    # unspeakable language is harmless.
+    return f"none:{language}"

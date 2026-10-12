@@ -48,7 +48,7 @@ from indepensense.config import (
 )
 from indepensense.intents import messages
 from indepensense.voice import clips
-from indepensense.voice.router import build_tts
+from indepensense.voice.router import build_tts, voice_id
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,8 +83,11 @@ def main(argv: list[str] | None = None) -> int:
     for key in keys:
         for language in languages:
             text = messages.get(key, language)
-            wanted[clips.filename(text, language)] = (key, language)
-            if args.force or clips.find(text, language, MESSAGE_AUDIO_DIR) is None:
+            voice = voice_id(language, PIPER_VOICES, MMS_VOICES)
+            wanted[clips.filename(text, language, voice)] = (key, language)
+            if args.force or clips.find(
+                text, language, voice, MESSAGE_AUDIO_DIR,
+            ) is None:
                 todo.append((key, language, text))
 
     print(f"\n{len(todo)} to render, {len(wanted) - len(todo)} already present.")
@@ -105,7 +108,9 @@ def main(argv: list[str] | None = None) -> int:
         started = time.monotonic()
         for index, (key, language, text) in enumerate(todo, start=1):
             try:
-                clips.render(tts, text, language, MESSAGE_AUDIO_DIR)
+                clips.render(tts, text, language,
+                             voice_id(language, PIPER_VOICES, MMS_VOICES),
+                             MESSAGE_AUDIO_DIR)
                 print(f"  [{index:3d}/{len(todo)}] {language}  {key}", flush=True)
             except Exception as exc:
                 # Carry on: one voice missing a phoneme must not stop the

@@ -19,6 +19,17 @@ from indepensense.voice import clips
 from indepensense.voice.mock import MockTTS
 
 
+def _voice(language: str) -> str:
+    """The clip-naming identity the code under test will use.
+
+    Resolved through `router.voice_id` against the real configuration
+    rather than hardcoded, so this test cannot drift from the engine the
+    device would actually pick for a language.
+    """
+    from indepensense.config import MMS_VOICES, PIPER_VOICES
+    from indepensense.voice.router import voice_id
+    return voice_id(language, PIPER_VOICES, MMS_VOICES)
+
 @pytest.fixture
 def target(tmp_path, monkeypatch):
     """Point the tool at a temp directory with a mock engine behind it."""
@@ -92,7 +103,7 @@ def test_templated_messages_are_skipped(target):
     rendered = set(_clips(target))
     battery = messages.get("battery.level", "en", percent=47)
 
-    assert clips.filename(battery, "en") not in rendered
+    assert clips.filename(battery, "en", _voice("en")) not in rendered
 
 
 def test_rerunning_renders_nothing(target):
@@ -140,7 +151,7 @@ def test_a_clip_for_deleted_text_is_removed(target, monkeypatch):
     """One recording per sentence, not every wording it has ever had —
     this runs on an SD card."""
     _run()
-    stale = clips.render(MockTTS(), "A sentence nobody says any more.", "en", target)
+    stale = clips.render(MockTTS(), "A sentence nobody says any more.", "en", _voice("en"), target)
 
     _run()
 
@@ -149,7 +160,7 @@ def test_a_clip_for_deleted_text_is_removed(target, monkeypatch):
 
 def test_the_edited_message_leaves_only_its_new_clip(target, monkeypatch):
     _run()
-    stale = clips.filename(messages.get("emergency.sent", "en"), "en")
+    stale = clips.filename(messages.get("emergency.sent", "en"), "en", _voice("en"))
 
     monkeypatch.setitem(
         messages.MESSAGES["emergency.sent"], "en", "Your alert has gone out.",

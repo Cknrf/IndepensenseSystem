@@ -31,6 +31,17 @@ class _CountingTTS:
             handle.writeframes(b"\x00\x00" * 1600)
 
 
+def _voice(language: str) -> str:
+    """The clip-naming identity the code under test will use.
+
+    Resolved through `router.voice_id` against the real configuration
+    rather than hardcoded, so this test cannot drift from the engine the
+    device would actually pick for a language.
+    """
+    from indepensense.config import MMS_VOICES, PIPER_VOICES
+    from indepensense.voice.router import voice_id
+    return voice_id(language, PIPER_VOICES, MMS_VOICES)
+
 @pytest.fixture
 def played(monkeypatch):
     """Captures playback instead of opening PortAudio."""
@@ -115,7 +126,7 @@ def test_a_static_message_is_played_from_the_permanent_directory(
     the engine is never touched at all."""
     from indepensense.voice import clips
     text = "Emergency alert sent."
-    clips.render(announcer.tts, text, "en", tmp_path / "messages")
+    clips.render(announcer.tts, text, "en", _voice("en"), tmp_path / "messages")
     announcer.tts.calls.clear()
 
     _speak(announcer, text)
@@ -178,7 +189,7 @@ def routing(tmp_path, played):
     tts = _CountingTTS()
     instance = Announcer(
         tts, tmp_path / "messages", tmp_path / "cache",
-        frozenset({clips.filename("Emergency alert sent.", "en")}),
+        frozenset({clips.filename("Emergency alert sent.", "en", _voice("en"))}),
     )
     instance.tts = tts
     instance.played = played
@@ -232,7 +243,7 @@ def test_the_static_set_is_derived_from_the_message_catalogue():
     names = _static_clip_names(("en", "tl"))
 
     assert len(names) == len(messages.static_keys()) * 2
-    assert clips.filename(messages.get("emergency.sent", "tl"), "tl") in names
+    assert clips.filename(messages.get("emergency.sent", "tl"), "tl", _voice("tl")) in names
 
 
 def test_a_templated_message_is_absent_from_the_static_set():
@@ -243,4 +254,4 @@ def test_a_templated_message_is_absent_from_the_static_set():
     names = _static_clip_names(("en",))
     battery = messages.get("battery.level", "en", percent=47)
 
-    assert clips.filename(battery, "en") not in names
+    assert clips.filename(battery, "en", _voice("en")) not in names

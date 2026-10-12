@@ -39,7 +39,7 @@ def _clip(app, key, language=None):
     """Where the clip for `key` would live, if it exists."""
     language = language or app.language.current
     return clips.find(
-        messages.get(key, language), language,
+        messages.get(key, language), language, app_module._voice_id(language),
         app_module.MESSAGE_AUDIO_DIR, app_module.CLIP_CACHE_DIR,
     )
 
@@ -173,7 +173,9 @@ def test_speaking_thinking_plays_the_rendered_clip(app, monkeypatch):
     synthesised = []
     monkeypatch.setattr(app_module, "play", lambda path: played.append(path))
     clips.render(app.tts, messages.get("cloud.thinking", app.language.current),
-                 app.language.current, app_module.MESSAGE_AUDIO_DIR)
+                 app.language.current,
+                 app_module._voice_id(app.language.current),
+                 app_module.MESSAGE_AUDIO_DIR)
     monkeypatch.setattr(app.tts, "synthesize", lambda *a, **k: synthesised.append(a))
 
     app._speak_thinking()
@@ -225,7 +227,8 @@ def test_the_permanent_copy_is_not_pruned_by_the_renderer(app, monkeypatch):
     written = _clip(app, "cloud.thinking").name
 
     wanted = {
-        clips.filename(messages_module.get(key, language), language)
+        clips.filename(messages_module.get(key, language), language,
+                       app_module._voice_id(language))
         for key in messages_module.static_keys()
         for language in app.language.supported
     }
