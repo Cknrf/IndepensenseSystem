@@ -3627,11 +3627,11 @@ The comparisons are inclusive, so a threshold names the percentage
             # Navigation just started: point the user the right way before
             # they take a step. Deliberately after the response has been
             # heard, so "Navigating to Jollibee, four hundred metres" lands
-            # first and the buzzing that follows has a context.
+            # first and the cues that follow have a context.
             #
             # Here rather than inside the executor because orienting needs
-            # the compass, the motors and the speaker — all app-level — and
-            # the route is already reachable through `nav_monitor`.
+            # the compass and the speaker — both app-level — and the route
+            # is already reachable through `nav_monitor`.
             if (intent_result.intent is Intent.NAVIGATION_START
                     and self.nav_monitor.is_active()):
                 self._orient_towards_route()

@@ -19,11 +19,13 @@ def _direction_from_sign(sign: int) -> str:
       1 TURN_SLIGHT_RIGHT, 2 TURN_RIGHT, 3 TURN_SHARP_RIGHT,
       4 FINISH, 5 REACHED_VIA, 6 U_TURN_UNKNOWN, 7 KEEP_RIGHT.
 
-    We collapse the granularity to what the three-motor wearable can
-    actually express: any left turn → "left", any right → "right",
-    continue-on-street → "straight", finish → "arrive", via-point →
-    "waypoint". A wearable that can't distinguish "slight" from "sharp"
-    left doesn't gain much from a five-way direction taxonomy.
+    We collapse the granularity to what is worth saying out loud: any
+    left turn → "left", any right → "right", continue-on-street →
+    "straight", finish → "arrive", via-point → "waypoint". The cue at the
+    junction is two words by design, and "take the slight left" is both
+    longer and less certain — GraphHopper's slight/sharp split comes from
+    road geometry, which at a real Batangas intersection is not reliably
+    the distinction a pedestrian sees.
     """
     if sign == 4:
         return "arrive"
