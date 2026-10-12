@@ -41,13 +41,19 @@ Returns `{"status":"ok","models":["moss","omnivoice"]}` once both models are loa
 
 ## Benchmark: which model is faster
 
-**OmniVoice is faster: about 2.5× on the median, and on every single sentence tested (90 of 90).** MOSS also had one runaway generation, which OmniVoice never did.
+**OmniVoice is faster: about 2.75× on the median, and on every single sentence tested (90 of 90).** MOSS also produced one runaway generation in an earlier run. OmniVoice never did.
 
-Run on 2026-10-12, from a laptop in Finland over the public endpoint.
+The benchmark is in the repo, so these numbers can be reproduced:
+
+```bash
+python -m indepensense.voice.tests.manual.tts_api_bench --csv
+```
+
+Run on 2026-10-12, from a laptop in Finland over the public endpoint, with the script's defaults.
 
 ### Method
 
-- **Corpus:** the wearable's own static responses from `intents/messages.py`, the sentences it actually speaks. 15 English and 15 Tagalog, sampled with a fixed seed, mean length 51 and 65 characters.
+- **Corpus:** the wearable's own static responses from `intents/messages.py`, the sentences it actually speaks. 15 English and 15 Tagalog, sampled with seed 0, mean length 51 and 54 characters.
 - **Repeats:** each sentence was sent 3 times to each model, so n = 45 per model per language.
 - **Order:** the two models alternate on every sentence, and the order flips each repeat. Any drift, such as load from other tenants on the GPU, therefore hits both equally.
 - **Warmup:** one warmup request per model is sent first and discarded.
@@ -57,18 +63,18 @@ Run on 2026-10-12, from a laptop in Finland over the public endpoint.
 
 ### Results
 
-| Language | Model | Request median | Request p95 | Audio median | RTF median | RTF p95 |
-|---|---|---|---|---|---|---|
-| English | `omnivoice` | **1.16 s** | 1.84 s | 2.92 s | **0.41×** | 0.74× |
-| English | `moss` | 2.82 s | 4.65 s | 3.12 s | 0.90× | 1.83× |
-| Tagalog | `omnivoice` | **1.20 s** | 2.30 s | 3.60 s | **0.34×** | 0.67× |
-| Tagalog | `moss` | 3.49 s | 6.66 s | 4.24 s | 0.81× | 2.01× |
+| Language | Model | Request median | Request p95 | Request max | Audio median | RTF median | RTF p95 |
+|---|---|---|---|---|---|---|---|
+| English | `omnivoice` | **0.93 s** | 1.37 s | 1.42 s | 2.92 s | **0.32×** | 0.55× |
+| English | `moss` | 2.69 s | 4.43 s | 4.85 s | 2.96 s | 0.92× | 1.80× |
+| Tagalog | `omnivoice` | **0.92 s** | 1.61 s | 3.45 s | 3.12 s | **0.33×** | 0.67× |
+| Tagalog | `moss` | 2.82 s | 5.07 s | 5.94 s | 3.44 s | 0.83× | 1.66× |
 
-Paired per sentence and repeat, OmniVoice was faster in all 45 of 45 English and all 45 of 45 Tagalog cases. The median MOSS/OmniVoice time ratio was 2.47× in English and 2.65× in Tagalog.
+Paired per sentence and repeat, OmniVoice was faster in all 45 of 45 English and all 45 of 45 Tagalog cases. The median MOSS/OmniVoice time ratio was 2.76× in English and 2.75× in Tagalog.
 
-**OmniVoice stays below real time even at p95. MOSS goes above it at p95:** its p95 RTF is about 2×, so a long sentence can take twice its spoken length to arrive. That is the difference between a cue that arrives before it is needed and one that arrives late.
+**OmniVoice stays below real time even at p95. MOSS goes above it at p95:** its p95 RTF is 1.7–1.8×, so a long sentence can take nearly twice its spoken length to arrive. That is the difference between a cue that arrives before it is needed and one that arrives late.
 
-**MOSS can fail to stop.** On one of its three repeats of "I can't change the volume right now.", MOSS produced 101.5 s of audio and took 42 s to answer. The other two repeats of the same sentence were normal. MOSS is an autoregressive 8B model with `max_new_tokens=4096`, and it occasionally misses its end-of-speech token. The table's medians are unaffected; its English max is 41.97 s. OmniVoice's worst request in 90 was 3.37 s.
+**MOSS can fail to stop.** An earlier run of the same benchmark, with a slightly different Tagalog sample, gave the same ranking (2.5–2.65× median). In that run, on one of its three repeats of "I can't change the volume right now.", MOSS produced 101.5 s of audio and took 42 s to answer. The other two repeats of the same sentence were normal. MOSS is an autoregressive 8B model with `max_new_tokens=4096`, and it occasionally misses its end-of-speech token. One case in 180 requests is too few to give a rate, but it is a failure mode OmniVoice did not show in either run.
 
 These numbers measure speed only. No listening test has been done, so they say nothing about which voice sounds better in Tagalog.
 

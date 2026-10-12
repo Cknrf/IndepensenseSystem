@@ -1426,6 +1426,11 @@ BACKEND_PROBE_URL = BACKEND_URL
 # which is the reason not to raise it casually.
 REACHABILITY_PROBE_TIMEOUT_S = 2.0
 
+# Remote TTS on the gpuer server (MOSS-TTS-v1.5 and the OmniVoice Filipino
+# fine-tune). Not used by the runtime: only `voice/tests/manual/tts_api_bench`
+# reads it. See docs/tts-api.md.
+REMOTE_TTS_URL = "https://gpuer.techco.fi:8700"
+
 # Per-device credential, written by provisioning as one line:
 #
 #     <device-uuid>.<secret>

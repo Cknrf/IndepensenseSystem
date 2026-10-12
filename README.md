@@ -348,6 +348,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | Same, with CSV output for later analysis | `python -m indepensense.tools.system_performance --csv` — writes a timestamped file to `data/performance/` |
 | **Voice-pipeline latency** (STT → NLU → TTS) | `python -m indepensense.voice.tests.manual.latency_bench --repeat 10 --csv` — replays recorded WAVs, so **no microphone needed**. This is the evidence for the low-latency objective |
 | Latency without Ollama running | `python -m indepensense.voice.tests.manual.latency_bench --no-nlu` |
+| **Remote TTS: MOSS-TTS-v1.5 vs OmniVoice** on the gpuer API. Request time and real-time factor per language, using the wearable's own messages | `python -m indepensense.voice.tests.manual.tts_api_bench --csv`. Needs network only and runs on a Mac. Results are in [`docs/tts-api.md`](docs/tts-api.md) |
 
 ### Speech Clips
 
