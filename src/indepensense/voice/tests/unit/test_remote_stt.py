@@ -208,3 +208,13 @@ def test_model_size_passes_through_for_diagnostics(clip):
     routed = RoutedSTT(FakeLocal(), RemoteSTT(URL, compress=False), ("tl",))
 
     assert routed.model_size_for("tl") == "small"
+
+
+def test_the_timeout_bounds_connect_and_read_separately(clip, monkeypatch):
+    """Same reason as the TTS driver: a scalar would double the ceiling,
+    and here the fallback behind it is the 5.29 s local model."""
+    sent = _capture(monkeypatch, _response(payload={"text": "x"}))
+
+    RemoteSTT(URL, timeout_s=20.0, compress=False).transcribe(clip, language="tl")
+
+    assert sent["timeout"] == (3.0, 20.0)

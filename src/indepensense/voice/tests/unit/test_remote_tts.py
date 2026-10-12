@@ -170,3 +170,15 @@ def test_empty_text_writes_a_valid_silent_wav(tts, tmp_path, monkeypatch):
     with wave.open(str(out)) as handle:
         assert handle.getnframes() == 0
         assert handle.getnchannels() == 1
+
+
+def test_the_timeout_bounds_connect_and_read_separately(tmp_path, monkeypatch):
+    """`requests` applies a scalar timeout to each phase independently,
+    not to total elapsed time, so passing one number would allow that
+    long to open the socket and the same again waiting for audio —
+    double the ceiling the config appears to set."""
+    sent = _capture(monkeypatch, _response(body=b"RIFF....WAVE"))
+
+    RemoteTTS(URL, "tl", "07", timeout_s=6.0).synthesize("hi", tmp_path / "a.wav")
+
+    assert sent["timeout"] == (3.0, 6.0)

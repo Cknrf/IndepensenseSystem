@@ -75,6 +75,12 @@ from indepensense.voice.base import Transcript
 _UPLOAD_NAME = "clip.ogg"
 _UPLOAD_TYPE = "audio/ogg"
 
+# Connect-phase budget, separate from the read budget — see the same
+# constant in `voice/remote.py`. `requests` applies a scalar timeout per
+# phase, not to total elapsed time, so one number would mean double the
+# ceiling the config appears to set.
+_CONNECT_TIMEOUT_S = 3.0
+
 
 class RemoteSTT:
     """Transcribe by uploading the clip to the endpoint.
@@ -128,7 +134,7 @@ class RemoteSTT:
             self._url,
             files={"file": (name, payload, content_type)},
             data=fields,
-            timeout=self._timeout_s,
+            timeout=(_CONNECT_TIMEOUT_S, self._timeout_s),
         )
         if not response.ok:
             raise RuntimeError(

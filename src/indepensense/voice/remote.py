@@ -27,8 +27,8 @@ Which is why this is built for `tools/render_messages.py` first. The clip
 store means speech is rendered once and replayed, so the 66 static
 messages can be synthesised here ahead of time and then cost a file read
 forever. Only genuinely dynamic text — place names, distances — would
-ever reach this at runtime, and that path needs a local fallback before
-it is switched on. See `config.REMOTE_TTS_ENABLED`.
+ever reach this at runtime, and that path falls back to local MMS when
+the endpoint cannot be reached. See `config.REMOTE_TTS_ENABLED`.
 
 The endpoint
 ------------
@@ -60,6 +60,14 @@ from indepensense.net import require_https
 # exactly as swapping engines does.
 ENGINE_NAME = "omnivoice"
 
+# Connect-phase budget, kept separate from the read budget. `requests`
+# applies a *scalar* timeout to each phase independently rather than to
+# total elapsed time, so passing one number would have allowed that long
+# to open the socket and the same again waiting for audio — double the
+# ceiling anyone reading the config would expect. Only spent when the
+# pooled socket is gone, which a batch render pays once.
+_CONNECT_TIMEOUT_S = 3.0
+
 
 class RemoteTTS:
     """A single-language voice served over HTTP.
@@ -71,8 +79,8 @@ class RemoteTTS:
     Raises on failure rather than writing silence, which matches
     `PiperTTS` and `MmsTTS` — `clips.render` deletes the partial file and
     lets the caller decide. `render_messages` counts it as a failure and
-    carries on; a runtime caller needs a local fallback, which is why
-    `REMOTE_TTS_ENABLED` is off until that exists.
+    carries on; at runtime `clips.render_first` turns it into a fallback
+    to the local engine, filed under that engine's own voice.
     """
 
     def __init__(
@@ -129,7 +137,7 @@ class RemoteTTS:
         response = self._get_session().post(
             self._url,
             json={"text": body, "model": self._model, "voice": self.voice},
-            timeout=self._timeout_s,
+            timeout=(_CONNECT_TIMEOUT_S, self._timeout_s),
         )
 
         if not response.ok:
