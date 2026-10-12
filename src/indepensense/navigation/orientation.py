@@ -10,12 +10,20 @@ Pure decision logic: given how far off the user's facing is, say which way
 to turn and how urgently. No threads, no hardware, no speech. The
 application layer reads the compass, speaks the cue, and calls back.
 
-Why repeated two-word speech
-----------------------------
+Why repeated short speech
+-------------------------
 
-The feedback is a short spoken instruction — "turn left" — repeated at a
+The feedback is a short spoken instruction — "face left" — repeated at a
 rate that rises as the error shrinks, until the user is facing the right
 way.
+
+The verb is deliberately *face* rather than *turn*. The application speaks
+the route summary immediately before calling in here, and that summary
+ends with the first route action ("In 120 meters, turn left onto Second
+Avenue"), so a cue of "turn left" would land on its heels meaning
+something else entirely — pivot now, versus a turn 120 m away. While this
+was a motor pulse the two could not be confused; in one audio channel only
+the wording separates them.
 
 This was a motor pulsing on the side to turn toward. The three motors are
 all mounted in the same cane handle, so their vibration couples through
@@ -74,8 +82,9 @@ _DEFAULT_RELEASE_TOLERANCE_DEG = 30.0
 
 # Past this, "left" and "right" stop being useful: a 170° turn described as
 # "turn right" is technically the short way round but reads as a small
-# correction, and the user stops early. "Turn around" is the instruction a
-# sighted person would give, and it needs no sense of which way.
+# correction, and the user stops early. "Face behind you" is what a sighted
+# person would say, and it needs no sense of which way. It means pivot in
+# place, not walk back.
 _DEFAULT_AROUND_DEG = 135.0
 
 

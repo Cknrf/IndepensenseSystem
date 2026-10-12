@@ -388,10 +388,13 @@ Two consequences worth recording. The arrival cue lost its silent fallback —
 it fires exactly once ever, because `check()` clears the route in the same
 breath, so it is now the one navigation cue that speaks even while the voice
 pipeline is busy rather than being dropped. And turn-to-face orientation had
-no non-haptic half at all: its spoken replacement is two-word static clips
+no non-haptic half at all: its spoken replacement is short static clips
 repeated at a rate-coded gap, which works only because a message with no
 placeholder is pre-rendered by `render_messages` and replayed from disk
-instead of synthesised. The ~2 s-of-Piper objection that originally ruled
+instead of synthesised. It also needed its own verb — "face left", not
+"turn left" — because the route summary spoken immediately before it ends
+with the first route turn, and two different lefts back to back are
+indistinguishable once both are speech. The ~2 s-of-Piper objection that originally ruled
 speech out was an argument against synthesising a *sentence* per repeat, and
 it does not survive the clip cache.
 

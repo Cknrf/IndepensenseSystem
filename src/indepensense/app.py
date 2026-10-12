@@ -508,17 +508,30 @@ _BOOT_CLIPS: tuple[str, ...] = (
     "system.starting", "language.greeting", "system.voice_unavailable"
 )
 
-# Turn directions → the message spoken for them. Shared by turn-to-face
-# orientation and the at-the-turn cue, which is the point: the wearer hears
-# the same two words whether they are being pointed at the route or told a
-# turn has arrived, so there is one phrase to learn rather than two.
-# A direction with no entry here is spoken as nothing rather than crashing
-# — `.get` returning None is handled at both call sites.
-_ORIENTATION_MESSAGE_KEYS: dict[str | None, str] = {
+# Directions → the message spoken for them. Two maps, not one, because the
+# two cues mean different things and share an audio channel: `turn_now`
+# fires at a junction the user has walked to, orientation fires while they
+# stand still before the first step. `nav.started` ends with the first
+# route action — "In 120 meters, turn left onto Second Avenue" — and
+# orientation starts speaking immediately after it, so one shared "turn
+# left" would be two different lefts back to back. A separate verb is what
+# keeps them apart now that neither is a motor pulse.
+#
+# A direction with no entry is spoken as nothing rather than crashing —
+# `.get` returning None is handled at both call sites. That is what makes
+# "arrive" and "waypoint" safely silent here.
+_TURN_NOW_MESSAGE_KEYS: dict[str | None, str] = {
     "left": "nav.turn_left",
     "right": "nav.turn_right",
-    "around": "nav.turn_around",
     "straight": "nav.walk_straight_ahead",
+}
+
+# "around" appears only here: GraphHopper's taxonomy is left / right /
+# straight / arrive / waypoint, so no route instruction can produce it.
+_ORIENTATION_MESSAGE_KEYS: dict[str | None, str] = {
+    "left": "nav.face_left",
+    "right": "nav.face_right",
+    "around": "nav.face_around",
 }
 
 # Obstacle tiers, ordered. `None` is "clear", so comparing ranks answers
@@ -2374,9 +2387,9 @@ The comparisons are inclusive, so a threshold names the percentage
             elif cue.kind == "turn_now":
                 # The instruction was spoken a long block ago, at
                 # `announce_distance_m`. This is "it is here, now" — two
-                # words, the same ones turn-to-face uses, so the direction
-                # arrives without re-reading the whole sentence.
-                key = _ORIENTATION_MESSAGE_KEYS.get(cue.direction)
+                # words, so the direction arrives without re-reading the
+                # whole sentence over a junction.
+                key = _TURN_NOW_MESSAGE_KEYS.get(cue.direction)
                 if key is None or self._voice_active.is_set():
                     return
                 print(f"[nav] turn_now: {cue.direction}", flush=True)
@@ -3679,10 +3692,13 @@ The comparisons are inclusive, so a threshold names the percentage
         the 100 Hz loop keeps detecting falls and obstacles while the user
         stands in the street turning around.
 
-        The cue is a two-word instruction — "turn left" — repeated with a
+        The cue is a short instruction — "face left" — repeated with a
         shorter gap as they come round. See `navigation/orientation.py` for
-        why speech rather than the motor pulse this used to be, and why two
-        words rather than a spoken angle.
+        why speech rather than the motor pulse this used to be, and why a
+        direction rather than a spoken angle. The verb is *face*, never
+        *turn*, because `nav.started` has just ended with the route's first
+        turn and a second "turn left" on its heels would be read as that
+        one — see `_ORIENTATION_MESSAGE_KEYS`.
 
         **Spoken with `_play_clip`, not `_announce`.** This is the one
         place that repeats the same line while the thing it describes is

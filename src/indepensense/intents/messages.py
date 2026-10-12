@@ -327,16 +327,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Mukhang nalampasan mo ang liko. Ang tagubilin ay: {instruction}.",
     },
 
-    # Turn-to-face, and the at-the-turn cue. Two words each, deliberately:
-    # these are *repeated* until the user comes round, so every syllable is
-    # paid for on each cycle. All three are static (no placeholder), which
-    # is what makes repeating them affordable — they are pre-rendered clips
-    # replayed from disk, not synthesis. See navigation/orientation.py.
-    #
-    # "Turn around" is an order here, where `nav.missed_turn` above refuses
-    # to give one. The difference is that the device knows where the user
-    # is pointing and that they have not started walking yet; mid-route it
-    # knows neither.
+    # The at-the-turn cue: the route turn has arrived, take it. Short
+    # because the user is standing at a junction listening to traffic —
+    # the street name and the distance were spoken 80 m back.
     "nav.turn_left": {
         "en": "Turn left.",
         "tl": "Kumaliwa ka po.",
@@ -345,9 +338,40 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Turn right.",
         "tl": "Kumanan ka po.",
     },
-    "nav.turn_around": {
-        "en": "Turn around.",
-        "tl": "Umikot ka po.",
+
+    # Turn-to-face orientation, before the first step. **Deliberately a
+    # different verb from the turn cues above**, because the two mean
+    # different things and both are now spoken: "turn left" is a turn to
+    # take along the route, "face left" is "pivot your body on the spot,
+    # now". They were briefly the same words, on the theory that one
+    # phrase is easier to learn than two — which was wrong. `nav.started`
+    # ends with the first route action ("In 120 meters, turn left onto
+    # Second Avenue") and orientation begins immediately after it, so the
+    # shared wording put two different lefts back to back with nothing to
+    # tell them apart. When orientation was a motor pulse the modality
+    # separated them for free; in one audio channel the vocabulary has to.
+    #
+    # Repeated until the user comes round, so every syllable is paid for
+    # on each cycle. All are static (no placeholder), which is what makes
+    # repeating them affordable — pre-rendered clips replayed from disk,
+    # not synthesis. See navigation/orientation.py.
+    #
+    # `nav.face_around` is an order, where `nav.missed_turn` above refuses
+    # to give one. The difference is that the device knows where the user
+    # is pointing and that they have not started walking yet; mid-route it
+    # knows neither. It means spin in place, not walk back — hence "likod"
+    # (where to end up facing) rather than a bare "umikot" (rotate).
+    "nav.face_left": {
+        "en": "Face left.",
+        "tl": "Humarap ka sa kaliwa.",
+    },
+    "nav.face_right": {
+        "en": "Face right.",
+        "tl": "Humarap ka sa kanan.",
+    },
+    "nav.face_around": {
+        "en": "Face behind you.",
+        "tl": "Umikot ka sa likod.",
     },
     "nav.walk_straight_ahead": {
         "en": "Walk straight ahead.",

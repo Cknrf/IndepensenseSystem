@@ -73,14 +73,18 @@ def test_turn_now_with_an_unknown_direction_says_nothing(app):
     assert app.spoken == []
 
 
-def test_turn_now_uses_the_same_words_as_turn_to_face(app):
-    """One phrase to learn, not two. Both paths go through
-    `_ORIENTATION_MESSAGE_KEYS` precisely so they cannot drift."""
+def test_turn_now_uses_turn_not_face(app):
+    """The two cues share an audio channel and mean different things:
+    this one is a turn to take along the route, orientation's is "pivot
+    on the spot". They were briefly the same words — `nav.started` ends
+    with the route's first turn and orientation speaks right after it, so
+    that put two different lefts back to back."""
     app._fire_navigation_cue(NavigationCue(kind="turn_now", direction="right"))
 
     assert app.spoken == [
         messages.get("nav.turn_right", app.language.current)
     ]
+    assert messages.get("nav.face_right", app.language.current) not in app.spoken
 
 
 def test_arrive_is_spoken(app):

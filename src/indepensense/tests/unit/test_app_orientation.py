@@ -111,7 +111,7 @@ def test_already_facing_the_right_way_says_walk_ahead():
     assert app.spoken == ["Walk straight ahead."]
 
 
-def test_facing_east_says_turn_left():
+def test_facing_east_says_face_left():
     """Route is north, user faces east — the short way round is left.
 
     Deliberately never aligns, so the loop runs to its cap repeating the
@@ -121,25 +121,37 @@ def test_facing_east_says_turn_left():
 
     app._orient_towards_route()
 
-    assert set(app.played) == {"nav.turn_left"}
+    assert set(app.played) == {"nav.face_left"}
 
 
-def test_facing_west_says_turn_right():
+def test_facing_west_says_face_right():
     app = _app([270.0])
 
     app._orient_towards_route()
 
-    assert set(app.played) == {"nav.turn_right"}
+    assert set(app.played) == {"nav.face_right"}
 
 
-def test_facing_backwards_says_turn_around():
+def test_facing_backwards_says_face_behind():
     """180° out, where naming a side is technically correct and useless:
-    "turn right" reads as a nudge and the user stops a long way short."""
+    "face right" reads as a nudge and the user stops a long way short."""
     app = _app([180.0])
 
     app._orient_towards_route()
 
-    assert set(app.played) == {"nav.turn_around"}
+    assert set(app.played) == {"nav.face_around"}
+
+
+def test_orientation_never_speaks_the_route_turn_cues():
+    """`nav.started` ends with the route's first turn and orientation
+    begins on its heels, so a shared "turn left" would be two different
+    lefts back to back. The verbs are what keep them apart."""
+    for heading in (90.0, 270.0, 180.0):
+        app = _app([heading])
+        app._orient_towards_route()
+
+        assert "nav.turn_left" not in app.played
+        assert "nav.turn_right" not in app.played
 
 
 def test_the_instruction_repeats_until_they_come_round():
