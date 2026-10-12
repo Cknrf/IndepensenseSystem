@@ -3651,9 +3651,13 @@ The comparisons are inclusive, so a threshold names the percentage
         except Exception as exc:
             print(f"[PTT] voice pipeline error: {exc}", file=sys.stderr, flush=True)
             # Speak a short error so the user isn't left wondering why
-            # nothing happened. Wrapped in its own try/except so a
-            # broken TTS doesn't cascade into an infinite error loop.
-            self._speak_error("Something went wrong. Please try again.")
+            # nothing happened. Through `_play_clip`, not `_speak_error`:
+            # this fires when the pipeline has already failed, often
+            # because an engine is unreachable, so it has to come from a
+            # pre-rendered clip and fall back to the local voice. Spoken
+            # through the remote engine it went silent exactly when the
+            # user needed to be told something had gone wrong.
+            self._play_clip("voice.pipeline_error")
         finally:
             if stages:
                 spent = " | ".join(f"{name} {secs:.1f}s" for name, secs in stages)
@@ -3845,7 +3849,7 @@ The comparisons are inclusive, so a threshold names the percentage
         # because, by design, nothing is playing.
         self._waiting_paused.set()
 
-        self._speak_error(question)   # reuse the best-effort speak helper
+        self._speak_now(question)   # dynamic text: no key, no clip to reuse
         if self._voice_cancel.is_set():
             # Logged, like the other two ways out. An emergency press
             # during the question lands here, and this used to be the
@@ -4154,15 +4158,29 @@ The comparisons are inclusive, so a threshold names the percentage
         """
         self._play_clip("cloud.thinking")
 
-    def _speak_error(self, message: str) -> None:
-        """Best-effort audible error message. Never raises."""
+    def _speak_now(self, message: str) -> None:
+        """Speak arbitrary text on this thread. Best-effort, never raises.
+
+        For text that is genuinely dynamic — a confirmation question
+        built from a place name — where there is no message key and no
+        clip to find. Everything with a key should go through
+        `_play_clip`, which reuses a rendered clip and never pays
+        synthesis twice for the same sentence.
+
+        Renders through `_tts_attempts` rather than `self.tts` so it
+        falls back to the local voice when the remote one is
+        unreachable. Calling the router directly was a silent failure
+        mode: with the remote engine's breaker open it raised, and the
+        one sentence the user needed to hear was never spoken.
+        """
+        language = self.language.current
         try:
-            timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
-            error_path = VOICE_TEST_DIR / f"{timestamp}_error.wav"
-            self.tts.synthesize(message, error_path, language=self.language.current)
-            play(error_path)
+            path = clips.render_first(
+                self._tts_attempts(language), message, language, CLIP_CACHE_DIR,
+            )
+            play(path)
         except Exception as exc:
-            print(f"[error-speech] failed to speak: {exc}", file=sys.stderr, flush=True)
+            print(f"[speak-now] failed to speak: {exc}", file=sys.stderr, flush=True)
 
     # ------------------------------------------------------- device factories
     #

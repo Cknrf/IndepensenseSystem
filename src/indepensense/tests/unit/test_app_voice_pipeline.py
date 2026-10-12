@@ -260,7 +260,7 @@ def test_the_button_is_reclaimed_even_when_the_pipeline_fails_early(
         raise OSError("microphone gone")
 
     monkeypatch.setattr(app_module, "record_until_button", _explode)
-    monkeypatch.setattr(app, "_speak_error", lambda message: None)
+    monkeypatch.setattr(app, "_speak_now", lambda message: None)
     monkeypatch.setattr(app_module, "VOICE_TEST_DIR", tmp_path)
 
     app._voice_pipeline()

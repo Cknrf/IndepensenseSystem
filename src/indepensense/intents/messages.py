@@ -938,6 +938,17 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Sorry, something went wrong: {error}",
         "tl": "Paumanhin, may naganap na problema: {error}",
     },
+    # Static, with no placeholder, and that is the point: it is spoken
+    # when the voice pipeline has already failed, so it must be a clip
+    # that `render_messages` has pre-rendered rather than something
+    # needing synthesis from an engine that may be the thing that broke.
+    # The English version used to be a bare string in `app.py`, which
+    # meant a Tagalog user heard English at the one moment they most
+    # needed to understand the device.
+    "voice.pipeline_error": {
+        "en": "Sorry, something went wrong. Please try again.",
+        "tl": "Paumanhin, may naganap na problema. Pakiulit po.",
+    },
 }
 
 

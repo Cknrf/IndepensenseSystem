@@ -20,7 +20,7 @@ from indepensense.feedback.mock import MockButton
 class _SilentApp(MockApp):
     """Captures the spoken question instead of synthesising audio.
 
-    `_confirm_destination` speaks through `_speak_error`, the same
+    `_confirm_destination` speaks through `_speak_now`, the same
     best-effort helper the navigation cues use. Overriding it keeps these
     tests off the audio stack while the wait logic itself runs for real.
     """
@@ -29,7 +29,7 @@ class _SilentApp(MockApp):
         super().__init__()
         self.spoken: list[str] = []
 
-    def _speak_error(self, message: str) -> None:
+    def _speak_now(self, message: str) -> None:
         self.spoken.append(message)
 
 
@@ -109,7 +109,7 @@ def test_the_ptt_handler_is_restored_even_when_speaking_fails(app, monkeypatch):
     def _broken(message):
         raise OSError("audio device gone")
 
-    monkeypatch.setattr(app, "_speak_error", _broken)
+    monkeypatch.setattr(app, "_speak_now", _broken)
 
     with pytest.raises(OSError):
         app._confirm_destination("Is this correct?")
