@@ -71,12 +71,44 @@ How Claude collaborates on this thesis project.
 
    Sentence *structure* may differ per language, not just wording — Tagalog does not inflect nouns for number, so scene description branches per language rather than sharing a pluraliser. Put that kind of grammar in `messages.py`, not in the handler.
 
-7. **Intent parsing is two-stage, and the split is static.**
-   `TieredIntentParser` runs an embedding matcher before the LLM. What the fast path may answer is decided by the *intent*, not by confidence: an embedding is one vector per utterance, so it can name an intent but never extract a span from it. Intents with a free-text parameter always escalate; intents with none, or with a closed enum foldable into the label, are answerable. The fast path never returns `unknown` — that is the cloud fallback's trigger and stays with the LLM.
+7. **Intent parsing is three-stage, and the first split is static.**
+   `TieredIntentParser` runs an embedding matcher before the LLM. What the fast path may answer is decided by the *intent*, not by confidence: an embedding is one vector per utterance, so it can name an intent but never extract a span from it. Intents with a free-text parameter always escalate; intents with none, or with a closed enum foldable into the label, are answerable. The fast path never returns `unknown` — that is the cloud answerer's trigger and stays with the LLM.
 
    Adding an intent means deciding which side it falls on. `parse_bank` enforces it: an open-span intent given its own section in `prompts/nlu_examples.md` fails on load rather than silently becoming answerable.
 
-8. **Tests nested per module:**
+   Behind the matcher sits `FallbackIntentParser(cloud, local)`: Mistral first, Ollama when the cloud fails. Measured on the same 226 `llm_probe` cases, cloud scored **98.7% against local's 82.3%**, and the gap is concentrated where it matters — the adversarial group went from 66.7% to 100%, which is the set where a misclassification acts rather than merely annoys. The fast path still answers ~52% locally in ~30 ms, so only the escalated remainder ever reaches the network.
+
+   **The handover trigger is `IntentResult.failure`, never a bare `unknown`.** A clean `unknown` is a decline and must pass through to the cloud *answerer*; falling back on it would spend a local inference re-answering a correct answer, and the local model's much lower `unknown` recall would often turn a genuine question into a bogus intent.
+
+   **The two prompts are separate on purpose.** `nlu_system.md` tells the classifier five times to answer `unknown` when unsure, which Qwen 1.7B needs and the cloud model does not: 15 of its 17 first-run failures were `unknown` on utterances it plainly understood. `nlu_system_cloud.md` replaces that blanket bias with a targeted one, keeping caution for `system.shutdown`, `guardian.status_ok`, `place.delete` and a *missed* `emergency.trigger`. A larger model obeys a deferral instruction better, not worse, so this is not fixed by paying for one. Editing either means re-running `llm_probe`, and **prompt edits are not monotonic** — one "fix" during tuning repaired a case and broke two, dropping the adversarial group from 100% to 96.3%.
+
+8. **Tagalog is served from the cloud; English is not.**
+   Both exceptions are bounded to the one language whose local quality was the measured problem, which is a far easier thing to defend than moving speech wholesale — and it keeps English audio on the device entirely.
+
+   Measured on the Pi with `latency_bench`: English STT is 1.13 s on Whisper `tiny`, Tagalog is **5.29 s on `small`, a real-time factor of 2.23x** — slower than the speech it transcribes — and `WHISPER_MODELS` already records that `tiny` and `base` were unusable for Tagalog. English TTS through Piper is 0.07–0.30 s; Tagalog through MMS is 2.23 s and sounds markedly worse than the Filipino fine-tune on the server.
+
+   **The local models stay resident and are not optional.** They are the fallback, and unlike intent parsing nothing sits beneath STT — no transcript means nothing downstream runs, voice-triggered emergency included.
+
+   **Cloud TTS is not faster than local MMS over cellular** (1.6–3.4 s against 2.23 s). Its value is pronunciation, which is why `tools/render_messages.py` renders the static catalogue ahead of time: a clip costs a file read forever after, so only the 35 templated messages with open slots ever reach the network.
+
+9. **A clip's identity includes the voice that produced it.**
+   `clips.digest` hashes voice, language and text. Without the voice, two engines speaking one language share a filename: re-rendering with a different Tagalog voice overwrote the old clips, anything the *other* engine synthesised at runtime landed on the same names, and the user heard the voice change mid-session between a pre-rendered static message and a templated one. It also meant changing voice invalidated nothing, where editing a message's text always had.
+
+   The identity comes from `router.voice_id`, which lives beside `build_tts` and mirrors its precedence because the two must agree — a name the router would not use files every clip under the wrong voice.
+
+   **The fallback therefore lives where naming is decided, not inside a `TTSEngine`.** `clips.render` names the file before calling the engine, so a wrapper that quietly substituted MMS would write its audio under the remote voice's name; the next lookup would find it and never try the remote engine again. `clips.render_first` takes `(engine, voice)` pairs and files each result under the voice that produced it; `clips.find_any` searches the chain in preference order, because a clip rendered locally during an outage is still a clip.
+
+10. **Offline is a first-class state, and the thing that breaks it is DNS.**
+   `socket.create_connection` resolves the hostname *before* it applies any timeout, so none of the app's deadlines cover name resolution. On a link that blackholes packets — what a wobbling modem leaves behind, since the bearer often stays up and the default route lingers — the resolver never answers. Measured on the device: **20 s per lookup**, three lookups per voice command.
+
+   Three mechanisms, each covering a different shape:
+   - `net.has_network_route()` — a UDP `connect()` that sends no packets and answers in ~0.2 ms. Catches *no route at all*. No cooldown, so a reconnect is picked up on the very next command.
+   - `net.HostBreaker` — remembers the first failure and skips that host for 30 s, turning "every command unusable" into "one slow command, then local". Keyed per host, so a Mistral outage does not stop the device using its own server. **Trips on unreachability only**: a server answering 429 or 500 proves there is no stall to avoid.
+   - `RES_OPTIONS=timeout:1 attempts:1` in `indepensense.service` — bounds the lookup itself to 2 s. In the unit rather than `/etc/resolv.conf`, which Tailscale owns and rewrites.
+
+   Every path out must pass all three. `probe_reachable` bypassed them once and the cost landed on the least-watched path: a local `unknown` sends the utterance to the cloud answerer, so an offline user waited out a full stall to be told there was no internet.
+
+11. **Tests nested per module:**
    - `src/indepensense/<module>/tests/unit/` — pytest, no hardware, must pass on a Mac
    - `src/indepensense/<module>/tests/manual/` — human-run scripts that need real hardware
 

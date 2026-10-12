@@ -84,9 +84,9 @@ IndepenSense follows a modular edge + cloud hybrid architecture.
 - Scene description via voice command
 
 **Voice Interaction**
-- Push-to-talk speech input (Whisper STT)
-- LLM-based intent classification (Qwen 3 1.7B via Ollama), with a Mistral cloud fallback for questions no intent covers. The fallback remembers one previous exchange, so "what is the tallest mountain" can be followed by "what about the second" — cloud turns only, expiring after two minutes and cleared on a language switch
-- Natural-language responses (Piper TTS for English, MMS-TTS for Tagalog)
+- Push-to-talk speech input. English transcribes on-device with Whisper `tiny` (1.13 s); Tagalog goes to a self-hosted Whisper large-v3-turbo, because `small` on the Pi takes 5.29 s — slower than the speech it is transcribing — and local Whisper stays resident as the fallback
+- Intent classification by a semantic fast path (~52% of utterances, ~30 ms, on-device), then Mistral, then Qwen 3 1.7B via Ollama when the cloud cannot be reached. Measured 98.7% against local's 82.3% on the same 226 cases. A separate Mistral cloud fallback answers questions no intent covers. The fallback remembers one previous exchange, so "what is the tallest mountain" can be followed by "what about the second" — cloud turns only, expiring after two minutes and cleared on a language switch
+- Natural-language responses. English speaks through Piper on-device; Tagalog uses a self-hosted OmniVoice Filipino fine-tune, rendered ahead of time by `tools/render_messages.py` so a static message costs a file read rather than a round trip, with MMS-TTS on the device as the fallback
 - Nothing the device does ends in unexplained silence: an empty transcript or a recording too short to hold speech is answered aloud, not swallowed
 - A soft blip while the device is working. Transcription plus local classification is 3-7 s of silence on a Pi, which is indistinguishable from a device that has died; a command answered faster than 1.5 s never blips at all
 - Speech and commands can both be interrupted — the repeat button stops the wearable mid-sentence (which matters when OCR is reading a menu) and cancels a command still being transcribed or classified, so a question asked by mistake can be taken back without waiting out the answer. Every press answers with a short tone, because silence is also what a dead device sounds like
@@ -145,7 +145,8 @@ That file contains:
 - **Language:** Python 3.13
 - **OS:** Raspberry Pi OS (Trixie / Debian 13) on device, macOS for development
 - **Computer Vision:** Ultralytics YOLOv8 (medium, Open Images V7 weights), Tesseract OCR
-- **Voice:** faster-whisper (STT), Piper + Meta MMS-TTS (TTS), Ollama + Qwen 3 1.7B (NLU)
+- **Voice:** faster-whisper + remote Whisper large-v3-turbo (STT), Piper + Meta MMS-TTS + remote OmniVoice (TTS), embedding fast path + Mistral + Ollama/Qwen 3 1.7B (NLU)
+- **Cloud, and what happens without it:** every remote stage has a local fallback and the device degrades rather than failing. See `docs/cloud-services.md`
 - **Hardware Interface:** GPIO (gpiozero), I²C, UART
 - **Database:** handled by the backend repository
 
@@ -154,6 +155,7 @@ That file contains:
 Both services run **locally on the Raspberry Pi** — the wearable is offline-capable and does not depend on cloud maps.
 
 - **GraphHopper** — offline pedestrian routing (port 8989). See [`docs/graphhopper.md`](docs/graphhopper.md).
+- **Cloud voice services** — remote STT, NLU and TTS, each with a local fallback, and what the device does with no network at all. See [`docs/cloud-services.md`](docs/cloud-services.md).
 - **Photon** — offline geocoding, place-name ↔ coordinates (port 2322). See [`docs/photon.md`](docs/photon.md).
 
 ## Codebase Overview
@@ -164,7 +166,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 |---|---|
 | `sensors/` | Sensor drivers: DYP-A22 ultrasonic, MPU6050 IMU, QMC5883P magnetometer, GPS via SIM7600 |
 | `vision/` | Camera capture, YOLOv8 object detection, Tesseract OCR |
-| `voice/` | Push-to-talk flow, Whisper STT, Piper (English) + MMS (Tagalog) TTS behind one router, speaker volume |
+| `voice/` | Push-to-talk flow, local and remote STT behind one router, Piper + MMS + remote TTS behind another, the content-addressed clip store, speaker volume |
 | `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching, help, saved places, volume), bilingual response catalogue, cloud LLM fallback |
 | `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing, remaining-distance, compass turn verification, and turn-to-face orientation logic |
 | `routing/` | GraphHopper + Photon HTTP clients, local candidate ranking, geo helpers (distance and bearing), and the user's own saved places |
@@ -335,6 +337,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | Does a destination survive being misheard | `python -m indepensense.routing.tests.manual.transcript_probe` — scores a corpus of destinations against the ways a transcript of each can come out wrong, reporting **retrieval** (was the right place in the candidate window) separately from **ranking** (was it first). Every miss is classed as `misranked`, `window` or `absent`, which are three different fixes; the misranked rows print `name_match_score` against the true place, so the case for fuzzy token matching is a column rather than an argument. The corpus in `cases/destinations.jsonl` is seeded by hand — replace it with real Whisper output before quoting a number. Needs Photon only |
 | Voice → intent → handler end-to-end | `python -m indepensense.intents.tests.manual.end_to_end_test` — add `--keyboard` when the PTT/SOS buttons aren't wired. A navigation command takes **three** presses: start, stop, then confirm the destination |
 | LLM intent-classification probe (226 test prompts — 98 English, 74 Tagalog, 54 adversarial — scored per language group) | `python -m indepensense.intents.tests.manual.llm_probe` |
+| The same probe against the cloud model | `python -m indepensense.intents.tests.manual.llm_probe --cloud --modem` — identical cases and scorer, so the two are comparable. **`--modem` matters**: both interfaces hold a default route and `wlan0` wins on metric, so a run at a desk measures WiFi and not the field. Also reports prompt-cache hit rate and how many answers missed the runtime deadline |
 | Cloud LLM probe — real Mistral calls, latency and answer quality | `python -m indepensense.intents.tests.manual.cloud_probe` |
 | Embedding fast-path probe — coverage and precision of the semantic matcher against the same 226 prompts, per language group | `python -m indepensense.intents.tests.manual.embedding_probe` — add `--sweep` to grid over both thresholds, `--check-overlap` to verify the example bank is disjoint from the test set, `--model <name>` to compare encoders. Runs on a Mac; no hardware needed |
 | Embedding fast-path diagnosis — why *this* transcript went to the LLM. Prints the gate that rejected it (`below_score` / `contested` / `escalate_class`) plus its nearest bank examples, which is what makes a `contested` result actionable | `python -m indepensense.intents.tests.manual.embedding_probe --try "Can you send an emergency?"` — or `--try-file misses.txt` for a batch, `--neighbours K` to see further down the list. Paste real transcripts from the runtime log; they carry the carrier phrases and ASR errors hand-written examples never do. Runs on a Mac |
