@@ -50,7 +50,10 @@ and the reason `intents.messages` spells numbers out through
 but the constraint travels with this code rather than living only in the
 other driver's docstring.
 """
+import array
+import io
 import sys
+import wave
 from pathlib import Path
 
 from indepensense.net import (
@@ -69,6 +72,9 @@ ENGINE_NAME = "omnivoice"
 # ceiling anyone reading the config would expect. Only spent when the
 # pooled socket is gone, which a batch render pays once.
 _CONNECT_TIMEOUT_S = 2.0
+
+# Largest magnitude of a signed 16-bit sample.
+_FULL_SCALE = 32767
 
 
 class RemoteTTS:
@@ -92,6 +98,7 @@ class RemoteTTS:
         voice: str,
         model: str = "omnivoice",
         timeout_s: float = 60.0,
+        peak_dbfs: float | None = None,
     ):
         # No credential travels on this request, so this is not the
         # bearer-token argument `require_https` was written for. It is
@@ -105,6 +112,7 @@ class RemoteTTS:
         self._url = url
         self._model = model
         self._timeout_s = timeout_s
+        self._peak_dbfs = peak_dbfs
         self._session = None
         # Shared with anything else talking to this host — see
         # `net.breaker_for`. Without it an unreachable endpoint costs an
@@ -175,8 +183,12 @@ class RemoteTTS:
                 f"{response.text[:120]}"
             )
 
+        audio = response.content
+        if self._peak_dbfs is not None:
+            audio = normalise_peak(audio, self._peak_dbfs)
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(response.content)
+        output_path.write_bytes(audio)
 
     def close(self) -> None:
         if self._session is not None:
@@ -191,6 +203,74 @@ class RemoteTTS:
             import requests
             self._session = requests.Session()
         return self._session
+
+
+def normalise_peak(wav_bytes: bytes, target_dbfs: float) -> bytes:
+    """Scale a 16-bit PCM WAV so its loudest sample sits at `target_dbfs`.
+
+    OmniVoice returns audio about 8 dB below full scale, where Piper
+    peak-normalises its own output. Measured across the 66 static
+    messages on 2026-10-13:
+
+        en  piper       peak  -0.0 dBFS   RMS -15.4 dBFS
+        tl  omnivoice   peak  -8.0 dBFS   RMS -25.0 dBFS
+
+    so Tagalog played 9.6 dB quieter than English. On a device whose
+    whole output is speech to someone who cannot see the screen, "can't
+    hear it" is a fault rather than a polish item.
+
+    **Peak rather than RMS.** Matching the RMS exactly needs +9.6 dB,
+    which puts the loudest samples 1.6 dB past full scale — audible
+    clipping on sibilants. Peak normalisation takes the +7 dB that fits
+    and leaves Tagalog ~2.6 dB down, which is near the threshold of
+    noticing. Closing the last part would mean compressing the dynamics,
+    which risks artefacts on speech for a difference this small.
+
+    Uses `wave` and `array` rather than soundfile or numpy: the endpoint
+    returns 16-bit mono PCM, the arithmetic is a multiply, and keeping it
+    in the standard library means it is testable off the Pi, where
+    libsndfile is not installed.
+
+    Anything that is not 16-bit PCM, or is pure silence, comes back
+    untouched — there is no sensible gain for either, and a clip that
+    plays quietly is better than one that fails to render.
+    """
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as source:
+            if source.getsampwidth() != 2:
+                return wav_bytes
+            params = source.getparams()
+            frames = source.readframes(source.getnframes())
+    except (wave.Error, EOFError):
+        return wav_bytes
+
+    samples = array.array("h")
+    samples.frombytes(frames[: len(frames) - (len(frames) % 2)])
+    if not samples:
+        return wav_bytes
+
+    peak = max(abs(min(samples)), abs(max(samples)))
+    if peak == 0:
+        return wav_bytes
+
+    ceiling = int(_FULL_SCALE * (10.0 ** (target_dbfs / 20.0)))
+    gain = ceiling / peak
+    if abs(gain - 1.0) < 0.01:
+        return wav_bytes
+
+    for i, value in enumerate(samples):
+        scaled = int(value * gain)
+        # Clamp rather than wrap. A wrapped sample is not a quiet click,
+        # it is full-scale noise of the opposite sign.
+        samples[i] = _FULL_SCALE if scaled > _FULL_SCALE else (
+            -_FULL_SCALE - 1 if scaled < -_FULL_SCALE - 1 else scaled
+        )
+
+    out = io.BytesIO()
+    with wave.open(out, "wb") as sink:
+        sink.setparams(params)
+        sink.writeframes(samples.tobytes())
+    return out.getvalue()
 
 
 def _detail(response) -> str:

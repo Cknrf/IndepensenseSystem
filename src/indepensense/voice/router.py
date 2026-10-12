@@ -38,6 +38,7 @@ class RemoteSpec:
     voices: dict[str, str] = field(default_factory=dict)
     model: str = ENGINE_NAME
     timeout_s: float = 60.0
+    peak_dbfs: float | None = None
 
 
 def remote_spec(
@@ -46,6 +47,7 @@ def remote_spec(
     voices: dict[str, str],
     model: str,
     timeout_s: float,
+    peak_dbfs: float | None = None,
 ) -> RemoteSpec | None:
     """A spec, or None when remote TTS is switched off.
 
@@ -62,7 +64,7 @@ def remote_spec(
     if not enabled or not voices:
         return None
     return RemoteSpec(url=url, voices=dict(voices), model=model,
-                      timeout_s=timeout_s)
+                      timeout_s=timeout_s, peak_dbfs=peak_dbfs)
 
 
 class MultiEngineTTS:
@@ -128,6 +130,7 @@ def build_tts(
         engines[language] = RemoteTTS(
             url=remote.url, language=language, voice=voice,
             model=remote.model, timeout_s=remote.timeout_s,
+            peak_dbfs=remote.peak_dbfs,
         )
     return MultiEngineTTS(engines)
 

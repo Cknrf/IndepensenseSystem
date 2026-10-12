@@ -200,3 +200,97 @@ def test_a_failure_stops_the_next_call_reaching_the_network(tts, tmp_path, monke
             tts.synthesize("Magandang umaga po", tmp_path / f"{i}.wav")
 
     assert len(calls) == 1, "only the first attempt should touch the network"
+
+
+# --- loudness ----------------------------------------------------------------
+
+import array
+import io
+import math
+
+from indepensense.voice.remote import normalise_peak
+
+
+def _tone(peak_frac, frames=2400, width=2, rate=24000):
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(width)
+        handle.setframerate(rate)
+        samples = array.array(
+            "h", [int(peak_frac * 32767 * math.sin(i / 8)) for i in range(frames)]
+        )
+        handle.writeframes(samples.tobytes())
+    return buf.getvalue()
+
+
+def _peak_dbfs(wav_bytes):
+    with wave.open(io.BytesIO(wav_bytes)) as handle:
+        samples = array.array("h")
+        samples.frombytes(handle.readframes(handle.getnframes()))
+    peak = max(abs(min(samples)), abs(max(samples)))
+    return 20 * math.log10(peak / 32767) if peak else float("-inf")
+
+
+def test_quiet_audio_is_brought_up_to_the_ceiling():
+    """OmniVoice returns ~-8 dBFS where Piper peak-normalises its own
+    output, so Tagalog played 9.6 dB quieter than English."""
+    assert _peak_dbfs(normalise_peak(_tone(0.398), -1.0)) == pytest.approx(-1.0, abs=0.1)
+
+
+def test_loud_audio_is_brought_down_to_the_ceiling():
+    """Normalisation, not just amplification — a clip already at full
+    scale must come down to leave the inter-sample margin."""
+    assert _peak_dbfs(normalise_peak(_tone(1.0), -1.0)) == pytest.approx(-1.0, abs=0.1)
+
+
+def test_audio_already_at_the_ceiling_is_returned_untouched():
+    """Byte-identical, so re-rendering an unchanged message does not
+    churn the clip store."""
+    at_ceiling = normalise_peak(_tone(0.398), -1.0)
+
+    assert normalise_peak(at_ceiling, -1.0) == at_ceiling
+
+
+def test_silence_is_left_alone():
+    """There is no gain that makes silence louder, and dividing by its
+    zero peak would raise."""
+    silent = _tone(0.0)
+
+    assert normalise_peak(silent, -1.0) == silent
+
+
+def test_the_header_survives():
+    """Rate and channel count must round-trip — the endpoint returns
+    24 kHz mono and playback reads both from the file."""
+    out = normalise_peak(_tone(0.398), -1.0)
+
+    with wave.open(io.BytesIO(out)) as handle:
+        assert handle.getframerate() == 24000
+        assert handle.getnchannels() == 1
+        assert handle.getsampwidth() == 2
+
+
+def test_a_non_wav_body_is_passed_through_rather_than_raising():
+    """A clip that plays quietly beats one that fails to render."""
+    assert normalise_peak(b"not a wav at all", -1.0) == b"not a wav at all"
+
+
+def test_normalisation_is_off_unless_asked_for(tmp_path, monkeypatch):
+    """`peak_dbfs=None` must write the server's bytes verbatim."""
+    quiet = _tone(0.398)
+    _capture(monkeypatch, _response(body=quiet))
+    out = tmp_path / "clip.wav"
+
+    RemoteTTS(URL, "tl", "07").synthesize("Magandang umaga po", out)
+
+    assert out.read_bytes() == quiet
+
+
+def test_the_driver_normalises_when_configured(tmp_path, monkeypatch):
+    _capture(monkeypatch, _response(body=_tone(0.398)))
+    out = tmp_path / "clip.wav"
+
+    RemoteTTS(URL, "tl", "07", peak_dbfs=-1.0).synthesize("Magandang umaga po", out)
+
+    assert _peak_dbfs(out.read_bytes()) == pytest.approx(-1.0, abs=0.1)

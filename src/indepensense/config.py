@@ -901,6 +901,17 @@ MMS_VOICES = {
 REMOTE_TTS_ENABLED = True
 REMOTE_TTS_URL = "https://gpuer.techco.fi:8700/tts"
 REMOTE_TTS_MODEL = "omnivoice"
+# Peak-normalise what comes back, so Tagalog is as loud as English.
+# OmniVoice returns audio ~8 dB below full scale where Piper normalises
+# its own; measured across the 66 static messages on 2026-10-13, Tagalog
+# played 9.6 dB quieter (RMS -25.0 against -15.4 dBFS). On a device whose
+# entire output is speech to someone who cannot see it, that is a fault.
+#
+# -1 dBFS rather than 0: the usual margin against inter-sample peaks on
+# playback. It buys +7 dB and leaves Tagalog ~2.6 dB down, near the
+# threshold of noticing. Matching the RMS exactly would need +9.6 dB,
+# which clips. None to disable.
+REMOTE_TTS_PEAK_DBFS = -1.0
 # Language -> voice name on the server. `GET /health` lists what exists.
 REMOTE_TTS_VOICES = {
     "tl": "07",

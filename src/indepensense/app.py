@@ -271,6 +271,7 @@ from indepensense.config import (
     REMOTE_STT_URL,
     REMOTE_TTS_ENABLED,
     REMOTE_TTS_MODEL,
+    REMOTE_TTS_PEAK_DBFS,
     REMOTE_TTS_TIMEOUT_S,
     REMOTE_TTS_URL,
     REMOTE_TTS_VOICES,
@@ -463,7 +464,7 @@ def _remote_spec():
     """
     return remote_spec(
         REMOTE_TTS_ENABLED, REMOTE_TTS_URL, REMOTE_TTS_VOICES,
-        REMOTE_TTS_MODEL, REMOTE_TTS_TIMEOUT_S,
+        REMOTE_TTS_MODEL, REMOTE_TTS_TIMEOUT_S, REMOTE_TTS_PEAK_DBFS,
     )
 
 

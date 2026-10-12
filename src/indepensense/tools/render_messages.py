@@ -46,6 +46,7 @@ from indepensense.config import (
     PIPER_VOICES,
     REMOTE_TTS_ENABLED,
     REMOTE_TTS_MODEL,
+    REMOTE_TTS_PEAK_DBFS,
     REMOTE_TTS_RENDER_TIMEOUT_S,
     REMOTE_TTS_URL,
     REMOTE_TTS_VOICES,
@@ -62,7 +63,7 @@ from indepensense.voice.router import build_tts, remote_spec, voice_id
 # user is not waiting on, and the server queues requests one at a time.
 _REMOTE = remote_spec(
     REMOTE_TTS_ENABLED, REMOTE_TTS_URL, REMOTE_TTS_VOICES,
-    REMOTE_TTS_MODEL, REMOTE_TTS_RENDER_TIMEOUT_S,
+    REMOTE_TTS_MODEL, REMOTE_TTS_RENDER_TIMEOUT_S, REMOTE_TTS_PEAK_DBFS,
 )
 
 def main(argv: list[str] | None = None) -> int:
