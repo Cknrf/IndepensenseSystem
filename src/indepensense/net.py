@@ -79,10 +79,24 @@ def probe_reachable(url: str, timeout_s: float = 2.0) -> bool:
     """
     import requests  # lazy: keeps the module importable off-device
 
+    # Both guards before the request, for the reason in `HostBreaker`:
+    # nothing in `requests` bounds DNS, so on a dead link this call used
+    # to block for 10-20 s. That mattered most on the path nobody was
+    # watching — a local `unknown` sends the utterance to the cloud
+    # answerer, which probes here first, so an offline user waited out a
+    # full stall to be told there is no internet.
+    if not has_network_route():
+        return False
+    breaker = breaker_for(url)
+    if not breaker.allow():
+        return False
+
     try:
         requests.head(url, timeout=timeout_s)
+        breaker.record_success()
         return True
     except requests.RequestException as exc:
+        breaker.record_failure()
         print(f"[net] probe to {url} failed: {exc}", file=sys.stderr)
         return False
 
