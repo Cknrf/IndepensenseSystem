@@ -397,12 +397,31 @@ def _static_clip_names(languages) -> frozenset[str]:
     millisecond, computed once per boot.
     """
     return frozenset(
-        clips.filename(messages.get(key, language), language, _voice_id(language))
+        clips.filename(messages.get(key, language), language, voice)
         for key in messages.static_keys()
         for language in languages
+        for voice in _voice_chain(language)
     )
 
 
+
+def _voice_chain(language: str) -> list[str]:
+    """Voices that may hold a clip of `language`, best first.
+
+    One entry normally. Two when a language is served remotely: the
+    remote voice is preferred, and the local one is what a fallback
+    render produces when the endpoint is unreachable.
+
+    Both must be searched. A sentence can legitimately exist on disk in
+    either voice — rendered ahead of time by `render_messages`, or
+    synthesised locally during an outage — and re-rendering when *some*
+    recording exists would be slow and pointless. The order makes the
+    preference: the fallback's clip is used only when the preferred
+    voice has never rendered that sentence.
+    """
+    preferred = _voice_id(language)
+    local = voice_id(language, PIPER_VOICES, MMS_VOICES, None)
+    return [preferred] if local == preferred else [preferred, local]
 
 def _voice_id(language: str) -> str:
     """Clip-naming identity of the voice configured for `language`.
@@ -758,6 +777,7 @@ class Announcer:
         # second of startup, the engine arrives when the loader has it.
         # Rendered clips play either way; only a cache miss waits.
         self._tts = tts
+        self._tts_local = None
         self._tts_ready = threading.Event()
         if tts is not None:
             self._tts_ready.set()
@@ -815,10 +835,33 @@ class Announcer:
         if self._thread.is_alive():
             self._thread.join(timeout=timeout_s)
 
-    def attach_tts(self, tts) -> None:
-        """Hand the worker its voice. Until then it can only replay clips."""
+    def attach_tts(self, tts, local=None) -> None:
+        """Hand the worker its voice. Until then it can only replay clips.
+
+        `local` is the purely on-device router, present only when some
+        language is served remotely. It is what `_attempts` falls back to
+        when the endpoint cannot be reached — and it renders under its
+        *own* voice, so the two engines' audio never shares a filename.
+        """
         self._tts = tts
+        self._tts_local = local
         self._tts_ready.set()
+
+    def _attempts(self, language: str):
+        """`(engine, voice)` pairs to try, best first.
+
+        The voice travels with the engine that will produce it. That
+        pairing is the whole reason the fallback lives here rather than
+        inside a `TTSEngine` wrapper: a wrapper that quietly substituted
+        the local model would write its audio under the remote voice's
+        filename, and the next lookup would find it and never try the
+        remote engine again.
+        """
+        chain = _voice_chain(language)
+        attempts = [(self._tts, chain[0])]
+        if len(chain) > 1 and self._tts_local is not None:
+            attempts.append((self._tts_local, chain[1]))
+        return attempts
 
     def _await_tts(self) -> bool:
         """Block until an engine is attached; False if stopped first.
@@ -927,19 +970,29 @@ class Announcer:
                 continue
 
             (text, language, critical), epoch = taken
-            voice = _voice_id(language)
+            chain = _voice_chain(language)
             try:
                 # A hit here is the whole point: the 61 static messages
                 # and any template output said twice cost a file read
-                # instead of 0.2-2.3 s of synthesis.
-                path = clips.find(text, language, voice, self._message_dir, self._cache_dir)
+                # instead of 0.2-2.3 s of synthesis. Any voice in the
+                # chain counts — a clip the fallback rendered during an
+                # outage is still a clip.
+                path = clips.find_any(
+                    text, language, chain,
+                    self._message_dir, self._cache_dir,
+                )
                 if path is None:
                     if not self._await_tts():
                         return
-                    name = clips.filename(text, language, voice)
-                    static = name in self._static_names
-                    path = clips.render(
-                        self._tts, text, language, voice,
+                    # Static-ness is a property of the sentence, not of
+                    # the engine, so the set carries every voice in the
+                    # chain and any match answers it.
+                    static = any(
+                        clips.filename(text, language, v) in self._static_names
+                        for v in chain
+                    )
+                    path = clips.render_first(
+                        self._attempts(language), text, language,
                         self._message_dir if static else self._cache_dir,
                     )
                     if not static:
@@ -1038,6 +1091,9 @@ class App:
         self.walking_detector: WalkingDetector | None = None
         self.stt: FasterWhisperSTT | None = None
         self.tts: TTSEngine | None = None
+        # Only set when a language is served remotely — see
+        # `_try_open_local_tts`. The engine a fallback render uses.
+        self.tts_local: TTSEngine | None = None
         self.parser: IntentParser | None = None
         self.places: SavedPlaces | None = None
         self.volume: VolumeState | None = None
@@ -1514,7 +1570,8 @@ class App:
             self._stage("Loading TTS voices (Piper + MMS)")
             if self.tts is None:        # may survive a failed attempt
                 self.tts = self._open_tts()
-            self.announcer.attach_tts(self.tts)
+                self.tts_local = self._try_open_local_tts()
+            self.announcer.attach_tts(self.tts, self.tts_local)
             if self._shutdown.is_set():
                 return
 
@@ -3814,7 +3871,8 @@ The comparisons are inclusive, so a threshold names the percentage
         language = self.language.current
         text = messages.get(key, language, **fields)
         try:
-            path = clips.find(text, language, _voice_id(language), MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR)
+            path = clips.find_any(text, language, _voice_chain(language),
+                                  MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR)
             if path is None:
                 # Expected on a fresh install, or until `render_messages`
                 # is run after editing the text. Worth a line: it is the
@@ -3828,8 +3886,8 @@ The comparisons are inclusive, so a threshold names the percentage
                 # so unlike the announcer this can ask the catalogue
                 # directly rather than matching a filename.
                 static = key in messages.static_keys()
-                path = clips.render(
-                    self.tts, text, language, _voice_id(language),
+                path = clips.render_first(
+                    self._tts_attempts(language), text, language,
                     MESSAGE_AUDIO_DIR if static else CLIP_CACHE_DIR,
                 )
             play(path)
@@ -3855,7 +3913,8 @@ The comparisons are inclusive, so a threshold names the percentage
         """
         language = self.language.current
         text = messages.get("system.starting", language)
-        path = clips.find(text, language, _voice_id(language), MESSAGE_AUDIO_DIR)
+        path = clips.find_any(text, language, _voice_chain(language),
+                              MESSAGE_AUDIO_DIR)
         if path is None:
             print(
                 "  (no startup clip yet — it will be rendered at the end "
@@ -3886,10 +3945,12 @@ The comparisons are inclusive, so a threshold names the percentage
         for key in _BOOT_CLIPS:
             for language in self.language.supported:
                 text = messages.get(key, language)
-                if clips.find(text, language, _voice_id(language), MESSAGE_AUDIO_DIR) is not None:
+                if clips.find_any(text, language, _voice_chain(language),
+                                  MESSAGE_AUDIO_DIR) is not None:
                     continue
                 try:
-                    clips.render(self.tts, text, language, _voice_id(language), MESSAGE_AUDIO_DIR)
+                    clips.render_first(self._tts_attempts(language), text,
+                                       language, MESSAGE_AUDIO_DIR)
                     print(f"  Rendered '{key}' for '{language}'.", flush=True)
                 except Exception as exc:
                     print(
@@ -4090,6 +4151,39 @@ The comparisons are inclusive, so a threshold names the percentage
         """
         return build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES,
                          remote=_remote_spec())
+
+    def _tts_attempts(self, language: str):
+        """`(engine, voice)` pairs to try for `language`, best first.
+
+        The `App`-side twin of `Announcer._attempts`, for the two clip
+        sites that render outside the announcer thread — the startup
+        greeting and the boot-clip pre-render. Same rule: the voice
+        travels with the engine that produces it, so a fallback render is
+        filed under the local voice rather than inheriting the remote
+        one's name.
+        """
+        chain = _voice_chain(language)
+        attempts = [(self.tts, chain[0])]
+        if len(chain) > 1 and self.tts_local is not None:
+            attempts.append((self.tts_local, chain[1]))
+        return attempts
+
+    def _try_open_local_tts(self) -> MultiEngineTTS | None:
+        """A purely on-device router, or None when nothing is remote.
+
+        The fallback for `REMOTE_TTS_ENABLED`. None when the flag is off,
+        because then `_open_tts` is already local and a second copy would
+        load MMS twice for nothing.
+
+        `_try_open_*` because the device degrades rather than refusing to
+        start: without it a Tagalog sentence that is not already a clip
+        cannot be spoken while the endpoint is unreachable, which is bad
+        but is not worse than failing to boot.
+        """
+        if _remote_spec() is None:
+            return None
+        return build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES,
+                         remote=None)
 
     def _open_parser(self) -> TieredIntentParser:
         """The intent parser: semantic fast path in front of the LLM.

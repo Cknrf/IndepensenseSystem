@@ -297,3 +297,75 @@ def test_the_voice_cannot_bleed_into_the_language():
     first characters would collide."""
     assert (clips.digest("hello", "en", "piperen")
             != clips.digest("hello", "enen", "piper"))
+
+
+# --- fallback across voices ---------------------------------------------------
+
+class _FailingTTS:
+    """An engine that cannot render — a dead endpoint."""
+
+    def synthesize(self, text, output_path, language=None):
+        raise RuntimeError("endpoint unreachable")
+
+
+def test_find_any_prefers_the_first_voice(dirs):
+    """Order is preference. A clip from the fallback is used only when
+    the preferred voice has never rendered that sentence."""
+    messages_dir, cache = dirs
+    clips.render(MockTTS(), "Alert sent.", "en", OTHER_VOICE, cache)
+    preferred = clips.render(MockTTS(), "Alert sent.", "en", VOICE, cache)
+
+    assert clips.find_any("Alert sent.", "en", [VOICE, OTHER_VOICE], cache) == preferred
+
+
+def test_find_any_falls_back_to_a_clip_in_the_other_voice(dirs):
+    """A recording made during an outage is still a recording —
+    re-synthesising because the *preferred* engine never ran would be
+    slow and pointless."""
+    messages_dir, cache = dirs
+    only = clips.render(MockTTS(), "Alert sent.", "en", OTHER_VOICE, cache)
+
+    assert clips.find_any("Alert sent.", "en", [VOICE, OTHER_VOICE], cache) == only
+
+
+def test_render_first_uses_the_preferred_engine_when_it_works(dirs):
+    messages_dir, cache = dirs
+
+    path = clips.render_first(
+        [(MockTTS(), VOICE), (MockTTS(), OTHER_VOICE)], "Alert sent.", "en", cache,
+    )
+
+    assert path.name == clips.filename("Alert sent.", "en", VOICE)
+
+
+def test_a_fallback_render_is_filed_under_the_fallbacks_own_voice(dirs):
+    """The reason the fallback lives here and not inside a `TTSEngine`.
+
+    A wrapper that quietly substituted the local engine would write its
+    audio under the remote voice's filename. The next lookup would find
+    it, consider the sentence done, and never try the remote engine
+    again — one engine's audio behind another's identity, permanently.
+    """
+    messages_dir, cache = dirs
+
+    path = clips.render_first(
+        [(_FailingTTS(), VOICE), (MockTTS(), OTHER_VOICE)], "Alert sent.", "en", cache,
+    )
+
+    assert path.name == clips.filename("Alert sent.", "en", OTHER_VOICE)
+    assert clips.find("Alert sent.", "en", VOICE, cache) is None, \
+        "the preferred voice must still be a miss, so it is retried when back"
+
+
+def test_render_first_raises_when_every_engine_fails(dirs):
+    """Nothing is written, so the sentence is retried rather than cached
+    as a failure."""
+    messages_dir, cache = dirs
+
+    with pytest.raises(RuntimeError):
+        clips.render_first(
+            [(_FailingTTS(), VOICE), (_FailingTTS(), OTHER_VOICE)],
+            "Alert sent.", "en", cache,
+        )
+
+    assert list(cache.glob("*.wav")) == []

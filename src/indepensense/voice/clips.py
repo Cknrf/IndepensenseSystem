@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import threading
 from pathlib import Path
 
@@ -130,6 +131,59 @@ def find(
         if candidate.exists():
             return candidate
     return None
+
+
+def find_any(
+    text: str,
+    language: str,
+    voices,
+    *directories: Path,
+) -> Path | None:
+    """First clip of this sentence in any of `voices`, in preference order.
+
+    Exists for the remote-TTS fallback. The wearable prefers OmniVoice
+    but can only reach it online, so a sentence may already be on disk in
+    either voice and re-synthesising when *some* recording exists would
+    be the worst of both — slow and pointless.
+
+    Order is preference, not recency: pass the better voice first and a
+    clip rendered by the fallback is used only when the preferred one has
+    never been rendered. Each voice is checked across every directory
+    before moving on, so the permanent copy still wins over the cache.
+    """
+    for voice in voices:
+        path = find(text, language, voice, *directories)
+        if path is not None:
+            return path
+    return None
+
+
+def render_first(attempts, text: str, language: str, directory: Path) -> Path:
+    """Render with the first engine that succeeds, naming by *that* engine.
+
+    `attempts` is an ordered sequence of `(engine, voice)` pairs. The
+    voice travels with its engine, which is the whole point: a clip
+    produced by the local model must be filed under the local voice even
+    though the remote one was tried first. Letting a fallback write under
+    the preferred voice's name would put one engine's audio behind
+    another's identity — the exact confusion `digest` takes a voice
+    argument to prevent, and it would persist, because the next lookup
+    would find it and never try the remote engine again.
+
+    Raises the last failure if every attempt fails. Nothing is left
+    behind: `render` removes its own partial file.
+    """
+    error: BaseException | None = None
+    for engine, voice in attempts:
+        try:
+            return render(engine, text, language, voice, directory)
+        except Exception as exc:   # noqa: BLE001 - re-raised below
+            print(
+                f"[clips] {voice} could not render {text[:40]!r}: {exc}",
+                file=sys.stderr,
+            )
+            error = exc
+    raise error if error is not None else ValueError("no engines to try")
 
 
 def render(tts, text: str, language: str, voice: str, directory: Path) -> Path:
