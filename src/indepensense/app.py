@@ -251,6 +251,11 @@ from indepensense.config import (
     ORIENTATION_TIMEOUT_S,
     PHOTON_URL,
     PIPER_VOICES,
+    REMOTE_STT_COMPRESS,
+    REMOTE_STT_ENABLED,
+    REMOTE_STT_LANGUAGES,
+    REMOTE_STT_TIMEOUT_S,
+    REMOTE_STT_URL,
     REMOTE_TTS_ENABLED,
     REMOTE_TTS_MODEL,
     REMOTE_TTS_TIMEOUT_S,
@@ -363,6 +368,7 @@ from indepensense.voice.router import (
     MultiEngineTTS, build_tts, remote_spec, voice_id,
 )
 from indepensense.voice.volume import VolumeState
+from indepensense.voice.remote_stt import RemoteSTT, RoutedSTT
 from indepensense.voice.whisper import FasterWhisperSTT
 
 
@@ -4138,8 +4144,41 @@ The comparisons are inclusive, so a threshold names the percentage
             )
             return None
 
-    def _open_stt(self) -> FasterWhisperSTT:
-        return FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
+    def _open_stt(self):
+        """The local Whisper models, with Tagalog routed to the server.
+
+        `_open_*` because speech recognition is not optional — a wearable
+        that cannot hear has no voice interface. The *remote* half is,
+        which is why the local engine is built first and unconditionally:
+        it is both the English path and the fallback for Tagalog, and
+        nothing sits beneath STT the way the embedding matcher sits
+        beneath intent parsing.
+
+        Returns the bare engine when remote STT is off, rather than a
+        router that would only ever delegate. One less layer in the
+        common configuration, and the type the manual tests already
+        expect.
+        """
+        local = FasterWhisperSTT(models=WHISPER_MODELS, model_dir=WHISPER_MODEL_DIR)
+        if not REMOTE_STT_ENABLED or not REMOTE_STT_LANGUAGES:
+            return local
+
+        try:
+            remote = RemoteSTT(
+                url=REMOTE_STT_URL,
+                timeout_s=REMOTE_STT_TIMEOUT_S,
+                compress=REMOTE_STT_COMPRESS,
+            )
+        except Exception as exc:
+            # A malformed URL is a deploy error, not a reason to leave
+            # the user unable to speak to the device.
+            print(f"  Remote STT unavailable ({exc}). Transcribing locally.",
+                  flush=True)
+            return local
+
+        print(f"  Remote STT ready for {', '.join(REMOTE_STT_LANGUAGES)} "
+              f"({REMOTE_STT_URL}).", flush=True)
+        return RoutedSTT(local, remote, REMOTE_STT_LANGUAGES)
 
     def _open_tts(self) -> MultiEngineTTS:
         """English through Piper, Tagalog through MMS, behind one interface.

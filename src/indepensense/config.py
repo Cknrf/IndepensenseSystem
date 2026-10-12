@@ -956,6 +956,43 @@ WHISPER_INITIAL_PROMPTS: dict[str, str] = {
     "tl": "",   # Tagalog small model transcribes local brands well already
 }
 
+# Remote STT: the self-hosted Whisper large-v3-turbo endpoint on `gpuer`.
+#
+# Tagalog only, and for the same reason the TTS exception is: that is the
+# language whose local quality and speed were the problem. Measured on
+# the Pi 2026-10-12 with `latency_bench`:
+#
+#     en, 'tiny'    median 1.13 s
+#     tl, 'small'   median 5.29 s   p95 5.69 s   real-time factor 2.23x
+#
+# Tagalog transcription is slower than the speech it is transcribing — a
+# 5 s command costs about 11 s — and it is the weaker transcript besides;
+# `WHISPER_MODELS` records that `tiny` and `base` were unusable for it.
+# English at 1.13 s is neither, so English audio never leaves the device.
+#
+# The local model stays resident as the fallback and is not optional.
+# Unlike intent parsing, nothing sits beneath STT: no transcript means
+# nothing downstream runs, voice-triggered emergency included.
+#
+# The endpoint has no authentication, and here that matters more than it
+# does for TTS. A TTS request body is text the device is about to say out
+# loud; an STT request body is a recording of the user's voice. Worth
+# adding a token before this runs anywhere but a test bench.
+REMOTE_STT_ENABLED = True
+REMOTE_STT_URL = "https://gpuer.techco.fi:8710/stt"
+REMOTE_STT_LANGUAGES = ("tl",)
+# Transcode to Opus before uploading. STT reverses the direction that
+# matters — the audio *is* the request, and uplink is the modem's weaker
+# side. ~160 KB of WAV becomes ~10 KB for the same transcript. Falls back
+# to sending WAV if the installed libsndfile cannot write Opus.
+REMOTE_STT_COMPRESS = True
+# Provisional, like REMOTE_TTS_TIMEOUT_S. The server reports 0.15-0.25 s
+# of processing for a 3-9 s clip, so the round trip and a ~10 KB upload
+# dominate; 20 s is loose on purpose because the fallback costs this plus
+# the local model's 5.29 s, and because this has not been measured from
+# the device. Re-measure over the modem and tighten it.
+REMOTE_STT_TIMEOUT_S = 20.0
+
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 
 # Rendered speech, named after the sentence it contains. See the module
