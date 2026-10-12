@@ -251,6 +251,11 @@ from indepensense.config import (
     ORIENTATION_TIMEOUT_S,
     PHOTON_URL,
     PIPER_VOICES,
+    REMOTE_TTS_ENABLED,
+    REMOTE_TTS_MODEL,
+    REMOTE_TTS_TIMEOUT_S,
+    REMOTE_TTS_URL,
+    REMOTE_TTS_VOICES,
     PTT_BUTTON_GPIO,
     PTT_MAX_RECORDING_S,
     SAVED_PLACES_PATH,
@@ -354,7 +359,9 @@ from indepensense.voice.audio import (
 )
 from indepensense.voice import clips
 from indepensense.voice.base import TTSEngine
-from indepensense.voice.router import MultiEngineTTS, build_tts, voice_id
+from indepensense.voice.router import (
+    MultiEngineTTS, build_tts, remote_spec, voice_id,
+)
 from indepensense.voice.volume import VolumeState
 from indepensense.voice.whisper import FasterWhisperSTT
 
@@ -406,7 +413,20 @@ def _voice_id(language: str) -> str:
     values rather than functions, and resolvable without a loaded model
     because `_boot_clip_names` hashes before the voice stack exists.
     """
-    return voice_id(language, PIPER_VOICES, MMS_VOICES)
+    return voice_id(language, PIPER_VOICES, MMS_VOICES, _remote_spec())
+
+
+def _remote_spec():
+    """The remote-TTS routing in force, or None when it is switched off.
+
+    Built from config here so `_voice_id` and `_open_tts` cannot disagree
+    about which languages are served remotely — a disagreement files
+    every clip under a voice the other never looks for.
+    """
+    return remote_spec(
+        REMOTE_TTS_ENABLED, REMOTE_TTS_URL, REMOTE_TTS_VOICES,
+        REMOTE_TTS_MODEL, REMOTE_TTS_TIMEOUT_S,
+    )
 
 
 def _notify_systemd(state: str) -> None:
@@ -4068,7 +4088,8 @@ The comparisons are inclusive, so a threshold names the percentage
         greeting — a lazy load would put that cost in front of the user
         every time they switched language instead.
         """
-        return build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES)
+        return build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES,
+                         remote=_remote_spec())
 
     def _open_parser(self) -> TieredIntentParser:
         """The intent parser: semantic fast path in front of the LLM.

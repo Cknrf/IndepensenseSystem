@@ -12,11 +12,57 @@ one dict and one lookup, and every caller still sees the plain `TTSEngine`
 protocol, so nothing downstream — the announcer, the voice thread,
 `app_mock` — knows more than one engine exists.
 """
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from indepensense.voice.base import TTSEngine
 from indepensense.voice.mms import MmsTTS
 from indepensense.voice.piper import PiperTTS
+from indepensense.voice.remote import ENGINE_NAME, RemoteTTS
+
+
+@dataclass(frozen=True)
+class RemoteSpec:
+    """Everything needed to route a language to the remote endpoint.
+
+    One object rather than four loose arguments because `build_tts` and
+    `voice_id` both need the whole set and must agree on it — passing
+    them separately is how the two drift until clips are filed under a
+    voice the router would not have used.
+
+    `voices` maps language to the server's voice name, and an empty map
+    means no language is served remotely, which is what
+    `REMOTE_TTS_ENABLED = False` produces.
+    """
+    url: str
+    voices: dict[str, str] = field(default_factory=dict)
+    model: str = ENGINE_NAME
+    timeout_s: float = 60.0
+
+
+def remote_spec(
+    enabled: bool,
+    url: str,
+    voices: dict[str, str],
+    model: str,
+    timeout_s: float,
+) -> RemoteSpec | None:
+    """A spec, or None when remote TTS is switched off.
+
+    Exists so the `enabled` check lives in one place rather than at each
+    caller: `App._open_tts` and `tools/render_messages` must make the
+    same decision, and a disagreement means one of them files clips
+    under a voice the other will never look for — the whole store misses
+    and every message re-synthesises.
+
+    Still takes configuration as arguments rather than importing it, for
+    the reason `build_tts` does: the manual test scripts must not be able
+    to resolve against a different set than the device.
+    """
+    if not enabled or not voices:
+        return None
+    return RemoteSpec(url=url, voices=dict(voices), model=model,
+                      timeout_s=timeout_s)
 
 
 class MultiEngineTTS:
@@ -58,6 +104,7 @@ class MultiEngineTTS:
 def build_tts(
     piper_voices: dict[str, Path],
     mms_voices: dict[str, Path],
+    remote: RemoteSpec | None = None,
 ) -> MultiEngineTTS:
     """Assemble the configured engines into one router.
 
@@ -74,6 +121,14 @@ def build_tts(
     }
     for language, model_dir in mms_voices.items():
         engines[language] = MmsTTS(model_dir=model_dir, language=language)
+    # Last, so a remotely-served language overrides the local engine for
+    # it. `voice_id` applies the same order; the two must agree or clips
+    # are filed under a voice the router would not have used.
+    for language, voice in (remote.voices if remote else {}).items():
+        engines[language] = RemoteTTS(
+            url=remote.url, language=language, voice=voice,
+            model=remote.model, timeout_s=remote.timeout_s,
+        )
     return MultiEngineTTS(engines)
 
 
@@ -81,6 +136,7 @@ def voice_id(
     language: str,
     piper_voices: dict[str, Path],
     mms_voices: dict[str, Path],
+    remote: "RemoteSpec | None" = None,
 ) -> str:
     """Identity of the voice that will speak `language`, for clip naming.
 
@@ -103,6 +159,8 @@ def voice_id(
     Computable without loading a model, which `app._boot_clip_names`
     depends on: the boot clips are hashed before the voice stack exists.
     """
+    if remote is not None and language in remote.voices:
+        return f"{ENGINE_NAME}:{remote.voices[language]}"
     if language in mms_voices:
         return f"mms:{mms_voices[language].name}"
     if language in piper_voices:

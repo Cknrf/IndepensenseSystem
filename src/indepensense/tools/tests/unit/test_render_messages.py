@@ -75,8 +75,12 @@ def test_the_tool_passes_both_voice_maps(target, monkeypatch):
     monkeypatch.setattr(render_messages, "build_tts", _spy)
     _run()
 
-    assert set(seen) == {"piper_voices", "mms_voices"}
+    assert set(seen) == {"piper_voices", "mms_voices", "remote"}
     assert seen["mms_voices"], "no Tagalog voice passed"
+    # The remote spec travels too, and must be the same one the hashes
+    # above were computed with — a tool that rendered through OmniVoice
+    # while naming clips `mms:` would write a store nothing ever finds.
+    assert seen["remote"] is render_messages._REMOTE
 
 
 # --- rendering ----------------------------------------------------------------

@@ -44,12 +44,24 @@ from indepensense.config import (
     MESSAGE_AUDIO_DIR,
     MMS_VOICES,
     PIPER_VOICES,
+    REMOTE_TTS_ENABLED,
+    REMOTE_TTS_MODEL,
+    REMOTE_TTS_TIMEOUT_S,
+    REMOTE_TTS_URL,
+    REMOTE_TTS_VOICES,
     SUPPORTED_LANGUAGES,
 )
 from indepensense.intents import messages
 from indepensense.voice import clips
-from indepensense.voice.router import build_tts, voice_id
+from indepensense.voice.router import build_tts, remote_spec, voice_id
 
+
+# Resolved once: every hash and every render in this run must agree about
+# which languages are served remotely, and `main` reads it in two places.
+_REMOTE = remote_spec(
+    REMOTE_TTS_ENABLED, REMOTE_TTS_URL, REMOTE_TTS_VOICES,
+    REMOTE_TTS_MODEL, REMOTE_TTS_TIMEOUT_S,
+)
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -83,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     for key in keys:
         for language in languages:
             text = messages.get(key, language)
-            voice = voice_id(language, PIPER_VOICES, MMS_VOICES)
+            voice = voice_id(language, PIPER_VOICES, MMS_VOICES, _REMOTE)
             wanted[clips.filename(text, language, voice)] = (key, language)
             if args.force or clips.find(
                 text, language, voice, MESSAGE_AUDIO_DIR,
@@ -104,12 +116,13 @@ def main(argv: list[str] | None = None) -> int:
         # every caller renders with the engines the device will actually
         # use — a clip built by an English-only router would be replayed
         # for Tagalog forever.
-        tts = build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES)
+        tts = build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES,
+                        remote=_REMOTE)
         started = time.monotonic()
         for index, (key, language, text) in enumerate(todo, start=1):
             try:
                 clips.render(tts, text, language,
-                             voice_id(language, PIPER_VOICES, MMS_VOICES),
+                             voice_id(language, PIPER_VOICES, MMS_VOICES, _REMOTE),
                              MESSAGE_AUDIO_DIR)
                 print(f"  [{index:3d}/{len(todo)}] {language}  {key}", flush=True)
             except Exception as exc:

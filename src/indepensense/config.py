@@ -857,6 +857,44 @@ PIPER_VOICES = {
 MMS_VOICES = {
     "tl": PROJECT_ROOT / "models" / "voices" / "mms-tts-tgl",
 }
+
+# Remote TTS: the self-hosted OmniVoice Filipino endpoint on `gpuer`.
+#
+# **Off, and not ready to be switched on at runtime.** With this True the
+# router hands Tagalog to the network with no local fallback, so an
+# offline wearable cannot speak any sentence that is not already in the
+# clip store. Pre-rendered static messages would still play; templated
+# ones — place names, distances, the turn instructions said during a trip
+# — would not. Flipping this belongs after a `FallbackIntentParser`-shaped
+# wrapper exists for TTS, not before.
+#
+# What it is for meanwhile is `tools/render_messages.py`, which this flag
+# also governs. Speech is rendered once and replayed, so the static
+# catalogue can be synthesised through OmniVoice ahead of time and then
+# costs a file read forever — its pronunciation without its latency.
+#
+# Not chosen for speed. Measured 2026-10-12 on a short EU hop, excluding
+# the wearable's cellular leg: 1.08-1.29 s to generate, 1.70-1.94 s total,
+# 101-174 KB per reply. Local MMS is 2.23 s on the Pi and an ONNX export
+# of it measured 1.23-1.43 s, so over the modem this is a wash at best.
+# It is chosen because OmniVoice is fine-tuned on Filipino and the
+# pronunciation is materially better — worth paying for once at render
+# time rather than on every utterance.
+#
+# The endpoint has no authentication. Tolerable here because the request
+# body is text the device is about to say aloud in public anyway; it would
+# not be tolerable for speech-to-text, where the body is the user's voice.
+REMOTE_TTS_ENABLED = False
+REMOTE_TTS_URL = "https://gpuer.techco.fi:8700/tts"
+REMOTE_TTS_MODEL = "omnivoice"
+# Language -> voice name on the server. `GET /health` lists what exists.
+REMOTE_TTS_VOICES = {
+    "tl": "07",
+}
+# Generous: the server serves one request at a time and queues the rest,
+# and the only caller today is a sequential batch render where waiting
+# costs nothing. A runtime caller needs its own, much shorter deadline.
+REMOTE_TTS_TIMEOUT_S = 60.0
 # Where `tools/fetch_models.py` gets each MMS voice from. Only the tool
 # reads this; the runtime loads the directory above and never sees a
 # repo id.
