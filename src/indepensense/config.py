@@ -900,15 +900,23 @@ REMOTE_TTS_VOICES = {
 # Two budgets, because the two callers have opposite constraints.
 #
 # RUNTIME is the announcer, where a person has pressed a button and is
-# waiting to be answered. **Provisional**: measured 1.70-1.94 s total
-# from a laptop on a short EU hop, which excludes the wearable's cellular
-# leg entirely. Add a Philippines-to-Finland round trip and ~127 KB of
-# audio over the modem and 2.5-3.5 s is the honest guess, so 6 s is
-# roughly 2x headroom. Falling back costs this *plus* MMS's 2.23 s, which
-# is why it is not tighter — a tight deadline does not speed up the
-# common case, it only makes the bad one worse. Re-measure on the device
-# and replace this number; it is the one figure here that is an estimate
-# rather than an observation.
+# waiting to be answered. **Measured over the modem**, 2026-10-12:
+#
+#     short sentence, ~100 KB reply   warm 1.33-1.84 s, total 1.93-2.44 s
+#     longer sentence, ~152 KB reply  total 4.22 s cold
+#     TCP 0.28-0.47 s, TLS adds ~0.31 s, download is the rest
+#
+# Latency scales with the *reply* size, not the request: generation is
+# roughly constant and the audio comes back at 24 kHz 16-bit. 6 s is
+# ~1.6x the worst observed. Falling back costs this *plus* MMS's 2.23 s,
+# which is why it is not tighter — a tight deadline does not speed up
+# the common case, it only makes the bad one worse.
+#
+# Worth knowing what this measurement settles: **cloud TTS is not faster
+# than local MMS over cellular.** 1.6-3.4 s warm against MMS's 2.23 s
+# median is a wash. The cloud's value here is pronunciation, which is an
+# argument for rendering ahead of time — where latency costs nothing —
+# rather than for calling it on the critical path.
 #
 # RENDER is `tools/render_messages.py`: a sequential batch, offline from
 # the user's point of view, where the server queues requests one at a
@@ -986,18 +994,24 @@ REMOTE_STT_LANGUAGES = ("tl",)
 # side. ~160 KB of WAV becomes ~10 KB for the same transcript. Falls back
 # to sending WAV if the installed libsndfile cannot write Opus.
 REMOTE_STT_COMPRESS = True
-# The read budget. Provisional, but bounded by something firmer than a
-# guess at the latency: this is a blocking call on the *voice thread*,
-# and `_voice_cancel` cannot interrupt an HTTP request mid-flight. Every
-# second here is a second in which the repeat and emergency buttons do
-# nothing, which architecture decision #1 says they must never be.
+# The read budget. **Measured over the modem**, 2026-10-12, 12 real
+# command clips through `wwan0`:
 #
-# The server reports 0.15-0.25 s of processing for a 3-9 s clip and the
-# upload is ~10 KB of Opus, so ~0.5-1.5 s is the expected total. A
-# request still silent at 5 s is broken rather than slow, and waiting
-# longer only delays a fallback that was going to happen anyway. Worst
-# case is this plus `_CONNECT_TIMEOUT_S` plus the local model's 5.29 s.
-REMOTE_STT_TIMEOUT_S = 5.0
+#     p50 0.72 s    p95 1.23 s    max 3.05 s (first call, cold TLS)
+#     server processing 0.10-0.12 s, upload 5-13 KB of Opus
+#
+# So the round trip dominates and the model is almost free. 4 s is ~3x
+# p95 and clears the cold-connection outlier.
+#
+# Not set tighter, because this is a blocking call on the *voice thread*
+# and `_voice_cancel` cannot interrupt an HTTP request mid-flight —
+# every second of the budget is a second in which the repeat and
+# emergency buttons do nothing, so the budget is a safety number as much
+# as a latency one. A request still silent at 4 s is broken rather than
+# slow, and waiting longer only delays a fallback that was going to
+# happen. Worst case is this plus `_CONNECT_TIMEOUT_S` plus the local
+# model's 5.29 s.
+REMOTE_STT_TIMEOUT_S = 4.0
 
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 

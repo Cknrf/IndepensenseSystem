@@ -215,6 +215,6 @@ def test_the_timeout_bounds_connect_and_read_separately(clip, monkeypatch):
     and here the fallback behind it is the 5.29 s local model."""
     sent = _capture(monkeypatch, _response(payload={"text": "x"}))
 
-    RemoteSTT(URL, timeout_s=20.0, compress=False).transcribe(clip, language="tl")
+    RemoteSTT(URL, timeout_s=4.0, compress=False).transcribe(clip, language="tl")
 
-    assert sent["timeout"] == (2.0, 20.0)
+    assert sent["timeout"] == (2.0, 4.0)
