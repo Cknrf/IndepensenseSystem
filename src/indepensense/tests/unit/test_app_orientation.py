@@ -57,7 +57,9 @@ class _StubCache:
     def __init__(self, fix):
         self._fix = fix
 
-    def latest_fix(self):
+    def latest_fix(self, max_age_s=None):
+        # The real cache expires by age; this stub always holds a fresh
+        # one, so the bound is accepted and ignored.
         return self._fix
 
 

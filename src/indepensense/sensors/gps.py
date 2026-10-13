@@ -160,6 +160,26 @@ class SIM7600GPS:
     The driver reads all pending lines on each `read()` call, updates the
     last-seen RMC and GGA state, and returns a merged `GPSFix` if a
     position is known — otherwise `None`.
+
+    Sentences that stop arriving are a loss of fix
+    ----------------------------------------------
+
+    `read()` used to answer from `_last_rmc`/`_last_gga` whichever way the
+    port was behaving, and stamp the result `time.time()`. So a receiver
+    that fell silent — the GPS session dropped, `AT+CGPS` turned off
+    underneath us, the port open but mute — had its last known position
+    re-dated once a second and served forever, with nothing in the value
+    to say so. Not an error the cache above could count either: no
+    exception, a plausible fix, a fresh timestamp.
+
+    The ordinary loss of fix does not look like this. Under cover the
+    receiver keeps talking and sends GGA with the position fields empty,
+    which parses to a `lat` of None and is already reported honestly as
+    "no fix". It is specifically *silence* that was being read as news.
+
+    `max_sentence_age_s` bounds it: nothing is served unless a sentence
+    was parsed that recently. At 1 Hz, five seconds is five missed
+    sentences — the receiver has stopped, not stuttered.
     """
 
     def __init__(
@@ -169,6 +189,7 @@ class SIM7600GPS:
         ),
         baudrate: int = 115200,
         timeout_s: float = 0.5,
+        max_sentence_age_s: float = 5.0,
     ):
         import serial  # lazy: only resolvable on the Pi
 
@@ -176,6 +197,12 @@ class SIM7600GPS:
         self._ser.reset_input_buffer()
         self._last_rmc: RMCData | None = None
         self._last_gga: GGAData | None = None
+        self._max_sentence_age_s = max_sentence_age_s
+        # Monotonic, and None until the first sentence parses. The wall
+        # clock is not safe here: the modem hands the Pi a GPS time fix
+        # during the same window this measures, which would make the last
+        # sentence appear to have arrived in the future.
+        self._last_sentence_at: float | None = None
 
     def read(self) -> GPSFix | None:
         # Drain everything currently in the buffer, keeping the most recent
@@ -191,10 +218,18 @@ class SIM7600GPS:
                 rmc = parse_nmea_rmc(line)
                 if rmc is not None:
                     self._last_rmc = rmc
+                    self._last_sentence_at = time.monotonic()
             elif "GGA" in line[:6]:
                 gga = parse_nmea_gga(line)
                 if gga is not None:
                     self._last_gga = gga
+                    self._last_sentence_at = time.monotonic()
+
+        # Nothing has arrived recently enough to call this a position.
+        if (self._last_sentence_at is None
+                or time.monotonic() - self._last_sentence_at
+                > self._max_sentence_age_s):
+            return None
 
         gga = self._last_gga
         rmc = self._last_rmc

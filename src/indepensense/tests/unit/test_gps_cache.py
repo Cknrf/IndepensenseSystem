@@ -18,12 +18,27 @@ rather than inferred from how long something took.
 import pytest
 
 from indepensense.app import (
+    GPS_ALERT_MAX_AGE_S,
     GPS_FAILURES_BEFORE_REOPEN,
+    GPS_FIX_MAX_AGE_S,
     GPS_REOPEN_BACKOFF_MAX_S,
     GPS_REOPEN_BACKOFF_START_S,
     GPSCache,
 )
 from indepensense.sensors.base import GPSFix
+
+
+def _move_clock_on(monkeypatch, seconds: float):
+    """Age the monotonic clock rather than sleeping through it.
+
+    Same objection as a real backoff: a test that waited out a five-minute
+    alert bound would spend five minutes asserting what one subtraction
+    already knows.
+    """
+    import indepensense.app as app_module
+
+    now = app_module.time.monotonic() + seconds
+    monkeypatch.setattr(app_module.time, "monotonic", lambda: now)
 
 
 def _fix(quality: int = 1, lat: float = 14.5824):
@@ -88,6 +103,73 @@ def test_a_fix_with_no_lock_is_not_cached():
     cache._poll_once()
 
     assert cache.latest_fix().lat == 10.5
+
+
+# --- staleness ---------------------------------------------------------------
+#
+# The cache had no expiry at all, so the last good fix was served for the
+# rest of the run. Navigation then tracked a position the user had walked
+# away from, routes and turn-to-face started from an origin they had left,
+# and every emergency alert carried an old location with nothing marking
+# it as old. Nothing about it looked broken from the outside.
+
+
+def test_a_fix_older_than_the_bound_is_not_a_position(monkeypatch):
+    gps = _StubGPS([_fix(lat=10.5)])
+    cache = GPSCache(_Factory(gps))
+    cache._gps = gps
+    cache._poll_once()
+    assert cache.latest_fix() is not None
+
+    _move_clock_on(monkeypatch, GPS_FIX_MAX_AGE_S + 1.0)
+
+    assert cache.latest_fix() is None
+
+
+def test_a_new_fix_restarts_the_clock(monkeypatch):
+    """A receiver that comes back is current again immediately. The
+    expiry must not latch — it is a statement about the stored fix, not
+    about the device."""
+    gps = _StubGPS([_fix(lat=10.5), _fix(lat=11.5)])
+    cache = GPSCache(_Factory(gps))
+    cache._gps = gps
+    cache._poll_once()
+
+    _move_clock_on(monkeypatch, GPS_FIX_MAX_AGE_S + 1.0)
+    assert cache.latest_fix() is None
+
+    cache._poll_once()
+
+    assert cache.latest_fix().lat == 11.5
+
+
+def test_the_alerts_accept_a_fix_navigation_will_not(monkeypatch):
+    """The two bounds exist because the alternatives differ. Navigation
+    sends the user somewhere, so a stale origin is worse than nothing;
+    a fall alert's alternative to an old position is 0.0/0.0, which tells
+    whoever answers it nothing at all."""
+    gps = _StubGPS([_fix(lat=10.5)])
+    cache = GPSCache(_Factory(gps))
+    cache._gps = gps
+    cache._poll_once()
+
+    _move_clock_on(monkeypatch, GPS_FIX_MAX_AGE_S + 1.0)
+
+    assert cache.latest_fix() is None
+    assert cache.latest_fix(max_age_s=GPS_ALERT_MAX_AGE_S).lat == 10.5
+
+
+def test_even_the_alerts_drop_a_fix_eventually(monkeypatch):
+    """Past its bound an old fix stops being a help and becomes a
+    direction to search in the wrong place."""
+    gps = _StubGPS([_fix(lat=10.5)])
+    cache = GPSCache(_Factory(gps))
+    cache._gps = gps
+    cache._poll_once()
+
+    _move_clock_on(monkeypatch, GPS_ALERT_MAX_AGE_S + 1.0)
+
+    assert cache.latest_fix(max_age_s=GPS_ALERT_MAX_AGE_S) is None
 
 
 # --- no fix is not a failure -------------------------------------------------

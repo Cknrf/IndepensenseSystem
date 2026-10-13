@@ -638,6 +638,36 @@ GPS_FAILURES_BEFORE_REOPEN = 3
 GPS_REOPEN_BACKOFF_START_S = 1.0
 GPS_REOPEN_BACKOFF_MAX_S = 60.0
 
+# How old a stored fix may be before `latest_fix()` stops calling it the
+# user's position. It had no expiry at all: the last good fix was served
+# indefinitely, so a receiver that went quiet left navigation tracking a
+# position the user had walked away from, routes and turn-to-face starting
+# from an origin they had left, and ranking sorting candidates by distance
+# from somewhere they no longer were. None of it looked broken from the
+# outside, which is what made it expensive.
+#
+# Ten seconds is ten missed polls at 1 Hz, which means the receiver has
+# stopped rather than blinked. A walker covers about 12 m in that time —
+# under the 30 m that counts as off-route, so the staleness cannot by
+# itself produce a deviation warning.
+GPS_FIX_MAX_AGE_S = 10.0
+
+# The alerts are allowed a much older fix, and the difference is the whole
+# point of there being two numbers. For navigation, nothing is better than
+# wrong: a stale origin sends the user somewhere. For a fall or an
+# emergency, the alternative to an old position is 0.0/0.0 — the alert
+# still goes out, but with nothing in it for whoever answers. Five minutes
+# of walking still puts a rescuer within a few hundred metres of the
+# wearer, and the guardian has the alert's own timestamp to read it
+# against.
+#
+# Past that the fix stops being a help and starts being a direction to
+# search in the wrong place, so it is dropped and the alert carries
+# 0.0/0.0 honestly. Marking the age in the alert payload itself would be
+# better than either, and belongs with the backend schema in the other
+# repository.
+GPS_ALERT_MAX_AGE_S = 300.0
+
 
 class GPSCache:
     """Background-polled GPS cache that owns, and can reopen, the device.
@@ -677,6 +707,17 @@ class GPSCache:
         self._poll_interval_s = poll_interval_s
         self._lock = threading.Lock()
         self._latest_fix = None
+        # When the stored fix was taken, on the monotonic clock.
+        #
+        # Stamped here rather than read from `GPSFix.timestamp`, which the
+        # driver sets on every `read()` whether or not a new sentence
+        # arrived — so a receiver that has gone quiet keeps re-dating the
+        # same position. `gps.py` now refuses to serve one that old, and
+        # this is the second half of the same guarantee: whatever a device
+        # claims about its own freshness, the cache knows when it got it.
+        # Monotonic because the wall clock moves when the modem hands the
+        # Pi a GPS time fix, which would make a stored fix age backwards.
+        self._stored_at = 0.0
         self._stop = threading.Event()
         self._failures = 0
         self._backoff_s = GPS_REOPEN_BACKOFF_START_S
@@ -714,9 +755,23 @@ class GPSCache:
         except Exception:
             pass
 
-    def latest_fix(self):
+    def latest_fix(self, max_age_s: float | None = GPS_FIX_MAX_AGE_S):
+        """The most recent fix, or None if there is none or it has aged out.
+
+        `max_age_s` defaults to the navigation bound because that is the
+        answer most callers need and the dangerous one to get wrong. The
+        alert paths pass `GPS_ALERT_MAX_AGE_S` explicitly — see the note
+        there for why one number cannot serve both. `None` disables the
+        check entirely and is not used by the runtime; it exists so a
+        diagnostic can ask what the cache is actually holding.
+        """
         with self._lock:
-            return self._latest_fix
+            fix, stored_at = self._latest_fix, self._stored_at
+        if fix is None or max_age_s is None:
+            return fix
+        if time.monotonic() - stored_at > max_age_s:
+            return None
+        return fix
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -752,6 +807,7 @@ class GPSCache:
         if fix is not None and fix.fix_quality > 0:
             with self._lock:
                 self._latest_fix = fix
+                self._stored_at = time.monotonic()
 
     def _attempt_reopen(self) -> None:
         if time.monotonic() < self._next_attempt_at:
@@ -1945,10 +2001,12 @@ class App:
         )
 
         # Use current cached GPS fix; fall back to 0.0/0.0 if unknown.
-        # The alert goes out regardless — safety > location precision.
+        # The alert goes out regardless — safety > location precision,
+        # which is also why this asks for a far older fix than navigation
+        # will accept. See GPS_ALERT_MAX_AGE_S.
         lat, lon = 0.0, 0.0
         if self.gps_cache is not None:
-            fix = self.gps_cache.latest_fix()
+            fix = self.gps_cache.latest_fix(max_age_s=GPS_ALERT_MAX_AGE_S)
             if fix is not None:
                 lat, lon = fix.lat, fix.lon
 
@@ -2341,7 +2399,7 @@ The comparisons are inclusive, so a threshold names the percentage
         """POST a Low Battery alert to the guardian backend."""
         lat, lon = 0.0, 0.0
         if self.gps_cache is not None:
-            fix = self.gps_cache.latest_fix()
+            fix = self.gps_cache.latest_fix(max_age_s=GPS_ALERT_MAX_AGE_S)
             if fix is not None:
                 lat, lon = fix.lat, fix.lon
         alert = AlertEvent(

@@ -133,3 +133,94 @@ def test_rmc_status_void_is_inactive():
     assert result.active is False
     assert result.lat is None
     assert result.lon is None
+
+
+# --- read(): sentences that stop arriving ------------------------------------
+#
+# `read()` used to answer from the last parsed sentence whatever the port
+# was doing, and stamp the result with a fresh `time.time()`. A receiver
+# that fell silent — GPS session dropped, `AT+CGPS` turned off underneath
+# us, port open but mute — therefore had its last known position re-dated
+# once a second and served indefinitely, with nothing in the value to say
+# so and no exception for the cache above to count.
+#
+# The ordinary loss of fix does not look like this: under cover the
+# receiver keeps talking and empties the position fields, which is already
+# reported honestly. It was specifically silence being read as news.
+
+
+class _FakeSerial:
+    """A serial port whose pending lines are scripted."""
+
+    def __init__(self, lines=()):
+        self.lines = [l.encode("ascii") for l in lines]
+
+    @property
+    def in_waiting(self):
+        return len(self.lines)
+
+    def readline(self):
+        return self.lines.pop(0) if self.lines else b""
+
+
+def _driver(lines=(), max_sentence_age_s=5.0):
+    """A driver around a fake port.
+
+    Built without `__init__`, which opens a real serial device and imports
+    `serial` — neither of which exists on the development machine. The
+    parsing and staleness logic under test is all in `read()`.
+    """
+    from indepensense.sensors.gps import SIM7600GPS
+
+    gps = object.__new__(SIM7600GPS)
+    gps._ser = _FakeSerial(lines)
+    gps._last_rmc = None
+    gps._last_gga = None
+    gps._max_sentence_age_s = max_sentence_age_s
+    gps._last_sentence_at = None
+    return gps
+
+
+def test_a_fresh_sentence_is_a_fix():
+    gps = _driver([_VALID_GGA + "\r\n"])
+
+    fix = gps.read()
+
+    assert fix is not None
+    assert fix.lat == pytest.approx(48.1173, abs=1e-4)
+
+
+def test_silence_is_not_a_fix(monkeypatch):
+    """The whole point. The position is still in hand and still parses —
+    it is simply no longer news, and serving it would be the device
+    asserting the user is somewhere it has no current evidence for."""
+    import indepensense.sensors.gps as gps_module
+
+    gps = _driver([_VALID_GGA + "\r\n"])
+    assert gps.read() is not None
+
+    later = gps_module.time.monotonic() + 6.0
+    monkeypatch.setattr(gps_module.time, "monotonic", lambda: later)
+
+    assert gps.read() is None
+
+
+def test_a_sentence_arriving_makes_it_a_fix_again(monkeypatch):
+    """A receiver that comes back is believed again at once — the bound
+    describes the last sentence, not the health of the device."""
+    import indepensense.sensors.gps as gps_module
+
+    gps = _driver([_VALID_GGA + "\r\n"])
+    gps.read()
+
+    later = gps_module.time.monotonic() + 6.0
+    monkeypatch.setattr(gps_module.time, "monotonic", lambda: later)
+    assert gps.read() is None
+
+    gps._ser.lines.append((_VALID_GGA + "\r\n").encode("ascii"))
+
+    assert gps.read() is not None
+
+
+def test_a_port_that_never_speaks_is_not_a_fix():
+    assert _driver().read() is None

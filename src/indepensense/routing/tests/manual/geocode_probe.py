@@ -18,10 +18,13 @@ them apart:
     kilometres around it. That is the router being right and the
     wearable being honest.
   * **The origin was not where the user was.** `GPSCache.latest_fix()`
-    has no expiry: a fix from before a modem disconnect is served
-    indefinitely, and ranking would faithfully sort by distance from
-    somewhere the user has since left. The modem on this unit drops
-    often enough for that to be routine.
+    used to have no expiry: a fix from before a modem disconnect was
+    served indefinitely, and ranking would faithfully sort by distance
+    from somewhere the user had since left. The modem on this unit drops
+    often enough for that to have been routine. It now ages out after
+    `GPS_FIX_MAX_AGE_S`, so this reads as "no GPS" rather than as a
+    confident wrong answer — but check the origin anyway, because a fix
+    inside the bound can still be a poor one.
 
 What it still distinguishes, for the next query that goes wrong:
 
@@ -101,10 +104,11 @@ def _route_to(origin: Coordinate, chosen) -> None:
     be a long way round. That is the router being right, and a wearable
     telling its blind user the truth about a 17 km walk.
 
-    If the ratio is small, the stale-origin explanation survives instead:
-    `GPSCache.latest_fix()` has no expiry, so a fix from before a modem
-    disconnect is served indefinitely and ranking would faithfully sort
-    by distance from somewhere the user no longer is.
+    If the ratio is small, the stale-origin explanation survives instead.
+    `GPSCache.latest_fix()` now ages a fix out after `GPS_FIX_MAX_AGE_S`,
+    so the old version of this — a position from before a modem
+    disconnect served indefinitely — should no longer be possible; a fix
+    that is merely poor rather than old still is.
     """
     from indepensense.config import GRAPHHOPPER_URL
     from indepensense.routing.graphhopper import GraphHopperRouter
