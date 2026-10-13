@@ -227,10 +227,15 @@ class NavigationCue:
                       they should have made; `text` names it. Fires at
                       most once per instruction, and only when a heading
                       is supplied.
+
+    `index` identifies the instruction the cue came from, and exists so
+    `defer()` can find the latch to undo when the application could not
+    speak it. None for cues that belong to no single instruction.
     """
     kind: str
     text: str | None = None
     direction: str | None = None
+    index: int | None = None
 
 
 def _project_onto_segment(
@@ -361,6 +366,9 @@ class NavigationMonitor:
         # re-arms on every tick and the reference position follows them,
         # so the displacement below never grows and no turn is ever judged.
         self._verify_armed: set[int] = set()
+        # A `missed_turn` the application could not speak, held for the
+        # next poll. See `defer`.
+        self._missed_turn_redeliver: NavigationCue | None = None
 
     # ------------------------------------------------------------------ API
 
@@ -376,6 +384,7 @@ class NavigationMonitor:
         self._off_route_warned = False
         self._pending_turn = None
         self._verify_armed.clear()
+        self._missed_turn_redeliver = None
 
     def clear(self) -> None:
         """Stop tracking. Subsequent `check()` calls return no cues."""
@@ -391,6 +400,55 @@ class NavigationMonitor:
         self._off_route_warned = False
         self._pending_turn = None
         self._verify_armed.clear()
+        self._missed_turn_redeliver = None
+
+    def defer(self, cue: NavigationCue) -> None:
+        """Take back a cue the application could not deliver.
+
+        The monitor marks each cue fired *before* returning it, so a cue
+        the caller drops is gone for good. `app.py` drops them whenever the
+        voice pipeline is busy — any voice command, plus the whole
+        turn-to-face step, which can run for 20 s — and a comment there
+        claimed each one "comes round again on a later poll". None of them
+        did. An announce lost that way was never spoken, an off-route
+        warning left the user with no further warning for the rest of that
+        deviation, and the window covers the moment a route starts.
+
+        Undoing the latch rather than queueing the text is what makes this
+        correct rather than merely delivered. These cues are statements
+        about where the user is, and the user is walking: queued, "In 90
+        meters, turn left" arrives after they have walked 25 of them, and
+        "turn left" arrives at the wrong junction. Un-latched, the cue is
+        re-offered on the next poll against a position taken then.
+
+        The cursor is what stops it. A user walking through a long busy
+        window keeps being offered the cue and keeps having it deferred,
+        until their progress carries them `advance_distance_m` past the
+        turn — at which point the cursor moves on and it is never asked
+        for again. So how late a cue can be is bounded by that margin
+        rather than by how long the pipeline stays busy.
+
+        Deferring `arrive` would be a mistake and the caller does not: it
+        is emitted in the same breath as `clear()`, so there is no state
+        left to un-latch and nothing would bring it back.
+        """
+        if cue.kind == "announce" and cue.index is not None:
+            self._announced.discard(cue.index)
+        elif cue.kind == "turn_now" and cue.index is not None:
+            self._turn_now_fired.discard(cue.index)
+        elif cue.kind == "off_route":
+            # `_off_route_since` deliberately untouched: the deviation has
+            # already lasted long enough, so clearing only the warned flag
+            # re-fires on the next poll rather than restarting the debounce
+            # and making the user wait the 15 s again.
+            self._off_route_warned = False
+        elif cue.kind == "missed_turn":
+            # Nothing to un-latch — `_pending_turn` is consumed when it
+            # judges, and the position it measured from is gone. Held
+            # verbatim instead, which is sound in a way the position cues
+            # are not: it reports something that has already happened, and
+            # stays true however long it waits.
+            self._missed_turn_redeliver = cue
 
     def is_active(self) -> bool:
         return self._route is not None
@@ -530,6 +588,10 @@ class NavigationMonitor:
         # moves on, so a user who walked straight past a corner hears
         # about it rather than being cued for a leg they are not on.
         # Off-route detection is the backstop and takes 15-30 s longer.
+        if self._missed_turn_redeliver is not None:
+            cues.append(self._missed_turn_redeliver)
+            self._missed_turn_redeliver = None
+
         missed = self._check_pending_turn(position, heading)
         if missed is not None:
             cues.append(missed)
@@ -599,7 +661,9 @@ class NavigationMonitor:
             if (distance <= self._announce_distance_m
                     and self._current_index not in self._announced):
                 self._announced.add(self._current_index)
-                cues.append(self._build_announce_cue(instr, distance))
+                cues.append(self._build_announce_cue(
+                    instr, distance, self._current_index,
+                ))
 
             # Direction alone (once) at the turn_now threshold. Skip
             # for "arrive", which speaks its own confirmation.
@@ -607,7 +671,11 @@ class NavigationMonitor:
                     and self._current_index not in self._turn_now_fired
                     and instr.direction in ("left", "right", "straight")):
                 self._turn_now_fired.add(self._current_index)
-                cues.append(NavigationCue(kind="turn_now", direction=instr.direction))
+                cues.append(NavigationCue(
+                    kind="turn_now",
+                    direction=instr.direction,
+                    index=self._current_index,
+                ))
 
             # Arm turn verification the moment the user reaches the turn —
             # separately from the cursor advancing, and before it.
@@ -854,7 +922,9 @@ class NavigationMonitor:
             return 1
         return 0
 
-    def _build_announce_cue(self, instr, distance: float) -> NavigationCue:
+    def _build_announce_cue(
+        self, instr, distance: float, index: int,
+    ) -> NavigationCue:
         """Build the spoken text for an approaching turn.
 
         Never called for the "arrive" instruction — `check()` breaks out
@@ -869,6 +939,7 @@ class NavigationMonitor:
         return NavigationCue(
             kind="announce",
             text=f"In {rounded} meters, {instr.text}.",
+            index=index,
         )
 
 

@@ -1264,6 +1264,9 @@ class App:
         # (which calls set_route/clear on intent) AND polled from the
         # main loop (which fires the cues).
         self.nav_monitor = NavigationMonitor()
+        # Cue kinds already logged as deferred during the current busy
+        # window, so a 20 s one does not write a line a second.
+        self._deferred_cue_logged: set[str] = set()
         self._last_nav_check = 0.0
 
         # Low-battery alert state: latch true after firing so we don't
@@ -2476,13 +2479,22 @@ The comparisons are inclusive, so a threshold names the percentage
         every branch here an append and a return.
         """
         try:
+            if cue.kind == "arrive":
+                # The only cue here with no voice-busy guard, because it is
+                # the only one with nothing to hand back: `check()` calls
+                # `clear()` in the same breath as emitting it, so there is
+                # no latch left for `defer()` to undo. Queued rather than
+                # critical — the announcer serialises, so it lands after
+                # the user's answer instead of over it.
+                print(f"[nav] arrive: {cue.text}", flush=True)
+                if cue.text is not None:
+                    self._announce(cue.text)
+                return
+
+            if self._defer_if_voice_busy(cue):
+                return
+
             if cue.kind == "announce":
-                if self._voice_active.is_set():
-                    print(
-                        f"[nav] deferred announce (voice busy): {cue.text}",
-                        flush=True,
-                    )
-                    return
                 print(f"[nav] announce: {cue.text}", flush=True)
                 self._announce(cue.text)
             elif cue.kind == "turn_now":
@@ -2491,33 +2503,14 @@ The comparisons are inclusive, so a threshold names the percentage
                 # words, so the direction arrives without re-reading the
                 # whole sentence over a junction.
                 key = _TURN_NOW_MESSAGE_KEYS.get(cue.direction)
-                if key is None or self._voice_active.is_set():
+                if key is None:
                     return
                 print(f"[nav] turn_now: {cue.direction}", flush=True)
                 self._announce(messages.get(key, self.language.current))
-            elif cue.kind == "arrive":
-                # The only cue here with no voice-busy guard, because it
-                # is the only one that can never fire twice: `check()`
-                # calls `clear()` in the same breath as emitting it. Every
-                # other cue deferred for a busy pipeline comes round again
-                # on a later poll; this one is simply lost, and the user
-                # walks past their destination never having been told.
-                # It used to survive a busy pipeline as a motor pulse.
-                # Queued rather than critical — the announcer serialises,
-                # so it lands after the user's answer instead of over it.
-                print(f"[nav] arrive: {cue.text}", flush=True)
-                if cue.text is not None:
-                    self._announce(cue.text)
             elif cue.kind == "missed_turn":
                 # The compass says they carried straight on. Off-route
                 # detection is still running underneath as the slower
                 # backstop.
-                if self._voice_active.is_set():
-                    print(
-                        f"[nav] deferred missed_turn (voice busy): {cue.text}",
-                        flush=True,
-                    )
-                    return
                 print(f"[nav] missed_turn: {cue.text}", flush=True)
                 self._announce(
                     messages.get(
@@ -2527,17 +2520,51 @@ The comparisons are inclusive, so a threshold names the percentage
                     )
                 )
             elif cue.kind == "off_route":
-                if self._voice_active.is_set():
-                    print(
-                        f"[nav] deferred off_route (voice busy): {cue.text}",
-                        flush=True,
-                    )
-                    return
                 print(f"[nav] off_route: {cue.text}", flush=True)
                 if cue.text is not None:
                     self._announce(cue.text)
         except Exception as exc:
             print(f"[nav] fire error: {exc}", file=sys.stderr, flush=True)
+
+    def _defer_if_voice_busy(self, cue: NavigationCue) -> bool:
+        """Hand a cue back to the monitor when we cannot speak it yet.
+
+        True when the cue was deferred and the caller should stop. Speaking
+        over the user's own command, or over a response they are listening
+        to, loses information for both — and the busy window is not small:
+        any voice command, plus the whole turn-to-face step, which runs up
+        to `ORIENTATION_TIMEOUT_S`.
+
+        These used to be dropped on the floor, under a comment here saying
+        they came round again on a later poll. They did not — the monitor
+        latches each cue as it emits it — so an announce lost to a busy
+        pipeline was never spoken, and a dropped off-route warning left the
+        user with no further warning for the rest of that deviation.
+
+        They are handed back rather than queued to the `Announcer`, for two
+        reasons. The announcer would play into an open microphone, since it
+        knows nothing about recording. And the text would be stale on
+        arrival: these cues describe where the user is, the user is
+        walking, and "In 90 meters, turn left" spoken 20 s later is a
+        different instruction. `defer()` un-latches so the next poll
+        re-asks the question against a position taken then.
+        """
+        if not self._voice_active.is_set():
+            self._deferred_cue_logged.clear()
+            return False
+
+        self.nav_monitor.defer(cue)
+        # Logged once per busy window per kind. The monitor re-offers a
+        # deferred cue on every poll, so logging each one would put a line
+        # a second in the journal for the length of every voice command.
+        if cue.kind not in self._deferred_cue_logged:
+            self._deferred_cue_logged.add(cue.kind)
+            print(
+                f"[nav] deferred {cue.kind} (voice busy): "
+                f"{cue.text or cue.direction}",
+                flush=True,
+            )
+        return True
 
     def _announce(self, text: str, critical: bool = False) -> None:
         """Speak `text` without waiting for it. Safe from the main loop.

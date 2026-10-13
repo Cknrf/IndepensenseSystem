@@ -799,3 +799,125 @@ def test_a_new_route_disarms_verification():
     monitor.set_route(_turning_route(), "Work")
 
     assert monitor._pending_turn is None
+
+
+# --- cues handed back --------------------------------------------------------
+#
+# Each cue is marked fired before it is returned, so one the application
+# could not speak was gone for good. `app.py` drops them whenever the voice
+# pipeline is busy — any voice command, plus the whole turn-to-face step —
+# and the comment there claimed they came round again on a later poll.
+#
+# `defer()` undoes the latch rather than holding the text, because these
+# cues are statements about where the user is and the user is walking: held
+# and replayed, "In 90 meters, turn left" arrives after they have walked 25
+# of them. Un-latched, the next poll re-asks the question.
+
+
+def test_a_deferred_announce_is_offered_again():
+    m = NavigationMonitor()
+    m.set_route(_make_route(), "Home")
+    approaching = _metres_north_of(_MIDPOINT, -60.0)
+
+    first = [c for c in m.check(approaching) if c.kind == "announce"]
+    assert len(first) == 1
+    assert m.check(approaching) == []        # latched, as before
+
+    m.defer(first[0])
+
+    assert [c.kind for c in m.check(approaching)] == ["announce"]
+
+
+def test_a_deferred_announce_is_re_measured_not_replayed():
+    """The distance is taken again, so the user hears where they are now
+    rather than where they were when the pipeline was busy."""
+    m = NavigationMonitor()
+    m.set_route(_make_route(), "Home")
+
+    far = [c for c in m.check(_metres_north_of(_MIDPOINT, -90.0))
+           if c.kind == "announce"][0]
+    m.defer(far)
+
+    near = [c for c in m.check(_metres_north_of(_MIDPOINT, -40.0))
+            if c.kind == "announce"][0]
+
+    assert far.text != near.text
+    assert "90 meters" in far.text
+    assert "40 meters" in near.text
+
+
+def test_a_deferred_turn_now_stops_being_offered_once_the_turn_is_behind():
+    """Re-offering is not replaying, and the cursor is what bounds it.
+
+    A user walking through a busy window keeps being offered "turn left"
+    and keeps having it deferred; the moment their progress carries them
+    `advance_distance_m` past the corner the cursor moves on, and the cue
+    is never asked for again. So the staleness is bounded by that margin
+    rather than by how long the pipeline stays busy — which matters,
+    because turn-to-face can hold it for 20 s and a user told to turn
+    left half a block late turns into the wrong street.
+    """
+    m = NavigationMonitor(advance_distance_m=5.0)
+    m.set_route(_make_route(), "Home")
+
+    # Walk from 10 m before the corner to 10 m past it, a metre at a time,
+    # deferring everything as a busy pipeline would.
+    offered_at = []
+    for metres in range(-10, 11):
+        for cue in m.check(_metres_north_of(_MIDPOINT, float(metres))):
+            if cue.kind == "turn_now":
+                offered_at.append(metres)
+            m.defer(cue)
+
+    assert offered_at, "the cue was never offered at all"
+    assert max(offered_at) <= 5          # never more than the advance margin
+    assert m.current_index() == 2
+
+
+def test_a_deferred_off_route_warning_comes_back_without_a_second_debounce():
+    """The deviation has already lasted long enough. Restarting the
+    15 s debounce would make the user walk it twice over."""
+    m = NavigationMonitor()
+    m.set_route(_make_route(), "Home")
+    away = Coordinate(lat=14.0013, lon=121.0010)      # ~108 m off route
+
+    m.check(away, now=0.0)
+    warning = [c for c in m.check(away, now=20.0) if c.kind == "off_route"][0]
+    assert m.check(away, now=21.0) == []              # latched
+
+    m.defer(warning)
+
+    assert [c.kind for c in m.check(away, now=22.0)] == ["off_route"]
+
+
+def test_a_deferred_missed_turn_is_held_verbatim():
+    """The one cue that is held rather than re-measured: it reports
+    something that already happened, so it stays true however long it
+    waits, and the position it was judged from is gone."""
+    monitor = NavigationMonitor()
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+    missed = [c for c in monitor.check(_north_of_corner(12.0), now=10.0,
+                                       heading=0.0) if c.kind == "missed_turn"][0]
+    assert monitor.check(_north_of_corner(14.0), now=11.0, heading=0.0) == []
+
+    monitor.defer(missed)
+    cues = monitor.check(_north_of_corner(16.0), now=12.0, heading=0.0)
+
+    assert cues == [missed]
+    # And once delivered it is gone — redelivery is not a repeat.
+    assert monitor.check(_north_of_corner(18.0), now=13.0, heading=0.0) == []
+
+
+def test_a_new_route_drops_a_held_missed_turn():
+    """It belongs to a route the user is no longer on."""
+    monitor = NavigationMonitor()
+    monitor.set_route(_turning_route(), "Home")
+    _at_corner(monitor, now=0.0)
+    missed = [c for c in monitor.check(_north_of_corner(12.0), now=10.0,
+                                       heading=0.0) if c.kind == "missed_turn"][0]
+    monitor.defer(missed)
+
+    monitor.set_route(_turning_route(), "Work")
+
+    assert monitor._missed_turn_redeliver is None

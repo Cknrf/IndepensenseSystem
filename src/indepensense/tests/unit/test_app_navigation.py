@@ -122,8 +122,8 @@ def test_off_route_is_suppressed_while_voice_is_busy(app):
 
 def test_turn_now_is_suppressed_while_voice_is_busy(app):
     """It used to fire regardless, because it was a motor pulse and could
-    not collide with speech. Now it can, and it is the one cue it is safe
-    to drop: the turn is 20 m ahead and the monitor is still polling."""
+    not collide with speech. Now it can, so it waits — and because it is
+    handed back rather than dropped, waiting does not mean losing it."""
     app._voice_active.set()
     app._fire_navigation_cue(NavigationCue(kind="turn_now", direction="right"))
 
@@ -132,13 +132,100 @@ def test_turn_now_is_suppressed_while_voice_is_busy(app):
 
 def test_arrival_is_spoken_even_while_voice_is_busy(app):
     """Arrival fires exactly once ever — `check()` clears the route in the
-    same breath as emitting it — so deferring it loses it outright. It
-    used to survive a busy pipeline as a motor pulse; nothing else covers
-    it now, so this one cue ignores the guard."""
+    same breath as emitting it — so there is no latch left to hand it back
+    to. It used to survive a busy pipeline as a motor pulse; nothing else
+    covers it now, so this one cue ignores the guard."""
     app._voice_active.set()
     app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
 
     assert app.spoken == ["arrived"]
+
+
+# --- cues the pipeline could not take ----------------------------------------
+#
+# Suppressed used to mean dropped. The monitor marks each cue fired before
+# returning it, so nothing brought it back: an announce lost to a busy
+# pipeline was never spoken, and a dropped off-route warning left the user
+# with no further warning for the rest of that deviation. The comment here
+# said they came round again on a later poll, and a test docstring agreed
+# with it. Neither was true.
+
+
+class _RecordingMonitor:
+    """Stands in for the monitor to record what gets handed back."""
+
+    def __init__(self):
+        self.deferred: list[NavigationCue] = []
+
+    def defer(self, cue: NavigationCue) -> None:
+        self.deferred.append(cue)
+
+
+@pytest.mark.parametrize("cue", [
+    NavigationCue(kind="announce", text="In 90 meters, turn left", index=1),
+    NavigationCue(kind="turn_now", direction="right", index=1),
+    NavigationCue(kind="missed_turn", text="Turn left onto B"),
+    NavigationCue(kind="off_route", text="off route"),
+])
+def test_a_cue_we_cannot_speak_goes_back_to_the_monitor(app, cue):
+    app.nav_monitor = _RecordingMonitor()
+    app._voice_active.set()
+
+    app._fire_navigation_cue(cue)
+
+    assert app.spoken == []
+    assert app.nav_monitor.deferred == [cue]
+
+
+def test_arrival_is_never_handed_back(app):
+    """There is nothing to hand it back to, and the guard it skips is the
+    reason it is still spoken at all."""
+    app.nav_monitor = _RecordingMonitor()
+    app._voice_active.set()
+
+    app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
+
+    assert app.spoken == ["arrived"]
+    assert app.nav_monitor.deferred == []
+
+
+def test_a_long_busy_window_logs_each_kind_once(app, capsys):
+    """The monitor re-offers a deferred cue on every poll, so logging each
+    one would put a line a second in the journal for the length of every
+    voice command — and turn-to-face runs for up to 20 s."""
+    app.nav_monitor = _RecordingMonitor()
+    app._voice_active.set()
+    cue = NavigationCue(kind="announce", text="In 90 meters, turn left", index=1)
+
+    for _ in range(20):
+        app._fire_navigation_cue(cue)
+
+    deferred_lines = [
+        line for line in capsys.readouterr().out.splitlines()
+        if "deferred announce" in line
+    ]
+    assert len(deferred_lines) == 1
+    assert len(app.nav_monitor.deferred) == 20
+
+
+def test_the_log_speaks_again_for_the_next_busy_window(app, capsys):
+    """Once-per-window, not once-per-run: a later command that loses a cue
+    has to leave its own trace."""
+    app.nav_monitor = _RecordingMonitor()
+    cue = NavigationCue(kind="announce", text="In 90 meters, turn left", index=1)
+
+    app._voice_active.set()
+    app._fire_navigation_cue(cue)
+    app._voice_active.clear()
+    app._fire_navigation_cue(cue)          # spoken, and clears the latch
+    app._voice_active.set()
+    app._fire_navigation_cue(cue)
+
+    deferred_lines = [
+        line for line in capsys.readouterr().out.splitlines()
+        if "deferred announce" in line
+    ]
+    assert len(deferred_lines) == 2
 
 
 # --- containment -------------------------------------------------------------
