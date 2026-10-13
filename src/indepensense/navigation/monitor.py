@@ -94,6 +94,7 @@ Assumptions and known limitations
 Recovering from route deviation is a future-work bullet.
 """
 import math
+import threading
 import time
 from dataclasses import dataclass
 
@@ -336,6 +337,22 @@ class NavigationMonitor:
         self._turn_verify_min_leg_m = turn_verify_min_leg_m
         self._turn_verify_arm_radius_m = turn_verify_arm_radius_m
 
+        # One lock over every public method. `set_route` and `clear` run
+        # on the voice thread, `check` and `defer` on the 100 Hz main
+        # loop, and the read accessors on both — so a route could be
+        # swapped out from under a `check()` that was partway through
+        # deciding against the old one, advancing a cursor onto an
+        # instruction list it was never measured for.
+        #
+        # The window is microseconds at 1 Hz, which is an argument for
+        # the bug being rare and not for it being acceptable: the
+        # consequence is a skipped turn on a device whose user cannot
+        # see that it happened. The rule is the whole of the reasoning —
+        # every public method takes it, every private one assumes it is
+        # held — because a per-method judgement is something the next
+        # reader has to make again.
+        self._lock = threading.Lock()
+
         self._route: Route | None = None
         self._destination_name: str = ""
         # Route geometry, measured once per route rather than per check.
@@ -382,20 +399,28 @@ class NavigationMonitor:
 
     def set_route(self, route: Route, destination_name: str) -> None:
         """Start tracking a new route. Overwrites any prior state."""
-        self._route = route
-        self._destination_name = destination_name
-        self._measure_route(route)
-        self._current_index = self._initial_index(route)
-        self._announced.clear()
-        self._turn_now_fired.clear()
-        self._off_route_since = None
-        self._off_route_warned = False
-        self._pending_turn = None
-        self._verify_armed.clear()
-        self._missed_turn_redeliver = None
+        with self._lock:
+            self._reset()
+            self._route = route
+            self._destination_name = destination_name
+            self._measure_route(route)
+            self._current_index = self._initial_index(route)
 
     def clear(self) -> None:
         """Stop tracking. Subsequent `check()` calls return no cues."""
+        with self._lock:
+            self._reset()
+
+    def _reset(self) -> None:
+        """Drop all per-route state. Caller holds the lock.
+
+        Split out from `clear()` because `check()` ends a route itself on
+        arrival, and it already holds the lock when it does. Calling the
+        public method from in there would deadlock — which is a real
+        argument for a reentrant lock and a better one for not needing it:
+        with one private reset there is exactly one place the state is
+        listed, and adding a field means adding it once.
+        """
         self._route = None
         self._destination_name = ""
         self._segment_m = []
@@ -440,6 +465,10 @@ class NavigationMonitor:
         is emitted in the same breath as `clear()`, so there is no state
         left to un-latch and nothing would bring it back.
         """
+        with self._lock:
+            self._defer_locked(cue)
+
+    def _defer_locked(self, cue: NavigationCue) -> None:
         if cue.kind == "announce" and cue.index is not None:
             self._announced.discard(cue.index)
         elif cue.kind == "turn_now" and cue.index is not None:
@@ -459,11 +488,13 @@ class NavigationMonitor:
             self._missed_turn_redeliver = cue
 
     def is_active(self) -> bool:
-        return self._route is not None
+        with self._lock:
+            return self._route is not None
 
     def current_index(self) -> int:
         """The next instruction index we're waiting to advance past."""
-        return self._current_index
+        with self._lock:
+            return self._current_index
 
     def route(self) -> Route | None:
         """The route being tracked, or None. Read-only by convention.
@@ -475,7 +506,8 @@ class NavigationMonitor:
 
     def destination_name(self) -> str:
         """Where this route ends, as the user named it. Empty if inactive."""
-        return self._destination_name
+        with self._lock:
+            return self._destination_name
 
     def remaining_distance_m(self, position: Coordinate) -> float | None:
         """Metres still to walk along the route. None if there is no route.
@@ -492,10 +524,11 @@ class NavigationMonitor:
         route would have them be, which is the honest answer to "how much
         further" while they walk back to it.
         """
-        along = self._along_route_m(position)
-        if along is None:
-            return None
-        return max(0.0, self._cumulative_m[-1] - along)
+        with self._lock:
+            along = self._along_route_m(position)
+            if along is None:
+                return None
+            return max(0.0, self._cumulative_m[-1] - along)
 
     # ------------------------------------------------------- route geometry
 
@@ -580,6 +613,15 @@ class NavigationMonitor:
         other behaviour here is unchanged — the cursor still advances on
         proximity alone, exactly as before.
         """
+        with self._lock:
+            return self._check_locked(position, now, heading)
+
+    def _check_locked(
+        self,
+        position: Coordinate,
+        now: float | None,
+        heading: float | None,
+    ) -> list[NavigationCue]:
         if self._route is None:
             return []
 
@@ -621,7 +663,7 @@ class NavigationMonitor:
         arrival_cue = self._check_arrival(position, along)
         if arrival_cue is not None:
             cues.append(arrival_cue)
-            self.clear()
+            self._reset()
             return cues
 
         # Loop so we can advance through consecutive instructions the

@@ -3,6 +3,8 @@
 Pure logic — no threads, no hardware. Tests exercise the state machine
 by feeding synthetic GPS positions and asserting on the cues returned.
 """
+import threading
+
 import pytest
 
 from indepensense.navigation.monitor import (
@@ -925,3 +927,78 @@ def test_a_new_route_drops_a_held_missed_turn():
     monitor.set_route(_turning_route(), "Work")
 
     assert monitor._missed_turn_redeliver is None
+
+
+# --- used from two threads ---------------------------------------------------
+#
+# `set_route` and `clear` run on the voice thread; `check` and `defer` run
+# on the 100 Hz main loop. Nothing held them apart, so a route swapped out
+# from under a `check()` partway through could advance a cursor onto an
+# instruction list it was never measured for. Microseconds wide at 1 Hz,
+# which makes it rare rather than acceptable: the consequence is a skipped
+# turn on a device whose user cannot see that it happened.
+
+
+def test_arrival_does_not_deadlock_against_its_own_lock():
+    """`check()` ends the route itself on arrival, while already holding
+    the lock. Routing that through the public `clear()` would deadlock —
+    which is the whole reason the reset is a separate private method."""
+    m = NavigationMonitor()
+    m.set_route(_make_route(), "Home")
+
+    finished = threading.Event()
+    cues = []
+
+    def _walk():
+        cues.extend(m.check(_END))
+        finished.set()
+
+    worker = threading.Thread(target=_walk, daemon=True)
+    worker.start()
+    worker.join(timeout=5.0)
+
+    assert finished.is_set(), "check() deadlocked on arrival"
+    assert any(c.kind == "arrive" for c in cues)
+    assert not m.is_active()
+
+
+def test_concurrent_routing_and_checking_stays_consistent():
+    """The main loop polls while the voice thread swaps routes under it.
+    Nothing may raise, and the cursor may never point past the end of
+    whichever instruction list is current."""
+    m = NavigationMonitor()
+    m.set_route(_make_route(), "Home")
+    errors: list[BaseException] = []
+    stop = threading.Event()
+
+    def _poll():
+        try:
+            while not stop.is_set():
+                m.check(_metres_north_of(_MIDPOINT, -20.0), now=0.0)
+                m.remaining_distance_m(_START)
+                index = m.current_index()
+                route = m.route()
+                if route is not None:
+                    assert index <= len(route.instructions)
+        except BaseException as exc:      # noqa: BLE001 - reported, not swallowed
+            errors.append(exc)
+
+    def _reroute():
+        try:
+            for _ in range(500):
+                m.set_route(_make_route(), "Home")
+                m.clear()
+                m.set_route(_l_shaped_route(), "Work")
+        except BaseException as exc:      # noqa: BLE001
+            errors.append(exc)
+
+    poller = threading.Thread(target=_poll, daemon=True)
+    poller.start()
+    rerouter = threading.Thread(target=_reroute, daemon=True)
+    rerouter.start()
+    rerouter.join(timeout=10.0)
+    stop.set()
+    poller.join(timeout=10.0)
+
+    assert not rerouter.is_alive() and not poller.is_alive()
+    assert errors == []
