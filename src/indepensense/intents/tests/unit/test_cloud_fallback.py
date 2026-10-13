@@ -162,8 +162,14 @@ def test_a_raising_provider_does_not_break_the_pipeline():
             raise RuntimeError("driver bug")
 
     response = _executor(cloud=_Exploding()).execute(_unknown())
-    assert response  # something is spoken
-    assert "driver bug" in response or response == messages.get("cloud.error", "en")
+
+    # Something is spoken, and it is not the exception: "driver bug" is
+    # for the journal, not for somebody who cannot skim past it.
+    assert response in (
+        messages.get("cloud.error", "en"),
+        messages.get("generic.error", "en"),
+    )
+    assert "driver bug" not in response
 
 
 # --- length ------------------------------------------------------------------

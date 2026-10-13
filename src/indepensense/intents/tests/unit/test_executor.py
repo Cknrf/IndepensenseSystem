@@ -1635,24 +1635,122 @@ def test_an_unreachable_router_says_so_in_words(make_unreachable_executor):
     assert answer == messages.get("routing.not_ready", "en")
 
 
-def test_a_service_that_answered_still_reports_what_it_said():
-    """A GraphHopper 500 is the service answering. Collapsing that into
-    "not ready yet" would hide the error text the client was changed to
-    surface in the first place."""
+def test_a_refused_socket_is_the_service_not_being_up_yet():
     import requests
-    from indepensense.intents.executor import _is_service_unreachable
+    from indepensense.intents.executor import _failure_message_key
 
-    answered = requests.HTTPError("500 from GraphHopper: Cannot find point 1")
+    assert _failure_message_key(
+        requests.ConnectionError("refused")
+    ) == "routing.not_ready"
 
-    assert not _is_service_unreachable(answered)
 
-
-def test_a_refused_socket_counts_as_unreachable():
+def test_a_slow_answer_is_not_the_same_as_no_answer():
+    """These used to share a message. "Not ready yet, try in a minute" was
+    written for the boot window and is false once the service has answered
+    slowly — it sends the user away when trying again at once is right.
+    Live rather than theoretical now that every route runs with
+    `ch.disable=true` and the slower search behind it."""
     import requests
-    from indepensense.intents.executor import _is_service_unreachable
+    from indepensense.intents.executor import _failure_message_key
 
-    assert _is_service_unreachable(requests.ConnectionError("refused"))
-    assert _is_service_unreachable(requests.Timeout("no answer"))
+    assert _failure_message_key(
+        requests.Timeout("no answer")
+    ) == "routing.timed_out"
+
+
+def test_a_connect_timeout_counts_as_nobody_answering():
+    """`ConnectTimeout` subclasses both, and a connection that never
+    opened is the service being down, not the search being slow."""
+    import requests
+    from indepensense.intents.executor import _failure_message_key
+
+    assert _failure_message_key(
+        requests.ConnectTimeout("never opened")
+    ) == "routing.not_ready"
+
+
+def test_anything_else_is_a_plain_apology():
+    from indepensense.intents.executor import _failure_message_key
+
+    assert _failure_message_key(RuntimeError("bug")) == "generic.error"
+
+
+def test_the_apology_does_not_read_the_exception_aloud():
+    """It carried `{error}` and spoke it: "Sorry, something went wrong:
+    400 from GraphHopper: Cannot find point 1..." is not a sentence anyone
+    can act on, and a blind user cannot skim past it."""
+    for language in messages.LANGUAGES:
+        assert "{" not in messages.get("generic.error", language)
+
+
+def test_a_destination_the_router_refuses_is_named(make_unroutable_executor):
+    """A 4xx is the router answering, and the answer is no. Naming the
+    place is most of what makes it useful — the user learns which
+    destination they cannot walk to."""
+    answer = make_unroutable_executor.execute(
+        IntentResult(Intent.NAVIGATION_START, {"location": "Jollibee"})
+    )
+
+    assert answer == messages.get(
+        "routing.no_route", "en", destination="Jollibee",
+    )
+    assert "400" not in answer
+    assert "GraphHopper" not in answer
+
+
+def test_a_server_error_from_the_router_is_not_blamed_on_the_destination(
+    make_exploding_executor,
+):
+    """5xx is the router breaking, not the destination being unreachable.
+    Telling the user to try somewhere else would send them to re-plan a
+    journey that was fine."""
+    answer = make_exploding_executor.execute(
+        IntentResult(Intent.NAVIGATION_START, {"location": "Jollibee"})
+    )
+
+    assert answer == messages.get("generic.error", "en")
+
+
+@pytest.fixture
+def make_unroutable_executor():
+    """An executor whose router returns 400, as GraphHopper does for a
+    point it cannot attach to a walkable way."""
+    import requests
+
+    class _Refusing(MockRouter):
+        def route(self, *args, **kwargs):
+            response = requests.Response()
+            response.status_code = 400
+            raise requests.HTTPError(
+                "400 from GraphHopper: Cannot find point 1",
+                response=response,
+            )
+
+    return IntentExecutor(
+        router=_Refusing(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        monitor=NavigationMonitor(),
+    )
+
+
+@pytest.fixture
+def make_exploding_executor():
+    """An executor whose router returns 500."""
+    import requests
+
+    class _Exploding(MockRouter):
+        def route(self, *args, **kwargs):
+            response = requests.Response()
+            response.status_code = 500
+            raise requests.HTTPError("500 from GraphHopper", response=response)
+
+    return IntentExecutor(
+        router=_Exploding(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        monitor=NavigationMonitor(),
+    )
 
 
 @pytest.fixture

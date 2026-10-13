@@ -1022,9 +1022,46 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Navigation is not ready yet. Please try again in a minute.",
         "tl": "Hindi pa handa ang nabigasyon. Pakisubukan ulit mamaya.",
     },
+
+    # A read timeout is a different event from nobody answering, and used
+    # to share the message above. "Not ready yet" was written for the
+    # boot window and is false once the service has answered slowly: it
+    # sends the user away for a minute when trying again at once is the
+    # better move. Every route now runs with `ch.disable=true`, which puts
+    # GraphHopper on a slower search, so this is a live case rather than a
+    # theoretical one — and it has not yet been timed on the Pi.
+    "routing.timed_out": {
+        "en": "Working out the route took too long. Please try again.",
+        "tl": "Masyadong natagalan ang pagbuo ng ruta. Pakisubukan ulit.",
+    },
+
+    # The router answered, and the answer was no. GraphHopper returns 4xx
+    # for a point it cannot attach to a walkable way and for two points it
+    # cannot connect — both of which mean the same thing to the user, and
+    # neither of which is "something went wrong".
+    "routing.no_route": {
+        "en": (
+            "I can't find a walking route to {destination}. "
+            "Try a different destination."
+        ),
+        "tl": (
+            "Wala akong makitang rutang lakaran papuntang {destination}. "
+            "Subukan ang ibang destinasyon."
+        ),
+    },
+
+    # No placeholder, deliberately. This carried `{error}` and read the
+    # exception aloud: "Sorry, something went wrong: 400 from GraphHopper:
+    # Cannot find point 1..." is not a sentence anyone can act on, and a
+    # blind user cannot skim past it to the part that matters. The
+    # exception goes to the journal, where it is of use to somebody.
+    #
+    # Being static also means it is pre-rendered rather than synthesised,
+    # which matters for the same reason `voice.pipeline_error` is static:
+    # it is spoken when something has already failed.
     "generic.error": {
-        "en": "Sorry, something went wrong: {error}",
-        "tl": "Paumanhin, may naganap na problema: {error}",
+        "en": "Sorry, something went wrong.",
+        "tl": "Paumanhin, may naganap na problema.",
     },
     # Static, with no placeholder, and that is the point: it is spoken
     # when the voice pipeline has already failed, so it must be a clip

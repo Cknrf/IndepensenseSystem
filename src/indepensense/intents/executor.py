@@ -255,15 +255,25 @@ def _clean_ocr_text(text: str) -> str:
     return ". ".join(cleaned_paras)
 
 
-def _is_service_unreachable(exc: BaseException) -> bool:
-    """Whether a failure means "nobody answered", not "the answer was no".
+def _failure_message_key(exc: BaseException) -> str:
+    """Which message a failed handler should answer with.
 
-    Matched on the exception *type*, not on its message: `requests`
-    raises `ConnectionError` for a refused socket, a DNS failure and an
+    Matched on the exception *type*, not on its message: `requests` raises
+    `ConnectionError` for a refused socket, a DNS failure and an
     unreachable host alike, and all three mean the service is not
-    listening. An HTTP error — GraphHopper's own 500 for an unroutable
-    pair, say — is the service answering, and must keep reporting what
-    it said.
+    listening.
+
+    Three outcomes, because the user's next move differs between them:
+
+      - nobody answered — the service is down or still starting, so
+        "not ready, try in a minute".
+      - it answered too slowly — trying again at once is the right move,
+        not waiting a minute. This used to share the message above, which
+        was written for the boot window and is simply false once the
+        service has answered.
+      - anything else — a plain apology. It used to read the exception
+        aloud, which is not something a blind user can skim past to the
+        part that matters.
 
     `requests` is imported here rather than at module scope so the
     executor still imports without it, as the rest of the package does.
@@ -271,8 +281,30 @@ def _is_service_unreachable(exc: BaseException) -> bool:
     try:
         import requests
     except Exception:            # pragma: no cover - requests is a hard dep
-        return False
-    return isinstance(exc, (requests.ConnectionError, requests.Timeout))
+        return "generic.error"
+    # Order matters: `ConnectTimeout` subclasses both, and a connection
+    # that never opened is "nobody answered" rather than "too slow".
+    if isinstance(exc, requests.ConnectionError):
+        return "routing.not_ready"
+    if isinstance(exc, requests.Timeout):
+        return "routing.timed_out"
+    return "generic.error"
+
+
+def _http_status(exc: BaseException) -> int | None:
+    """The status code an HTTP error carries, or None if it carries none.
+
+    None covers both "not an HTTP error at all" and an HTTP error with no
+    response attached, which `requests` permits.
+    """
+    try:
+        import requests
+    except Exception:            # pragma: no cover - requests is a hard dep
+        return None
+    if not isinstance(exc, requests.HTTPError):
+        return None
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None)
 
 
 class IntentExecutor:
@@ -389,21 +421,22 @@ class IntentExecutor:
         try:
             response = handler(result)
         except Exception as exc:
-            if _is_service_unreachable(exc):
-                # GraphHopper and Photon are now ordered *after* this
-                # unit reports ready, so that the SD card is not being
-                # read by three processes at once during boot. The cost
-                # is a window — roughly the first minute or two — where
-                # the wearable is fully up and routing is not.
-                #
-                # Reading the raw connection error out loud told the user
-                # nothing they could act on. "Not ready yet, try again"
-                # names the one thing that helps, and is still true if
-                # the service is down for good: the user's next move is
-                # the same either way.
-                response = messages.get("routing.not_ready", self._lang)
-            else:
-                response = messages.get("generic.error", self._lang, error=exc)
+            # GraphHopper and Photon are ordered *after* this unit reports
+            # ready, so that the SD card is not being read by three
+            # processes at once during boot. The cost is a window —
+            # roughly the first minute or two — where the wearable is
+            # fully up and routing is not. `_failure_message_key` is what
+            # turns that, and the other two shapes of failure, into
+            # something the user can act on.
+            #
+            # The exception is logged rather than spoken. It is of use to
+            # whoever reads the journal and of none to the person wearing
+            # the device, who cannot skim past it.
+            print(
+                f"[intent] {result.intent.value} failed: {exc!r}",
+                file=sys.stderr, flush=True,
+            )
+            response = messages.get(_failure_message_key(exc), self._lang)
 
         # Track the last spoken response so Repeat can replay it.
         # Skip when repeating so consecutive Repeats stay stable
@@ -494,12 +527,37 @@ class IntentExecutor:
         # Which way the user is facing, so the route does not open by
         # telling them to turn around. Unknown — including whenever the
         # compass is uncalibrated — simply omits the bias.
-        route = self._router.route(
-            start,
-            destination.coordinate,
-            profile="foot",
-            heading=self._current_heading(),
-        )
+        try:
+            route = self._router.route(
+                start,
+                destination.coordinate,
+                profile="foot",
+                heading=self._current_heading(),
+            )
+        except Exception as exc:
+            # A 4xx is the router answering, and the answer is no: it
+            # could not attach one of the points to a walkable way, or
+            # could not connect the two. Both mean the same thing to the
+            # user, and "Sorry, something went wrong: 400 from
+            # GraphHopper: Cannot find point 1..." is neither of them.
+            #
+            # Caught here rather than in `execute()` because this is where
+            # the destination has a name, and naming it is most of what
+            # makes the answer useful — the user learns which place they
+            # cannot walk to, not merely that something failed.
+            #
+            # Anything else is re-raised to `execute()`, which still owns
+            # the unreachable-and-slow cases.
+            status = _http_status(exc)
+            if status is None or not 400 <= status < 500:
+                raise
+            print(
+                f"[nav] router refused {destination.name!r}: {exc}",
+                file=sys.stderr, flush=True,
+            )
+            return messages.get(
+                "routing.no_route", self._lang, destination=destination.name,
+            )
 
         # Hand the route to the navigation monitor, which is both what
         # drives the turn-by-turn cues as the user walks and the only

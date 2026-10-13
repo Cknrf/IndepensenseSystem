@@ -402,7 +402,7 @@ def test_strings_pass_through_untouched():
 def test_a_boolean_is_not_treated_as_a_number():
     """`bool` is an `int` in Python, so an unguarded isinstance check
     would turn True into "isa"."""
-    assert "True" in messages.get("generic.error", "tl", error=True)
+    assert "True" in messages.get("nav.place_not_found", "tl", location=True)
 
 
 # --- which messages can be rendered to audio ahead of time -------------------
