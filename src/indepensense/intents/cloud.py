@@ -65,6 +65,7 @@ reimplementing per provider.
 import sys
 
 from indepensense.intents.base import CloudAnswer
+from indepensense import net
 from indepensense.net import probe_reachable
 
 
@@ -114,10 +115,45 @@ class OfflineGuard:
         language: str,
         previous: tuple[str, str] | None = None,
     ) -> CloudAnswer:
-        if not self.is_online():
-            print("[cloud] offline — not sending the question", file=sys.stderr)
-            return CloudAnswer(text=None, reason="offline")
+        """Ask the provider, unless we already know it will not work.
+
+        **"offline" is only said when it is true.** The two reasons map
+        to two different sentences, and the user acts on one of them:
+        `cloud.offline` is "I need an internet connection", which a
+        blind user answers by walking somewhere else to find signal.
+        Saying that because the provider returned 429, or because a
+        classification ran past its 2.5 s budget, sends someone across a
+        road for nothing.
+
+        The breaker is shared with `MistralIntentParser` — same host —
+        so a failed classification is what usually opens it, and under
+        the current rules most of those failures are *not* connectivity
+        ones. `HostBreaker.reason` is what keeps the two apart.
+        """
+        reason = self._unavailable_reason()
+        if reason is not None:
+            print(f"[cloud] not sending the question: {reason}",
+                  file=sys.stderr)
+            return CloudAnswer(text=None, reason=reason)
         return self._inner.answer(question, language, previous)
+
+    def _unavailable_reason(self) -> str | None:
+        """`"offline"`, `"error"`, or None to go ahead."""
+        if not net.has_network_route():
+            return "offline"
+
+        breaker = net.breaker_for(self._probe_url)
+        open_because = breaker.reason
+        if open_because is not None:
+            # Only a genuine reachability failure is "offline". Backoff,
+            # a rejected key and a slow reply all mean the link is fine
+            # and something else is wrong — which is `cloud.error`.
+            return "offline" if open_because == net.UNREACHABLE else "error"
+
+        # Nothing known yet, so probe. A failure here records itself as
+        # UNREACHABLE, which is what it is: a bare HEAD that could not
+        # complete.
+        return None if self.is_online() else "offline"
 
     def close(self) -> None:
         """Release the wrapped provider's resources — its HTTP session, in
