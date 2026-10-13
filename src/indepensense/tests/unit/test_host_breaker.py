@@ -252,3 +252,50 @@ def test_reset_keeps_the_breaker_objects_drivers_already_hold():
     assert net.breaker_for("https://gpuer.example:8700/tts") is held
     assert held.allow()
     assert held.reason is None
+
+
+@pytest.mark.parametrize("status,opens", [(429, True), (401, True), (400, True),
+                                          (500, False), (503, False)])
+def test_a_bad_http_status_opens_the_breaker_on_every_endpoint(status, opens):
+    """`breaker_reason_for` keys off exception types, and a non-ok reply
+    in the voice drivers naturally reads as a `RuntimeError` — which is
+    not a `RequestException`, so the classifier passes it over. The
+    result was one policy on paper and two in practice: a 429 from
+    Mistral opened its breaker while the same 429 from the speech
+    endpoints opened nothing.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+
+    import requests
+
+    from indepensense.voice.remote import RemoteTTS
+    from indepensense.voice.remote_stt import RemoteSTT
+
+    def _reply(*a, **kw):
+        response = requests.Response()
+        response.status_code = status
+        response._content = json.dumps({"detail": "x"}).encode()
+        response.headers["Content-Type"] = "application/json"
+        return response
+
+    tmp = Path(tempfile.mkdtemp())
+    clip = tmp / "c.wav"
+    clip.write_bytes(b"RIFF0000WAVEfmt ")
+
+    drivers = [
+        (RemoteTTS("https://tts.test/tts", "tl", "07"),
+         lambda d: d.synthesize("hi", tmp / "out.wav")),
+        (RemoteSTT("https://stt.test/stt", compress=False),
+         lambda d: d.transcribe(clip, language="tl")),
+    ]
+    for driver, call in drivers:
+        net.reset_breakers()
+        with patch.object(requests.Session, "post", _reply):
+            with pytest.raises(Exception):
+                call(driver)
+        assert (not driver._breaker.allow()) is opens, (
+            f"{type(driver).__name__} disagreed with the shared policy on {status}"
+        )

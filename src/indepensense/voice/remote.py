@@ -176,6 +176,13 @@ class RemoteTTS:
         self._breaker.record_success()
 
         if not response.ok:
+            # Classified by the same policy as a raised exception, via a
+            # synthetic HTTPError. Without this the status never reached
+            # `breaker_reason_for`: a bad status raised a plain
+            # RuntimeError, which the classifier correctly ignores, so a
+            # 429 from this host opened no breaker while the same 429
+            # from Mistral did. One policy means one policy.
+            self._record_status_failure(response)
             raise RuntimeError(
                 f"remote TTS {response.status_code}: {_detail(response)}"
             )
@@ -197,6 +204,22 @@ class RemoteTTS:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
+
+    def _record_status_failure(self, response) -> None:
+        """Let a bad HTTP status open the breaker when the policy says so.
+
+        `breaker_reason_for` keys off exception types, and the natural
+        reading of a non-ok response here is a `RuntimeError` — which is
+        not a `RequestException`, so the classifier passes it over. The
+        synthetic `HTTPError` carries the status into the same rules
+        Mistral's parser uses, so 429 and 4xx open the breaker and 5xx
+        does not, on every endpoint rather than only one.
+        """
+        import requests
+
+        reason = breaker_reason_for(requests.HTTPError(response=response))
+        if reason:
+            self._breaker.record_failure(reason)
 
     def close(self) -> None:
         # Under the lock so a shutdown cannot null the session out from
