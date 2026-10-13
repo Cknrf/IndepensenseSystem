@@ -360,6 +360,29 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "dumiretso sa {street}",
     },
 
+    # A roundabout is not a turn and must not be spoken as one. The sign
+    # code for it used to fall through to "right", which at a rotonda is
+    # an instruction to walk into the circle. The exit number is the
+    # information that makes the cue worth anything — "at the roundabout"
+    # on its own tells a blind pedestrian only that one is coming.
+    "nav.step.roundabout": {
+        "en": "go around the roundabout",
+        "tl": "umikot sa rotonda",
+    },
+    "nav.step.roundabout_exit": {
+        "en": "at the roundabout, take the {exit} exit",
+        "tl": "sa rotonda, lumabas sa {exit} labasan",
+    },
+
+    # A u-turn, which is likewise neither a left nor a right. Both of the
+    # router's sided u-turn codes land here: the side is how the geometry
+    # curves, not something a pedestrian acts on, and "turn left" for a
+    # u-turn sends them down the first street they find.
+    "nav.step.uturn": {
+        "en": "turn around and go back",
+        "tl": "umikot at bumalik",
+    },
+
     # Arrival, and the deviation warning. Both were English sentences
     # built with an f-string inside `NavigationMonitor`, which the
     # announcer then read in whichever voice the user had selected — so a
@@ -1266,6 +1289,13 @@ _NAV_STEP_KEYS = {
     # A via-point on a multi-stop route, which this wearable does not yet
     # build. Nothing turns there, so it reads as carrying on.
     "waypoint": ("nav.step.straight", "nav.step.straight_onto"),
+    # Both of these name the manoeuvre and ignore the street, which is why
+    # the two slots are the same key. "turn around and go back onto Rizal
+    # Street" is not a sentence, and at a roundabout the street named is
+    # the one the *exit* leads to — which the exit number already says,
+    # more usefully and without the ambiguity about where it applies.
+    "uturn": ("nav.step.uturn", "nav.step.uturn"),
+    "roundabout": ("nav.step.roundabout", "nav.step.roundabout"),
 }
 
 
@@ -1273,6 +1303,7 @@ def nav_instruction(
     direction: str | None,
     street: str | None,
     language: str,
+    exit_number: int | None = None,
 ) -> str:
     """One route step as a phrase, for dropping into a longer sentence.
 
@@ -1297,6 +1328,13 @@ def nav_instruction(
     guard against a future sign code rather than a case that fires —
     and "keep going" is the safe thing to say to somebody walking.
     """
+    if direction == "roundabout" and exit_number:
+        return get(
+            "nav.step.roundabout_exit",
+            language,
+            exit=speak_ordinal(exit_number, language),
+        )
+
     plain, with_street = _NAV_STEP_KEYS.get(
         direction or "", _NAV_STEP_KEYS["straight"],
     )
@@ -1382,12 +1420,56 @@ def speak_number(value: int | float, language: str) -> str:
 # produce "ikadalawa" and "ikatatlo" — forms a Tagalog speaker would hear as
 # wrong. Twelve entries is also the whole domain, so there is no general
 # rule left unimplemented.
-_TL_HOUR_ORDINALS = (
-    "ikalabindalawa",                                    # index 0 == 12
+_TL_ORDINALS = (
+    None,                                                # no zeroth anything
     "ikaisa", "ikalawa", "ikatlo", "ikaapat", "ikalima",
     "ikaanim", "ikapito", "ikawalo", "ikasiyam", "ikasampu",
-    "ikalabing-isa",
+    "ikalabing-isa", "ikalabindalawa",
 )
+
+# The same words, rotated so index 0 is twelve, which is how the clock
+# code addresses them.
+_TL_HOUR_ORDINALS = (_TL_ORDINALS[12],) + _TL_ORDINALS[1:12]
+
+# English ordinals over the same span. Spelled rather than suffixed
+# ("second", not "2nd") because this goes to a speech synthesiser, and
+# "2nd" is a rendering decision espeak-ng should not have to make.
+_EN_ORDINALS = (
+    None,
+    "first", "second", "third", "fourth", "fifth",
+    "sixth", "seventh", "eighth", "ninth", "tenth",
+    "eleventh", "twelfth",
+)
+
+
+def speak_ordinal(n: int, language: str) -> str:
+    """Spell a position — "second", "ikalawang" — for 1 through 12.
+
+    Only roundabout exits need this, and a roundabout with more than
+    twelve of them does not exist. Outside the range the digits come back
+    as they are, which keeps the wearable talking.
+
+    A string rather than a number, so the caller passes it to `get()`
+    already spelled. That is the one sanctioned way around the automatic
+    `speak_number` in `get()`, for the same reason `speak_distance` takes
+    it: that helper spells *cardinals*, and "lumabas sa dalawang labasan"
+    is a different sentence from "lumabas sa ikalawang labasan". The
+    Tagalog series is a table because it is not derivable — "ikalawa"
+    and "ikatlo" drop syllables the cardinals keep.
+
+    The Tagalog form comes back already linked to the noun that follows
+    it, so the template writes "{exit} labasan" and not "{exit} na
+    labasan". The linker is not a fixed word — "ikalawang labasan" but
+    "ikaapat na labasan" — so a template cannot carry it, which is the
+    same trap `tagalog_counter` exists to avoid for cardinals.
+    """
+    if language == "tl":
+        if 1 <= n < len(_TL_ORDINALS):
+            return tagalog_ligature(_TL_ORDINALS[n])
+        return str(n)
+    if 1 <= n < len(_EN_ORDINALS):
+        return _EN_ORDINALS[n]
+    return str(n)
 
 
 def _tagalog_day_part(hour24: int) -> str:

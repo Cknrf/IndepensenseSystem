@@ -87,7 +87,13 @@ class RouteInstruction:
     #   "straight" — continue on street, no significant turn
     #   "arrive"   — final destination reached
     #   "waypoint" — intermediate via-point (rare on single-destination routes)
+    #   "roundabout" — enter a roundabout and leave by `exit_number`
+    #   "uturn"    — turn around; not a left or a right, and saying either
+    #                of those sends the user down the wrong street
     direction: str = "straight"
+    # Which exit to leave a roundabout by, 1-based, as GraphHopper counts
+    # them. None for every other kind of instruction.
+    exit_number: int | None = None
 
 
 @dataclass(frozen=True)

@@ -237,6 +237,8 @@ class NavigationCue:
     distance_m: float | None = None
     # The street the step leads onto, where the router named one.
     street_name: str | None = None
+    # Which exit to leave a roundabout by. None for every other step.
+    exit_number: int | None = None
     # Where the route ends, as the user named it, for "arrive". Carried on
     # the cue rather than read back off the monitor because `check()`
     # clears the route in the same breath as emitting this.
@@ -947,6 +949,7 @@ class NavigationMonitor:
             kind="announce",
             direction=instr.direction,
             street_name=instr.street_name,
+            exit_number=instr.exit_number,
             distance_m=max(0.0, distance),
             index=index,
         )

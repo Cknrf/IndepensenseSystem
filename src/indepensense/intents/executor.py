@@ -126,7 +126,9 @@ def _first_action_description(route: Route, language: str) -> str:
     # Find the first non-straight instruction and sum distances up to it.
     distance_to_action = 0.0
     for idx, instr in enumerate(route.instructions):
-        if instr.direction in ("left", "right", "arrive"):
+        if instr.direction in (
+            "left", "right", "arrive", "roundabout", "uturn",
+        ):
             if instr.direction == "arrive":
                 if distance_to_action == 0.0:
                     return messages.get("nav.already_at_destination", language)
@@ -135,9 +137,10 @@ def _first_action_description(route: Route, language: str) -> str:
                     language,
                     distance=messages.speak_distance(distance_to_action, language),
                 )
-            # left or right
+            # A turn, a roundabout or a u-turn: something to describe.
             step = messages.nav_instruction(
                 instr.direction, instr.street_name, language,
+                exit_number=instr.exit_number,
             )
             if distance_to_action == 0.0:
                 return messages.get(
@@ -156,6 +159,7 @@ def _first_action_description(route: Route, language: str) -> str:
     first = route.instructions[0]
     return messages.nav_instruction(
         first.direction, first.street_name, language,
+        exit_number=first.exit_number,
     )
 
 

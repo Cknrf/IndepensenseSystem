@@ -2520,6 +2520,7 @@ The comparisons are inclusive, so a threshold names the percentage
                 distance=messages.speak_distance(cue.distance_m or 0.0, language),
                 instruction=messages.nav_instruction(
                     cue.direction, cue.street_name, language,
+                    exit_number=cue.exit_number,
                 ),
             )
         elif cue.kind == "turn_now":

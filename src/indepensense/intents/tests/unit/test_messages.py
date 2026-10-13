@@ -453,3 +453,93 @@ def test_the_boot_clips_are_static():
     placeholder values available to fill in."""
     from indepensense.app import _BOOT_CLIPS
     assert set(_BOOT_CLIPS) <= set(messages.static_keys())
+
+
+# --- ordinals ----------------------------------------------------------------
+#
+# Roundabout exits are the only thing that needs a position rather than a
+# count, and the two are different words: "lumabas sa dalawang labasan" is
+# "exit at two exits", not "take the second exit".
+
+
+def test_english_ordinals_are_spelled_not_suffixed():
+    """This goes to a speech synthesiser, so "2nd" is a rendering decision
+    espeak-ng should not have to make."""
+    assert messages.speak_ordinal(2, "en") == "second"
+    assert messages.speak_ordinal(12, "en") == "twelfth"
+
+
+def test_tagalog_ordinals_are_not_derived_from_the_cardinals():
+    """"ikalawa" and "ikatlo" drop syllables "dalawa" and "tatlo" keep, so
+    "ika-" plus the cardinal would produce forms a speaker hears as wrong."""
+    assert messages.speak_ordinal(2, "tl").startswith("ikalawa")
+    assert messages.speak_ordinal(3, "tl").startswith("ikatlo")
+    assert "ikadalawa" not in messages.speak_ordinal(2, "tl")
+
+
+@pytest.mark.parametrize("n,expected", [
+    (1, "ikaisang"),        # vowel -> -ng
+    (2, "ikalawang"),
+    (4, "ikaapat na"),      # consonant -> separate word
+    (6, "ikaanim na"),
+    (10, "ikasampung"),
+])
+def test_tagalog_ordinals_arrive_linked_to_their_noun(n, expected):
+    """The linker is not a fixed word, so the template cannot carry it —
+    the same trap `tagalog_counter` exists to avoid for cardinals."""
+    assert messages.speak_ordinal(n, "tl") == expected
+
+
+def test_an_ordinal_out_of_range_still_says_something():
+    assert messages.speak_ordinal(40, "en") == "40"
+    assert messages.speak_ordinal(40, "tl") == "40"
+
+
+# --- route steps as phrases --------------------------------------------------
+
+def test_a_step_names_the_street_when_the_router_gave_one():
+    assert messages.nav_instruction("left", "Rizal Street", "en") == (
+        "turn left onto Rizal Street"
+    )
+    assert "Rizal Street" in messages.nav_instruction("left", "Rizal Street", "tl")
+
+
+def test_a_step_without_a_street_drops_the_clause():
+    """GraphHopper omits the name for unnamed ways, which here is most
+    footpaths and the last hundred metres of most residential routes."""
+    assert messages.nav_instruction("left", None, "en") == "turn left"
+    assert messages.nav_instruction("left", "   ", "en") == "turn left"
+
+
+def test_a_roundabout_is_spoken_as_a_roundabout_in_both_languages():
+    for language in messages.LANGUAGES:
+        phrase = messages.nav_instruction(
+            "roundabout", "Rizal Street", language, exit_number=2,
+        )
+        # Never a plain turn, which is what the wrong sign mapping said.
+        assert messages.get("nav.step.right", language) not in phrase
+        assert messages.speak_ordinal(2, language) in phrase
+
+
+def test_a_roundabout_without_an_exit_number_still_says_roundabout():
+    assert messages.nav_instruction("roundabout", None, "en") == (
+        "go around the roundabout"
+    )
+
+
+def test_a_u_turn_ignores_the_street():
+    """"turn around and go back onto Rizal Street" is not a sentence."""
+    assert messages.nav_instruction("uturn", "Rizal Street", "en") == (
+        "turn around and go back"
+    )
+
+
+def test_an_unknown_direction_says_keep_going():
+    """A guard against a future sign code rather than a case that fires —
+    and "keep going" is the safe thing to say to somebody walking."""
+    assert messages.nav_instruction("somersault", None, "en") == (
+        messages.get("nav.step.straight", "en")
+    )
+    assert messages.nav_instruction(None, None, "en") == (
+        messages.get("nav.step.straight", "en")
+    )

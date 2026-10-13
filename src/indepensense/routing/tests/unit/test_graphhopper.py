@@ -4,6 +4,7 @@ from indepensense.routing import graphhopper
 from indepensense.routing.base import Coordinate
 from indepensense.routing.graphhopper import (
     GraphHopperRouter,
+    _direction_from_sign,
     parse_graphhopper_response,
 )
 
@@ -263,3 +264,87 @@ def test_a_heading_of_zero_still_disables_speed_mode(capture):
     )
 
     assert _params(capture)["ch.disable"] == "true"
+
+
+# --- sign codes --------------------------------------------------------------
+#
+# Checked against `Instruction.java` in the GraphHopper 11.0 source that
+# `docs/graphhopper.md` pins. Three constants were documented wrong here
+# and two of those were acted on.
+
+
+def test_turns_collapse_to_a_side():
+    """Slight, normal and sharp are one word. The split comes from road
+    geometry and is not reliably what a pedestrian sees at a junction."""
+    assert [_direction_from_sign(s) for s in (-3, -2, -1)] == ["left"] * 3
+    assert [_direction_from_sign(s) for s in (1, 2, 3)] == ["right"] * 3
+
+
+def test_a_roundabout_is_not_a_right_turn():
+    """The bug. Sign 6 is USE_ROUNDABOUT, was documented as U_TURN_UNKNOWN,
+    and fell through the old `sign > 0` catch-all to "right" — which at a
+    rotonda is an instruction to walk into the circle."""
+    assert _direction_from_sign(6) == "roundabout"
+
+
+def test_a_u_turn_is_not_a_side():
+    """-8 and 8 are U_TURN_LEFT and U_TURN_RIGHT, and -98 is the unsided
+    one. The side is how the geometry curves, not something the user acts
+    on; "turn left" sends them down the first street they find."""
+    assert _direction_from_sign(-8) == "uturn"
+    assert _direction_from_sign(8) == "uturn"
+    assert _direction_from_sign(-98) == "uturn"
+
+
+def test_keep_left_and_right_are_sides():
+    """-7 and 7 are the fork hints, which a side describes well enough."""
+    assert _direction_from_sign(-7) == "left"
+    assert _direction_from_sign(7) == "right"
+
+
+def test_the_router_declining_to_say_is_not_a_left():
+    """-99 is UNKNOWN. It used to be read as a left turn because it is
+    negative."""
+    assert _direction_from_sign(-99) == "straight"
+
+
+def test_finish_and_via_keep_their_own_kinds():
+    assert _direction_from_sign(4) == "arrive"
+    assert _direction_from_sign(5) == "waypoint"
+
+
+def test_an_unlisted_sign_falls_back_to_the_routers_own_convention():
+    """Only reachable if GraphHopper gains a code this table lacks. A user
+    standing at a junction has to do something, so a side is guessed."""
+    assert _direction_from_sign(-42) == "left"
+    assert _direction_from_sign(42) == "right"
+
+
+def test_a_roundabout_keeps_its_exit_number():
+    payload = {"paths": [{
+        "distance": 120.0, "time": 90000,
+        "points": {"coordinates": [[121.0, 14.0], [121.001, 14.001]]},
+        "instructions": [
+            {"text": "At roundabout, take exit 2 onto Rizal Street",
+             "distance": 120.0, "sign": 6, "exit_number": 2,
+             "street_name": "Rizal Street", "interval": [0, 1]},
+        ],
+    }]}
+
+    route = parse_graphhopper_response(payload)
+
+    assert route.instructions[0].direction == "roundabout"
+    assert route.instructions[0].exit_number == 2
+
+
+def test_an_ordinary_turn_has_no_exit_number():
+    payload = {"paths": [{
+        "distance": 120.0, "time": 90000,
+        "points": {"coordinates": [[121.0, 14.0], [121.001, 14.001]]},
+        "instructions": [
+            {"text": "Turn left onto Rizal Street", "distance": 120.0,
+             "sign": -2, "street_name": "Rizal Street", "interval": [0, 1]},
+        ],
+    }]}
+
+    assert parse_graphhopper_response(payload).instructions[0].exit_number is None

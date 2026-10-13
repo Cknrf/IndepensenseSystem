@@ -10,32 +10,60 @@ from indepensense.routing.base import Coordinate, Route, RouteInstruction
 _DEFAULT_TIMEOUT_S = 10.0
 
 
+# GraphHopper's `sign` codes, from `Instruction.java` in the 11.0 source
+# that `docs/graphhopper.md` pins. Three of these were previously
+# documented wrong and two of those were acted on: -8 is U_TURN_LEFT (not
+# KEEP_LEFT), -7 is KEEP_LEFT (not TURN_SHARP_LEFT), and 6 is
+# USE_ROUNDABOUT (not U_TURN_UNKNOWN).
+#
+# 6 was the one that mattered. It fell through to the old `sign > 0`
+# catch-all and came out as "turn right", which at a rotonda — and they
+# are common here — is an instruction to walk into the circle. The error
+# got worse rather than better when cue wording moved into `messages.py`:
+# the router's own text used to carry the truth alongside the wrong
+# direction, and now the direction is all there is.
+#
+# The collapse itself is deliberate. Slight, sharp and normal all become
+# one word, because GraphHopper's split comes from road geometry and is
+# not reliably the distinction a pedestrian sees at a real Batangas
+# intersection, and because the cue at the junction is two words by
+# design. What must not collapse is a turn into a different *kind* of
+# manoeuvre, which is exactly what the roundabout and u-turn codes are.
+_SIGN_DIRECTIONS = {
+    -99: "straight",     # UNKNOWN — the router declining to say
+    -98: "uturn",        # U_TURN_UNKNOWN
+    -8:  "uturn",        # U_TURN_LEFT
+    -7:  "left",         # KEEP_LEFT — a fork, close enough to a left
+    -6:  "straight",     # LEAVE_ROUNDABOUT — reserved, never emitted
+    -3:  "left",         # TURN_SHARP_LEFT
+    -2:  "left",         # TURN_LEFT
+    -1:  "left",         # TURN_SLIGHT_LEFT
+    0:   "straight",     # CONTINUE_ON_STREET
+    1:   "right",        # TURN_SLIGHT_RIGHT
+    2:   "right",        # TURN_RIGHT
+    3:   "right",        # TURN_SHARP_RIGHT
+    4:   "arrive",       # FINISH
+    5:   "waypoint",     # REACHED_VIA
+    6:   "roundabout",   # USE_ROUNDABOUT
+    7:   "right",        # KEEP_RIGHT
+    8:   "uturn",        # U_TURN_RIGHT
+}
+
+
 def _direction_from_sign(sign: int) -> str:
     """Map GraphHopper's turn `sign` code to our simplified direction.
 
-    GraphHopper's codes (v11):
-      -8 KEEP_LEFT, -7 TURN_SHARP_LEFT, -3 TURN_SHARP_LEFT (older),
-      -2 TURN_LEFT, -1 TURN_SLIGHT_LEFT, 0 CONTINUE_ON_STREET,
-      1 TURN_SLIGHT_RIGHT, 2 TURN_RIGHT, 3 TURN_SHARP_RIGHT,
-      4 FINISH, 5 REACHED_VIA, 6 U_TURN_UNKNOWN, 7 KEEP_RIGHT.
-
-    We collapse the granularity to what is worth saying out loud: any
-    left turn → "left", any right → "right", continue-on-street →
-    "straight", finish → "arrive", via-point → "waypoint". The cue at the
-    junction is two words by design, and "take the slight left" is both
-    longer and less certain — GraphHopper's slight/sharp split comes from
-    road geometry, which at a real Batangas intersection is not reliably
-    the distinction a pedestrian sees.
+    An unlisted code keeps GraphHopper's own convention that negative is
+    leftward and positive rightward. That is a guess, and it is only
+    reachable if the router gains a code this table does not know — the
+    public-transport signs (101-103) being the live example, which the
+    foot profile never emits. Guessing a side beats saying nothing for a
+    user who is walking and has to do *something* at the junction.
     """
-    if sign == 4:
-        return "arrive"
-    if sign == 5:
-        return "waypoint"
-    if sign == 0:
-        return "straight"
-    if sign < 0:
-        return "left"
-    return "right"
+    direction = _SIGN_DIRECTIONS.get(sign)
+    if direction is not None:
+        return direction
+    return "left" if sign < 0 else "right"
 
 
 def parse_graphhopper_response(payload: dict[str, Any]) -> Route:
@@ -74,6 +102,8 @@ def parse_graphhopper_response(payload: dict[str, Any]) -> Route:
             location=location,
             point_index=point_index,
             direction=_direction_from_sign(step.get("sign", 0)),
+            # Only roundabout instructions carry this.
+            exit_number=step.get("exit_number"),
         ))
 
     return Route(
