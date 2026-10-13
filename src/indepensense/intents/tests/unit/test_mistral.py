@@ -304,3 +304,56 @@ def test_context_does_not_disturb_the_system_prompt(answerer, monkeypatch):
     system = sent["json"]["messages"][0]
     assert system["role"] == "system"
     assert "Filipino" in system["content"]
+
+
+# --- the answerer and the breaker ---------------------------------------------
+
+def test_a_timed_out_question_spares_the_next_one(answerer, monkeypatch):
+    """Without this a 10 s timeout cost the user another full 10 s on the
+    question after it, rediscovering the same dead endpoint."""
+    from indepensense import net
+
+    net.reset_breakers()
+    calls = []
+
+    def _timeout(self, *args, **kwargs):
+        calls.append(1)
+        raise requests.ReadTimeout("past the read budget")
+
+    monkeypatch.setattr(requests.Session, "post", _timeout)
+
+    assert answerer.answer("how tall is Mount Apo", "en").reason == "error"
+    assert answerer.answer("and the second tallest", "en").reason == "error"
+
+    assert len(calls) == 1, "the second question should not have been sent"
+
+
+def test_a_server_error_still_lets_the_next_question_through(answerer, monkeypatch):
+    """5xx is answered fast and plausibly transient — the next worker may
+    be healthy, and one wasted round trip beats 30 s of refusing."""
+    from indepensense import net
+
+    net.reset_breakers()
+    calls = []
+
+    def _server_error(self, *args, **kwargs):
+        calls.append(1)
+        return _response(status_code=500, payload={"error": "boom"})
+
+    monkeypatch.setattr(requests.Session, "post", _server_error)
+
+    answerer.answer("first", "en")
+    answerer.answer("second", "en")
+
+    assert len(calls) == 2, "a 5xx must not disable the answerer"
+
+
+def test_the_answerer_shares_the_parsers_breaker():
+    """Same host, so a failed classification already tells the answerer
+    the provider is unreachable — it should not rediscover it."""
+    from indepensense import net
+    from indepensense.config import CLOUD_LLM_URL
+
+    answerer = MistralAnswerer(api_key="k", model="m", url=CLOUD_LLM_URL)
+
+    assert answerer._breaker is net.breaker_for(CLOUD_LLM_URL)
