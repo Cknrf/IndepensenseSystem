@@ -49,10 +49,14 @@ class _StaticGPS:
 
 
 def _make_executor(fix_quality: int = 1) -> IntentExecutor:
+    # A real monitor, because it is where navigation state lives — the
+    # executor keeps no copy. Pure logic with no dependencies, so this
+    # costs nothing to construct.
     return IntentExecutor(
         router=MockRouter(),
         geocoder=MockGeocoder(),
         gps=_StaticGPS(fix_quality=fix_quality),
+        monitor=NavigationMonitor(),
     )
 
 
@@ -585,6 +589,7 @@ def _place_executor(places, geocoder=None, confirmer=None):
         gps=_StaticGPS(lat=14.5824, lon=120.9760),
         places=places,
         confirmer=confirmer,
+        monitor=NavigationMonitor(),
     )
 
 
@@ -707,7 +712,9 @@ def test_a_saved_label_beats_a_geocoder_hit_of_the_same_name(places):
 
     # MockGeocoder would have echoed the query with its own fixed
     # coordinate; reaching the saved one means the lookup won.
-    assert executor._current_route.points[-1] == Coordinate(lat=14.5830, lon=120.9770)
+    assert executor._monitor.route().points[-1] == Coordinate(
+        lat=14.5830, lon=120.9770,
+    )
 
 
 def test_navigation_still_works_with_no_places_store():
@@ -1661,3 +1668,71 @@ def make_unreachable_executor():
     return IntentExecutor(
         router=_Refusing(), geocoder=MockGeocoder(), gps=_StaticGPS(),
     )
+
+
+# --- one record of whether navigation is running -----------------------------
+#
+# The executor used to keep `_current_route` alongside the monitor and
+# answer `navigation.stop` from it. Nothing cleared that copy when a route
+# ended on its own, so after arrival the two disagreed: "cancel
+# navigation" said it had cancelled something, and "how much further",
+# which asks the monitor, correctly said there was nothing to cancel.
+
+
+def _arrived_executor():
+    """An executor whose route has just ended the way a walk normally ends
+    — the monitor clearing itself on arrival, not a user cancelling."""
+    monitor = NavigationMonitor()
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        monitor=monitor,
+    )
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+    assert monitor.is_active()
+
+    destination = monitor.route().points[-1]
+    assert any(c.kind == "arrive" for c in monitor.check(destination))
+    assert not monitor.is_active()
+    return executor
+
+
+def test_cancelling_after_arrival_says_there_was_nothing_to_cancel():
+    executor = _arrived_executor()
+
+    response = executor.execute(IntentResult(Intent.NAVIGATION_STOP))
+
+    assert response == messages.get("nav.none_active", "en")
+
+
+def test_stop_and_progress_agree_after_arrival():
+    """The disagreement itself, asserted directly: two intents asked in the
+    same breath must not give the user opposite accounts of the same
+    moment."""
+    executor = _arrived_executor()
+
+    stop = executor.execute(IntentResult(Intent.NAVIGATION_STOP))
+    progress = executor.execute(IntentResult(Intent.NAVIGATION_PROGRESS))
+
+    assert stop == progress == messages.get("nav.none_active", "en")
+
+
+def test_cancelling_a_route_that_is_running_still_cancels_it():
+    monitor = NavigationMonitor()
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(lat=14.5824, lon=120.9760),
+        monitor=monitor,
+    )
+    executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+    response = executor.execute(IntentResult(Intent.NAVIGATION_STOP))
+
+    assert response == messages.get("nav.cancelled", "en")
+    assert not monitor.is_active()

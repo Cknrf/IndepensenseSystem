@@ -300,6 +300,11 @@ class IntentExecutor:
         # been spoken yet at that point. `app.py` sets a flag here and
         # acts on it once playback finishes; tests pass a recorder.
         shutdown: Callable[[], None] | None = None,
+        # Tracks progress along the route, and is the single answer to
+        # "is navigation running" — `navigation.stop` and
+        # `navigation.progress` both ask it. None means the executor
+        # cannot track navigation at all, and both of those say so.
+        # `app.py` always passes one.
         # Places the user named themselves. None disables saving and
         # falls back to geocoding every destination, which is what the
         # wearable did before this existed.
@@ -359,8 +364,6 @@ class IntentExecutor:
         self._cloud_context_ttl_s = cloud_context_ttl_s
         self._geocode_candidate_limit = geocode_candidate_limit
         self._reports_delivery = reports_delivery
-
-        self._current_route: Route | None = None
 
         # Last spoken response from any intent — repeated on demand
         # by NAVIGATION_REPEAT. We update this on every execute() call
@@ -497,10 +500,10 @@ class IntentExecutor:
             profile="foot",
             heading=self._current_heading(),
         )
-        self._current_route = route
 
-        # Hand the route to the navigation monitor so the app can start
-        # firing turn-by-turn audio + haptic cues as the user walks.
+        # Hand the route to the navigation monitor, which is both what
+        # drives the turn-by-turn cues as the user walks and the only
+        # record that navigation is running at all.
         if self._monitor is not None:
             self._monitor.set_route(route, destination.name)
 
@@ -513,11 +516,19 @@ class IntentExecutor:
         )
 
     def _handle_navigation_stop(self, result: IntentResult) -> str:
-        if self._current_route is None:
+        """Stop tracking, if anything is being tracked.
+
+        Asks the monitor, which is the only thing that knows. This used to
+        keep its own `_current_route` alongside it and answer from that —
+        and the two disagreed the moment a route ended on its own, because
+        arrival clears the monitor and nothing cleared the copy. A user who
+        had just been told they had arrived could say "cancel navigation"
+        and be told "navigation cancelled", while asking how much further
+        in the same breath correctly answered that there was none.
+        """
+        if self._monitor is None or not self._monitor.is_active():
             return messages.get("nav.none_active", self._lang)
-        self._current_route = None
-        if self._monitor is not None:
-            self._monitor.clear()
+        self._monitor.clear()
         return messages.get("nav.cancelled", self._lang)
 
     def _handle_navigation_repeat(self, result: IntentResult) -> str:
