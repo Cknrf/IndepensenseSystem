@@ -45,12 +45,22 @@ class _Executor:
 
 
 class _TTS:
+    """A `TTSEngine` that writes a file, because the contract says to.
+
+    It used to write nothing and still passed: the pipeline synthesised
+    straight to a throwaway path and `play` was stubbed out, so nobody
+    read the result back. The reply now goes through the clip store,
+    which renames the rendered file into place — and a renderer that
+    produced no file was never a legal engine, it was just never caught.
+    """
+
     def __init__(self, on_synthesize=None):
         self.on_synthesize = on_synthesize
 
     def synthesize(self, text, path, language="en"):
         if self.on_synthesize:
             self.on_synthesize()
+        path.write_bytes(b"RIFF....WAVE")
 
 
 @pytest.fixture

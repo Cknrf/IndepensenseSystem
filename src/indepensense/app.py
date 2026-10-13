@@ -1099,6 +1099,12 @@ class App:
             supported=SUPPORTED_LANGUAGES,
             state_path=LANGUAGE_STATE_PATH,
         )
+        # Computed once rather than per utterance — ~122 hashes. Held on
+        # the app as well as handed to the announcer because the voice
+        # pipeline needs the same answer: both resolve *finished text*,
+        # where a fixed sentence and a filled-in template are
+        # indistinguishable without it. See `_static_clip_names`.
+        self._static_names = _static_clip_names(self.language.supported)
 
         # Voice concurrency: one voice thread at a time; a second PTT
         # press while _voice_active is set is ignored. `_voice_cancel`
@@ -1341,8 +1347,7 @@ class App:
         # until then the announcer replays rendered clips and holds
         # anything that would need synthesis.
         self.announcer = Announcer(
-            None, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR,
-            _static_clip_names(self.language.supported),
+            None, MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR, self._static_names,
         )
         self.announcer.start()
 
@@ -3447,8 +3452,10 @@ The comparisons are inclusive, so a threshold names the percentage
 
         try:
             timestamp = datetime.now().strftime("%B-%d-%Y_%H-%M-%S")
+            # Only the recording is written here now. The reply lives in
+            # the clip store, named by a hash of its text, so a sentence
+            # said twice is read from disk rather than synthesised twice.
             input_path = VOICE_TEST_DIR / f"{timestamp}_command.wav"
-            response_path = VOICE_TEST_DIR / f"{timestamp}_response.wav"
 
             print("[PTT] Recording (press PTT again to stop)...", flush=True)
             duration = record_until_button(
@@ -3620,14 +3627,14 @@ The comparisons are inclusive, so a threshold names the percentage
                     return
 
                 _t0 = time.monotonic()
-                self.tts.synthesize(
-                    response, response_path, language=self.language.current,
+                response_clip = self._clip_for_text(
+                    response, self.language.current,
                 )
                 stages.append(("tts", time.monotonic() - _t0))
             if self._voice_cancel.is_set():
                 return
             _t0 = time.monotonic()
-            play(response_path)
+            play(response_clip)
             stages.append(("play", time.monotonic() - _t0))
 
             # The goodbye has now been heard, so it is safe to cut power.
@@ -3954,6 +3961,55 @@ The comparisons are inclusive, so a threshold names the percentage
         except Exception as exc:
             print(f"[clips] could not speak {key!r}: {exc}",
                   file=sys.stderr, flush=True)
+
+    def _clip_for_text(self, text: str, language: str) -> Path:
+        """The clip for finished text, synthesising it if there isn't one.
+
+        The twin of `_play_clip` for callers holding *text* rather than a
+        message key — the voice pipeline's spoken reply, where the
+        sentence came out of the executor and may be a filled-in template
+        no key can name.
+
+        **Raises** if every engine fails, unlike `_play_clip`. Its callers
+        are best-effort cues; this one is the answer to something the user
+        asked, so a failure belongs to the pipeline's error handling
+        rather than being swallowed into silence.
+
+        Two things this buys over calling `self.tts.synthesize` directly,
+        which is what the pipeline used to do:
+
+        **A local fallback.** `self.tts` routes Tagalog to `RemoteTTS`
+        when `REMOTE_TTS_ENABLED` is set, and a `TTSEngine` deliberately
+        has no fallback inside it — the fallback lives here, where the
+        filename is chosen, because a clip rendered locally must be filed
+        under the *local* voice or the next lookup serves it in place of
+        the remote one forever. A direct call therefore had no local path
+        at all: every Tagalog reply died with the endpoint and reached the
+        user as "something went wrong".
+
+        **The cache.** Replies repeat far more than they look like they
+        do — "There is nothing to repeat yet", every confirmation, every
+        error. Each one was a fresh synthesis, while the *same* sentence
+        replayed through the repeat button hit the clip store, because
+        that path goes through the announcer.
+        """
+        path = clips.find_any(text, language, _voice_chain(language),
+                              MESSAGE_AUDIO_DIR, CLIP_CACHE_DIR)
+        if path is not None:
+            return path
+        # Static-ness is a property of the sentence, not of the engine,
+        # so any voice in the chain answering is enough. Same test the
+        # announcer makes, and for the same reason: by the time text is
+        # finished, a fixed message and a filled template look alike.
+        chain = _voice_chain(language)
+        static = any(
+            clips.filename(text, language, voice) in self._static_names
+            for voice in chain
+        )
+        return clips.render_first(
+            self._tts_attempts(language), text, language,
+            MESSAGE_AUDIO_DIR if static else CLIP_CACHE_DIR,
+        )
 
     def _play_startup_notice(self) -> None:
         """Play the startup message. Never raises.
