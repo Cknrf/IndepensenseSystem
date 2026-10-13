@@ -103,8 +103,11 @@ def test_announce_fires_within_threshold():
 
     announce = [c for c in cues if c.kind == "announce"]
     assert len(announce) == 1
-    assert "meters" in announce[0].text
-    assert "Turn left" in announce[0].text
+    # Data, not prose: the monitor does not know what language the user
+    # is being spoken to in, and must not decide the wording.
+    assert announce[0].direction == "left"
+    assert announce[0].street_name == "Second Avenue"
+    assert announce[0].distance_m == pytest.approx(78.0, abs=5.0)
 
 
 def test_announce_does_not_repeat():
@@ -289,7 +292,9 @@ def test_arrive_cue_names_destination():
     cues = m.check(_END)
     arrive_cues = [c for c in cues if c.kind == "arrive"]
     assert len(arrive_cues) >= 1
-    assert "Home" in arrive_cues[0].text
+    # Carried on the cue rather than read back off the monitor, which
+    # clears the route in the same breath as emitting this.
+    assert arrive_cues[0].destination == "Home"
 
 
 # --- direction mapping guard ------------------------------------------------
@@ -412,7 +417,7 @@ def test_off_route_warning_fires_after_duration():
     cues = m.check(_OFF_ROUTE_44M, now=16.0)
     off_route_cues = [c for c in cues if c.kind == "off_route"]
     assert len(off_route_cues) == 1
-    assert "off the planned route" in off_route_cues[0].text.lower()
+    assert off_route_cues[0].direction is None   # the cue carries no data
 
 
 def test_off_route_warning_latches_after_firing():
@@ -635,7 +640,7 @@ def test_carrying_straight_on_is_reported():
     assert [c.kind for c in cues].count("missed_turn") == 1
     missed = next(c for c in cues if c.kind == "missed_turn")
     assert missed.direction == "left"
-    assert "B" in missed.text
+    assert missed.street_name == "B"
 
 
 def test_actually_turning_is_not_reported():
@@ -841,9 +846,8 @@ def test_a_deferred_announce_is_re_measured_not_replayed():
     near = [c for c in m.check(_metres_north_of(_MIDPOINT, -40.0))
             if c.kind == "announce"][0]
 
-    assert far.text != near.text
-    assert "90 meters" in far.text
-    assert "40 meters" in near.text
+    assert far.distance_m == pytest.approx(90.0, abs=2.0)
+    assert near.distance_m == pytest.approx(40.0, abs=2.0)
 
 
 def test_a_deferred_turn_now_stops_being_offered_once_the_turn_is_behind():

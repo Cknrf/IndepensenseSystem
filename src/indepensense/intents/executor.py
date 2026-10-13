@@ -136,21 +136,27 @@ def _first_action_description(route: Route, language: str) -> str:
                     distance=messages.speak_distance(distance_to_action, language),
                 )
             # left or right
+            step = messages.nav_instruction(
+                instr.direction, instr.street_name, language,
+            )
             if distance_to_action == 0.0:
                 return messages.get(
-                    "nav.turn_immediately", language, instruction=instr.text,
+                    "nav.turn_immediately", language, instruction=step,
                 )
             return messages.get(
                 "nav.turn_in_distance",
                 language,
                 distance=messages.speak_distance(distance_to_action, language),
-                instruction=instr.text,
+                instruction=step,
             )
         distance_to_action += instr.distance_m
 
-    # Fell through — no turns found at all. Return the first instruction
-    # text as a fallback ("Head north on Elm Street").
-    return route.instructions[0].text
+    # Fell through — no turns found at all, and no arrival either. Describe
+    # the first step instead ("continue onto Elm Street").
+    first = route.instructions[0]
+    return messages.nav_instruction(
+        first.direction, first.street_name, language,
+    )
 
 
 # --- vision scene-description helpers ---------------------------------------

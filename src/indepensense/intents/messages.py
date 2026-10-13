@@ -318,6 +318,71 @@ MESSAGES: dict[str, dict[str, str]] = {
         "tl": "Sa {distance}, {instruction}.",
     },
 
+    # The route step as a phrase to drop into a longer sentence — the
+    # `{instruction}` the three templates around here take, and the one
+    # `nav.missed_turn` takes below.
+    #
+    # These exist because that slot used to be filled with GraphHopper's
+    # own instruction text, which is English: no `locale` is sent with the
+    # route request, and the router has no reason to guess. So a Tagalog
+    # user heard "Sa isang daang metro, Turn left onto Rizal Street" —
+    # the frame translated and the content not. Built here from the
+    # direction and the street name instead, which are data rather than
+    # prose and mean the same thing in both languages.
+    #
+    # Lower case and no full stop, unlike `nav.turn_left` below: these are
+    # fragments, and that one is a whole utterance spoken on its own.
+    # Keeping them separate also lets Tagalog use the bare verb here and
+    # the polite imperative there, which is the difference between
+    # reporting a turn and asking for one.
+    "nav.step.left": {
+        "en": "turn left",
+        "tl": "kumaliwa",
+    },
+    "nav.step.right": {
+        "en": "turn right",
+        "tl": "kumanan",
+    },
+    "nav.step.straight": {
+        "en": "continue straight ahead",
+        "tl": "dumiretso lang",
+    },
+    "nav.step.left_onto": {
+        "en": "turn left onto {street}",
+        "tl": "kumaliwa sa {street}",
+    },
+    "nav.step.right_onto": {
+        "en": "turn right onto {street}",
+        "tl": "kumanan sa {street}",
+    },
+    "nav.step.straight_onto": {
+        "en": "continue onto {street}",
+        "tl": "dumiretso sa {street}",
+    },
+
+    # Arrival, and the deviation warning. Both were English sentences
+    # built with an f-string inside `NavigationMonitor`, which the
+    # announcer then read in whichever voice the user had selected — so a
+    # Tagalog user got English words in a Tagalog voice, which is worse
+    # than either. The monitor returns data now and these say it.
+    "nav.arrived": {
+        "en": "You have arrived at {destination}.",
+        "tl": "Nakarating ka na sa {destination}.",
+    },
+    # Says what the user can do, because the wearable cannot reroute and
+    # will not pretend otherwise. Continuing is a real option: the route
+    # was advice, and they may know a way the map does not.
+    "nav.off_route": {
+        "en": (
+            "You are off the planned route. You can continue trying to "
+            "reach the destination, or say cancel navigation to stop."
+        ),
+        "tl": (
+            "Nakalihis ka sa ruta. Maaari mong ipagpatuloy ang pagpunta "
+            "sa destinasyon, o sabihin ang cancel navigation para huminto."
+        ),
+    },
+
     # Turn verification. Names the turn rather than issuing an order: the
     # wearable cannot reroute, so "turn around" would be advice it has no
     # basis for — the user may be mid-crossing, or may have a reason. What
@@ -1192,6 +1257,53 @@ _KILOMETRE_M = 1000
 # for a walk; "513.6 kilometers" is noise on a number whose only job is to
 # tell the user this destination is absurd.
 _WHOLE_KILOMETRE_M = 10_000
+
+
+_NAV_STEP_KEYS = {
+    "left": ("nav.step.left", "nav.step.left_onto"),
+    "right": ("nav.step.right", "nav.step.right_onto"),
+    "straight": ("nav.step.straight", "nav.step.straight_onto"),
+    # A via-point on a multi-stop route, which this wearable does not yet
+    # build. Nothing turns there, so it reads as carrying on.
+    "waypoint": ("nav.step.straight", "nav.step.straight_onto"),
+}
+
+
+def nav_instruction(
+    direction: str | None,
+    street: str | None,
+    language: str,
+) -> str:
+    """One route step as a phrase, for dropping into a longer sentence.
+
+    "turn left onto Rizal Street", or "kumaliwa sa Rizal Street". The
+    caller supplies the direction and street name from `RouteInstruction`
+    and gets back something already in the user's language — which is the
+    whole point, because the obvious alternative is the router's own
+    `text` field, and that is English whatever the user speaks.
+
+    A street name the router did not give drops the clause rather than
+    leaving a gap. GraphHopper omits it for unnamed ways, which in
+    Batangas is a great many of them — footpaths, alleys, the last
+    hundred metres of most residential routes.
+
+    The street name itself stays as the map spells it. Translating a
+    proper noun would be wrong, and the TTS voice reading an English
+    street name inside a Tagalog sentence is what a Filipino speaker
+    saying that address does anyway.
+
+    An unknown direction falls through to carrying straight on. The
+    router's taxonomy is fixed (`_direction_from_sign`), so this is a
+    guard against a future sign code rather than a case that fires —
+    and "keep going" is the safe thing to say to somebody walking.
+    """
+    plain, with_street = _NAV_STEP_KEYS.get(
+        direction or "", _NAV_STEP_KEYS["straight"],
+    )
+    street = (street or "").strip()
+    if not street:
+        return get(plain, language)
+    return get(with_street, language, street=street)
 
 
 def speak_distance(metres: float, language: str) -> str:

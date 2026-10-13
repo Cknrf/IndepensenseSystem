@@ -18,6 +18,7 @@ import pytest
 import indepensense.app as app_module
 from indepensense.app import Announcer
 from indepensense.app_mock import MockApp
+from indepensense.intents import messages
 from indepensense.navigation.monitor import NavigationCue
 
 
@@ -116,13 +117,16 @@ def test_the_main_loop_cue_path_does_not_block(tmp_path, audio):
     try:
         started = time.monotonic()
         instance._fire_navigation_cue(
-            NavigationCue(kind="arrive", text="You have arrived.")
+            NavigationCue(kind="arrive", destination="Home")
         )
         elapsed = time.monotonic() - started
 
         assert elapsed < 0.05, f"cue blocked the loop for {elapsed:.2f}s"
         # and the work still happens, just elsewhere
-        assert _wait_until(lambda: audio["played"] == ["You have arrived."])
+        arrival = messages.get(
+            "nav.arrived", instance.language.current, destination="Home",
+        )
+        assert _wait_until(lambda: audio["played"] == [arrival])
     finally:
         instance.announcer.stop(timeout_s=2.0)
 

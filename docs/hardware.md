@@ -24,7 +24,7 @@ Pin 6  (GND)              DYP-A22 TOP          GND
 Pin 8  (GPIO 14 / TX)     DYP-A22 TOP          RX
 Pin 9  (GND)              MPU6050              GND
 Pin 10 (GPIO 15 / RX)     DYP-A22 TOP          TX
-Pin 11 (GPIO 17)          Vibration motor      FRONT
+Pin 11 (GPIO 17)          Vibration motor      FRON T
 Pin 12 (GPIO 18)          Active buzzer        +
 Pin 13 (GPIO 27)          Vibration motor      RIGHT
 Pin 15 (GPIO 22)          Vibration motor      LEFT

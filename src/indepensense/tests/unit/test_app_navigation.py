@@ -51,8 +51,25 @@ def app():
 # --- cue routing -------------------------------------------------------------
 
 def test_announce_is_spoken(app):
-    app._fire_navigation_cue(NavigationCue(kind="announce", text="In 90 meters, turn left"))
-    assert app.spoken == ["In 90 meters, turn left"]
+    """Built from the catalogue, not from the router's own text.
+
+    The monitor used to hand over a finished English sentence wrapped
+    around GraphHopper's instruction, so a Tagalog user heard "Sa isang
+    daang metro, Turn left onto Rizal Street" — and the distance went in
+    as a bare number, never reaching `speak_number`.
+    """
+    lang = app.language.current
+    app._fire_navigation_cue(NavigationCue(
+        kind="announce", direction="left",
+        street_name="Rizal Street", distance_m=90.0,
+    ))
+
+    assert app.spoken == [messages.get(
+        "nav.turn_in_distance", lang,
+        distance=messages.speak_distance(90.0, lang),
+        instruction=messages.nav_instruction("left", "Rizal Street", lang),
+    )]
+    assert "Rizal Street" in app.spoken[0]
 
 
 def test_turn_now_speaks_the_direction_alone(app):
@@ -88,19 +105,21 @@ def test_turn_now_uses_turn_not_face(app):
 
 
 def test_arrive_is_spoken(app):
-    app._fire_navigation_cue(NavigationCue(kind="arrive", text="You have arrived at Home."))
+    app._fire_navigation_cue(NavigationCue(kind="arrive", destination="Home"))
 
     assert app.spoken == ["You have arrived at Home."]
 
 
 def test_off_route_is_spoken(app):
-    app._fire_navigation_cue(NavigationCue(kind="off_route", text="You are off the planned route."))
+    app._fire_navigation_cue(NavigationCue(kind="off_route"))
 
-    assert app.spoken == ["You are off the planned route."]
+    assert app.spoken == [
+        messages.get("nav.off_route", app.language.current)
+    ]
 
 
 def test_an_unrecognised_cue_kind_is_ignored(app):
-    app._fire_navigation_cue(NavigationCue(kind="somersault", text="???"))
+    app._fire_navigation_cue(NavigationCue(kind="somersault"))
     assert app.spoken == []
 
 
@@ -110,13 +129,13 @@ def test_announce_is_suppressed_while_a_voice_command_is_in_flight(app):
     """Talking over the user's own command, or over a response they are
     listening to, loses information for both."""
     app._voice_active.set()
-    app._fire_navigation_cue(NavigationCue(kind="announce", text="turn left"))
+    app._fire_navigation_cue(NavigationCue(kind="announce", direction="left", distance_m=90.0))
     assert app.spoken == []
 
 
 def test_off_route_is_suppressed_while_voice_is_busy(app):
     app._voice_active.set()
-    app._fire_navigation_cue(NavigationCue(kind="off_route", text="off route"))
+    app._fire_navigation_cue(NavigationCue(kind="off_route"))
     assert app.spoken == []
 
 
@@ -136,9 +155,11 @@ def test_arrival_is_spoken_even_while_voice_is_busy(app):
     to. It used to survive a busy pipeline as a motor pulse; nothing else
     covers it now, so this one cue ignores the guard."""
     app._voice_active.set()
-    app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
+    app._fire_navigation_cue(NavigationCue(kind="arrive", destination="Home"))
 
-    assert app.spoken == ["arrived"]
+    assert app.spoken == [messages.get(
+        "nav.arrived", app.language.current, destination="Home",
+    )]
 
 
 # --- cues the pipeline could not take ----------------------------------------
@@ -162,10 +183,10 @@ class _RecordingMonitor:
 
 
 @pytest.mark.parametrize("cue", [
-    NavigationCue(kind="announce", text="In 90 meters, turn left", index=1),
+    NavigationCue(kind="announce", direction="left", distance_m=90.0, index=1),
     NavigationCue(kind="turn_now", direction="right", index=1),
-    NavigationCue(kind="missed_turn", text="Turn left onto B"),
-    NavigationCue(kind="off_route", text="off route"),
+    NavigationCue(kind="missed_turn", direction="left", street_name="B"),
+    NavigationCue(kind="off_route"),
 ])
 def test_a_cue_we_cannot_speak_goes_back_to_the_monitor(app, cue):
     app.nav_monitor = _RecordingMonitor()
@@ -183,9 +204,11 @@ def test_arrival_is_never_handed_back(app):
     app.nav_monitor = _RecordingMonitor()
     app._voice_active.set()
 
-    app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
+    app._fire_navigation_cue(NavigationCue(kind="arrive", destination="Home"))
 
-    assert app.spoken == ["arrived"]
+    assert app.spoken == [messages.get(
+        "nav.arrived", app.language.current, destination="Home",
+    )]
     assert app.nav_monitor.deferred == []
 
 
@@ -195,7 +218,7 @@ def test_a_long_busy_window_logs_each_kind_once(app, capsys):
     voice command — and turn-to-face runs for up to 20 s."""
     app.nav_monitor = _RecordingMonitor()
     app._voice_active.set()
-    cue = NavigationCue(kind="announce", text="In 90 meters, turn left", index=1)
+    cue = NavigationCue(kind="announce", direction="left", distance_m=90.0, index=1)
 
     for _ in range(20):
         app._fire_navigation_cue(cue)
@@ -212,7 +235,7 @@ def test_the_log_speaks_again_for_the_next_busy_window(app, capsys):
     """Once-per-window, not once-per-run: a later command that loses a cue
     has to leave its own trace."""
     app.nav_monitor = _RecordingMonitor()
-    cue = NavigationCue(kind="announce", text="In 90 meters, turn left", index=1)
+    cue = NavigationCue(kind="announce", direction="left", distance_m=90.0, index=1)
 
     app._voice_active.set()
     app._fire_navigation_cue(cue)
@@ -238,18 +261,18 @@ def test_a_raising_announce_does_not_propagate(app):
 
     app._announce = _boom
     app._fire_navigation_cue(NavigationCue(kind="turn_now", direction="left"))
-    app._fire_navigation_cue(NavigationCue(kind="arrive", text="arrived"))
+    app._fire_navigation_cue(NavigationCue(kind="arrive", destination="Home"))
 
 
 def test_no_motor_is_touched_by_any_navigation_cue(app):
     """The motors are obstacle-only now. A navigation cue reaching them
     would be the directional encoding creeping back in."""
     for cue in (
-        NavigationCue(kind="announce", text="In 90 meters, turn left"),
+        NavigationCue(kind="announce", direction="left", distance_m=90.0),
         NavigationCue(kind="turn_now", direction="left"),
-        NavigationCue(kind="arrive", text="arrived"),
-        NavigationCue(kind="off_route", text="off route"),
-        NavigationCue(kind="missed_turn", text="Turn left", direction="left"),
+        NavigationCue(kind="arrive", destination="Home"),
+        NavigationCue(kind="off_route"),
+        NavigationCue(kind="missed_turn", direction="left"),
     ):
         app._fire_navigation_cue(cue)
 
@@ -339,7 +362,7 @@ def test_cues_from_the_monitor_reach_the_actuators(app):
 
         def check(self, position, now=None, heading=None):
             return [
-                NavigationCue(kind="announce", text="In 50 meters, turn right"),
+                NavigationCue(kind="announce", direction="right", distance_m=50.0),
                 NavigationCue(kind="turn_now", direction="right"),
             ]
 
@@ -348,7 +371,15 @@ def test_cues_from_the_monitor_reach_the_actuators(app):
     app._last_nav_check = 0.0
     app._check_navigation()
 
-    assert app.spoken == ["In 50 meters, turn right", "Turn right."]
+    lang = app.language.current
+    assert app.spoken == [
+        messages.get(
+            "nav.turn_in_distance", lang,
+            distance=messages.speak_distance(50.0, lang),
+            instruction=messages.nav_instruction("right", None, lang),
+        ),
+        messages.get("nav.turn_right", lang),
+    ]
 
 
 # --- missed turns ------------------------------------------------------------
@@ -361,7 +392,7 @@ def test_a_missed_turn_is_spoken(app):
     the wearable cannot reroute, so it says what it believes happened and
     lets the user decide."""
     app._fire_navigation_cue(
-        NavigationCue(kind="missed_turn", text="Turn left onto Rizal Street",
+        NavigationCue(kind="missed_turn", street_name="Rizal Street",
                       direction="left")
     )
 
@@ -375,7 +406,7 @@ def test_a_missed_turn_is_deferred_while_the_user_is_talking(app):
     app._voice_active.set()
 
     app._fire_navigation_cue(
-        NavigationCue(kind="missed_turn", text="Turn left", direction="left")
+        NavigationCue(kind="missed_turn", direction="left")
     )
 
     assert app.spoken == []
@@ -385,7 +416,7 @@ def test_a_missed_turn_with_no_motors_at_all_still_speaks(app):
     app.front_motor = app.left_motor = app.right_motor = None
 
     app._fire_navigation_cue(
-        NavigationCue(kind="missed_turn", text="Turn left", direction="left")
+        NavigationCue(kind="missed_turn", direction="left")
     )
 
     assert len(app.spoken) == 1

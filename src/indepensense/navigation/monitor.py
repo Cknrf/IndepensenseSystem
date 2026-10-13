@@ -97,7 +97,6 @@ import math
 import time
 from dataclasses import dataclass
 
-from indepensense.intents.messages import round_speech_distance
 from indepensense.navigation.orientation import heading_error
 from indepensense.routing.base import (
     Coordinate,
@@ -233,8 +232,15 @@ class NavigationCue:
     speak it. None for cues that belong to no single instruction.
     """
     kind: str
-    text: str | None = None
     direction: str | None = None
+    # How far ahead the turn is, for "announce".
+    distance_m: float | None = None
+    # The street the step leads onto, where the router named one.
+    street_name: str | None = None
+    # Where the route ends, as the user named it, for "arrive". Carried on
+    # the cue rather than read back off the monitor because `check()`
+    # clears the route in the same breath as emitting this.
+    destination: str | None = None
     index: int | None = None
 
 
@@ -798,8 +804,8 @@ class NavigationMonitor:
 
         return NavigationCue(
             kind="missed_turn",
-            text=instr.text,
             direction=instr.direction,
+            street_name=instr.street_name,
         )
 
     def _check_arrival(
@@ -839,7 +845,7 @@ class NavigationMonitor:
                 return None
         return NavigationCue(
             kind="arrive",
-            text=f"You have arrived at {self._destination_name}.",
+            destination=self._destination_name,
         )
 
     def _destination_instruction(self):
@@ -884,14 +890,7 @@ class NavigationMonitor:
             elif (not self._off_route_warned
                   and now - self._off_route_since >= self._off_route_duration_s):
                 self._off_route_warned = True
-                return NavigationCue(
-                    kind="off_route",
-                    text=(
-                        "You are off the planned route. You can continue "
-                        "trying to reach the destination, or say cancel "
-                        "navigation to stop."
-                    ),
-                )
+                return NavigationCue(kind="off_route")
             return None
 
         # Middle zone: between recovery and off-route thresholds.
@@ -925,20 +924,30 @@ class NavigationMonitor:
     def _build_announce_cue(
         self, instr, distance: float, index: int,
     ) -> NavigationCue:
-        """Build the spoken text for an approaching turn.
+        """Describe an approaching turn, for the caller to put into words.
 
         Never called for the "arrive" instruction — `check()` breaks out
         of the loop before it, and `_check_arrival` builds that cue.
+
+        This used to return the finished English sentence, built here with
+        an f-string around the router's own instruction text. Two things
+        were wrong with that and only one of them was the language. The
+        distance went in as a bare number, bypassing `speak_number` — the
+        exact failure that helper exists to prevent, since the MMS Tagalog
+        voice has digits in its vocabulary but effectively untrained. And
+        the router's text is English whatever the user speaks, so the
+        sentence came out half translated.
         """
         # Clamped because the distance is signed: a user already past the
-        # turn would otherwise round to a negative. Unreachable in
-        # practice — the announce latches at 100 m out, long before the
-        # sign can flip — but "In -10 meters" is not a sentence the
-        # wearable should be one arithmetic slip away from saying.
-        rounded = round_speech_distance(max(0.0, distance))
+        # turn would otherwise be described as a negative distance away.
+        # Unreachable in practice — the announce latches at 100 m out,
+        # long before the sign can flip — but "In -10 meters" is not a
+        # sentence the wearable should be one arithmetic slip away from.
         return NavigationCue(
             kind="announce",
-            text=f"In {rounded} meters, {instr.text}.",
+            direction=instr.direction,
+            street_name=instr.street_name,
+            distance_m=max(0.0, distance),
             index=index,
         )
 

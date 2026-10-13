@@ -2486,45 +2486,74 @@ The comparisons are inclusive, so a threshold names the percentage
                 # no latch left for `defer()` to undo. Queued rather than
                 # critical — the announcer serialises, so it lands after
                 # the user's answer instead of over it.
-                print(f"[nav] arrive: {cue.text}", flush=True)
-                if cue.text is not None:
-                    self._announce(cue.text)
+                self._speak_navigation_cue(cue)
                 return
 
             if self._defer_if_voice_busy(cue):
                 return
 
-            if cue.kind == "announce":
-                print(f"[nav] announce: {cue.text}", flush=True)
-                self._announce(cue.text)
-            elif cue.kind == "turn_now":
-                # The instruction was spoken a long block ago, at
-                # `announce_distance_m`. This is "it is here, now" — two
-                # words, so the direction arrives without re-reading the
-                # whole sentence over a junction.
-                key = _TURN_NOW_MESSAGE_KEYS.get(cue.direction)
-                if key is None:
-                    return
-                print(f"[nav] turn_now: {cue.direction}", flush=True)
-                self._announce(messages.get(key, self.language.current))
-            elif cue.kind == "missed_turn":
-                # The compass says they carried straight on. Off-route
-                # detection is still running underneath as the slower
-                # backstop.
-                print(f"[nav] missed_turn: {cue.text}", flush=True)
-                self._announce(
-                    messages.get(
-                        "nav.missed_turn",
-                        self.language.current,
-                        instruction=cue.text or "",
-                    )
-                )
-            elif cue.kind == "off_route":
-                print(f"[nav] off_route: {cue.text}", flush=True)
-                if cue.text is not None:
-                    self._announce(cue.text)
+            self._speak_navigation_cue(cue)
         except Exception as exc:
             print(f"[nav] fire error: {exc}", file=sys.stderr, flush=True)
+
+    def _speak_navigation_cue(self, cue: NavigationCue) -> None:
+        """Put a cue into words and queue it.
+
+        **Every cue is rendered here, not in the monitor.** The monitor
+        used to hand back finished English sentences — the announce, the
+        arrival and the off-route warning were all f-strings in
+        `monitor.py` — which the announcer then spoke in whichever voice
+        the user had selected. A Tagalog user got English words in a
+        Tagalog voice, which is worse than either on its own, and the
+        announce distance went in as a bare number and so never reached
+        `speak_number`.
+
+        What arrives here is data: a direction, a street name, a distance,
+        a destination. `messages` turns it into a sentence in the language
+        the user is actually being spoken to in.
+        """
+        language = self.language.current
+        if cue.kind == "announce":
+            spoken = messages.get(
+                "nav.turn_in_distance",
+                language,
+                distance=messages.speak_distance(cue.distance_m or 0.0, language),
+                instruction=messages.nav_instruction(
+                    cue.direction, cue.street_name, language,
+                ),
+            )
+        elif cue.kind == "turn_now":
+            # The instruction was spoken a long block ago, at
+            # `announce_distance_m`. This is "it is here, now" — two
+            # words, so the direction arrives without re-reading the
+            # whole sentence over a junction.
+            key = _TURN_NOW_MESSAGE_KEYS.get(cue.direction)
+            if key is None:
+                return
+            spoken = messages.get(key, language)
+        elif cue.kind == "arrive":
+            spoken = messages.get(
+                "nav.arrived", language, destination=cue.destination or "",
+            )
+        elif cue.kind == "missed_turn":
+            # The compass says they carried straight on. Off-route
+            # detection is still running underneath as the slower
+            # backstop.
+            spoken = messages.get(
+                "nav.missed_turn",
+                language,
+                instruction=messages.nav_instruction(
+                    cue.direction, cue.street_name, language,
+                ),
+            )
+        elif cue.kind == "off_route":
+            spoken = messages.get("nav.off_route", language)
+        else:
+            print(f"[nav] unknown cue kind {cue.kind!r}", file=sys.stderr, flush=True)
+            return
+
+        print(f"[nav] {cue.kind}: {spoken}", flush=True)
+        self._announce(spoken)
 
     def _defer_if_voice_busy(self, cue: NavigationCue) -> bool:
         """Hand a cue back to the monitor when we cannot speak it yet.
@@ -2559,11 +2588,7 @@ The comparisons are inclusive, so a threshold names the percentage
         # a second in the journal for the length of every voice command.
         if cue.kind not in self._deferred_cue_logged:
             self._deferred_cue_logged.add(cue.kind)
-            print(
-                f"[nav] deferred {cue.kind} (voice busy): "
-                f"{cue.text or cue.direction}",
-                flush=True,
-            )
+            print(f"[nav] deferred {cue.kind} (voice busy)", flush=True)
         return True
 
     def _announce(self, text: str, critical: bool = False) -> None:
