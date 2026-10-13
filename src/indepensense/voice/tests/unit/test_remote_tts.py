@@ -294,3 +294,58 @@ def test_the_driver_normalises_when_configured(tmp_path, monkeypatch):
     RemoteTTS(URL, "tl", "07", peak_dbfs=-1.0).synthesize("Magandang umaga po", out)
 
     assert _peak_dbfs(out.read_bytes()) == pytest.approx(-1.0, abs=0.1)
+
+
+# --- session creation under concurrency --------------------------------------
+#
+# The announcer thread and a voice thread can both reach synthesis at
+# once. Unguarded, `_get_session` is a check-then-act: both see `None`,
+# both construct a `Session`, and the loser is dropped without `close()`
+# — a leaked connection pool, recurring every time the race is lost.
+#
+# The barrier is what makes this deterministic. Without it the threads
+# almost never interleave inside the window and the test passes against
+# the unguarded version, which is the usual way a concurrency test proves
+# nothing.
+
+def test_concurrent_callers_share_one_session(monkeypatch):
+    """Both threads are released together and the constructor is slowed,
+    so the check-then-act window is genuinely open rather than hoped for.
+
+    The barrier is deliberately *outside* `_get_session`. Putting it
+    inside the `Session` constructor deadlocks against the lock being
+    tested: the holder waits for a partner the lock will not let in. The
+    50 ms sleep is the race window itself, not a backoff being slept
+    through — without it the threads serialise by luck and the test
+    passes against the unguarded version, proving nothing.
+    """
+    import threading
+    import time
+
+    engine = RemoteTTS(url="https://tts.test", language="tl", voice="07")
+
+    built = []
+    start = threading.Barrier(2)
+
+    class _SlowSession(requests.Session):
+        def __init__(self):
+            time.sleep(0.05)
+            super().__init__()
+            built.append(self)
+
+    monkeypatch.setattr(requests, "Session", _SlowSession)
+
+    seen = []
+
+    def _worker():
+        start.wait(timeout=5)
+        seen.append(engine._get_session())
+
+    threads = [threading.Thread(target=_worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert len(built) == 1, "a second Session was built and leaked"
+    assert seen[0] is seen[1]

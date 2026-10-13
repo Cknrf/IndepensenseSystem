@@ -71,6 +71,7 @@ and `nearest: false` on the first attempt. One case is not a result —
 `llm_probe` over the full prompt set is what settles it.
 """
 import sys
+import threading
 from pathlib import Path
 
 from indepensense.intents.base import CloudAnswer, Intent, IntentResult
@@ -105,6 +106,25 @@ _LANGUAGE_NAMES = {
 
 _DEFAULT_URL = "https://api.mistral.ai/v1/chat/completions"
 
+# Connect-phase budget, separate from the read budget, and shared by both
+# classes below.
+#
+# **`requests` applies a scalar timeout per phase, not to total elapsed
+# time**, so `timeout=10` means up to 10 s connecting *and then* up to 10 s
+# reading — a 20 s ceiling on a device where the user is standing still
+# waiting for an answer. A two-tuple is the only way to state a real
+# deadline, and splitting it this way makes the ceiling
+# `_CONNECT_TIMEOUT_S` plus the caller's read budget.
+#
+# One second is generous against what connecting actually costs: TCP to
+# Mistral measures 35-50 ms over the SIM7600, and TCP plus TLS together
+# 95-250 ms (see the module docstring). The parser rarely pays even that,
+# because `warm_up` opens its socket at startup and the `Session` keeps it
+# warm. The answerer has no warmup and holds its own `Session`, so its
+# first question of a session always pays a cold connect — still four
+# times inside this budget.
+_CONNECT_TIMEOUT_S = 1.0
+
 
 class MistralAnswerer:
     """Answers open questions via Mistral's chat completions API.
@@ -134,6 +154,9 @@ class MistralAnswerer:
         self._timeout_s = timeout_s
         self._max_tokens = max_tokens
         self._session = None
+        # Guards creation of the session only, not its use — see
+        # `_get_session`.
+        self._session_lock = threading.Lock()
 
     def answer(
         self,
@@ -180,7 +203,11 @@ class MistralAnswerer:
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
                 },
-                timeout=self._timeout_s,
+                # Two-tuple, not a scalar: see `_CONNECT_TIMEOUT_S`. As a
+                # scalar this read `timeout=10.0` and meant a 20 s ceiling,
+                # which is the user standing in the street having already
+                # heard "let me think about that".
+                timeout=(_CONNECT_TIMEOUT_S, self._timeout_s),
             )
         except requests.RequestException as exc:
             # OfflineGuard already ruled out "no internet", so reaching
@@ -199,9 +226,12 @@ class MistralAnswerer:
         return self._extract(response)
 
     def close(self) -> None:
-        if self._session is not None:
-            self._session.close()
-            self._session = None
+        # Under the lock so a shutdown cannot null the session out from
+        # between another thread's check and its return in `_get_session`.
+        with self._session_lock:
+            if self._session is not None:
+                self._session.close()
+                self._session = None
 
     # -------------------------------------------------------------- internals
 
@@ -210,11 +240,21 @@ class MistralAnswerer:
 
         Created lazily rather than in `__init__` so constructing the
         answerer stays free of I/O and safe during startup.
+
+        **The lock guards creation, not use.** Unguarded, two threads
+        arriving together each built a `Session` and one was dropped
+        without `close()` — a leaked connection pool rather than a
+        correctness bug, but a leak that recurs. Sharing the surviving
+        session across threads afterwards is deliberate and is what the
+        pool is for: every request here passes its own headers and nothing
+        mutates session state, so the parts of `Session` that are not
+        thread-safe are the parts this never touches.
         """
-        if self._session is None:
-            import requests
-            self._session = requests.Session()
-        return self._session
+        with self._session_lock:
+            if self._session is None:
+                import requests
+                self._session = requests.Session()
+            return self._session
 
     @staticmethod
     def _extract(response) -> CloudAnswer:
@@ -246,11 +286,6 @@ class MistralAnswerer:
 # tokens; this only exists so a model that starts rambling is cut off
 # rather than billed for and waited on.
 _MAX_OUTPUT_TOKENS = 128
-
-# Connect-phase budget, separate from the read budget — see `_post`. Only
-# spent when the pooled socket is gone (first call, or after the provider
-# drops an idle connection), since `warm_up` opens it at startup.
-_CONNECT_TIMEOUT_S = 1.0
 
 
 def _trips_the_breaker(exc: BaseException) -> bool:
@@ -375,6 +410,9 @@ class MistralIntentParser:
         self._timeout_s = timeout_s
         self._max_tokens = max_tokens
         self._session = None
+        # Guards creation of the session only, not its use — see
+        # `_get_session`.
+        self._session_lock = threading.Lock()
         self._breaker = breaker_for(url)
 
     def warm_up(self, timeout_s: float) -> bool:
@@ -448,9 +486,12 @@ class MistralIntentParser:
         return parse_llm_response(raw, transcript, source="cloud")
 
     def close(self) -> None:
-        if self._session is not None:
-            self._session.close()
-            self._session = None
+        # Under the lock so a shutdown cannot null the session out from
+        # between another thread's check and its return in `_get_session`.
+        with self._session_lock:
+            if self._session is not None:
+                self._session.close()
+                self._session = None
 
     # -------------------------------------------------------------- internals
 
@@ -514,7 +555,8 @@ class MistralIntentParser:
         factories and either may be absent, so a shared session would make
         one class's lifetime depend on the other's.
         """
-        if self._session is None:
-            import requests
-            self._session = requests.Session()
-        return self._session
+        with self._session_lock:
+            if self._session is None:
+                import requests
+                self._session = requests.Session()
+            return self._session

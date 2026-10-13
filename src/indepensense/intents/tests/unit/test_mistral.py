@@ -132,10 +132,33 @@ def test_output_length_is_capped(monkeypatch):
 
 
 def test_the_timeout_is_passed_through(monkeypatch):
+    """A tuple, not a scalar, matching the parser.
+
+    `requests` applies a scalar to the connect and read phases
+    *independently*, so `7.5` permitted ~15 s — and unlike the parser,
+    this request has no local engine to fall back to. The whole of that
+    ceiling is the user standing still, having already heard "let me
+    think about that".
+    """
     answerer = MistralAnswerer(api_key="k", model="m", timeout_s=7.5)
     sent = _capture(monkeypatch, response=_response(payload=_ok_payload()))
+
     answerer.answer("q", "en")
-    assert sent["timeout"] == 7.5
+
+    assert sent["timeout"] == (1.0, 7.5)
+
+
+def test_the_two_drivers_agree_on_the_connect_budget(monkeypatch, tmp_path):
+    """They share a host and a module constant. Two different connect
+    budgets would be a drift nobody notices until one of them hangs."""
+    from indepensense.intents.mistral import _CONNECT_TIMEOUT_S
+
+    answerer = MistralAnswerer(api_key="k", model="m", timeout_s=7.5)
+    sent = _capture(monkeypatch, response=_response(payload=_ok_payload()))
+
+    answerer.answer("q", "en")
+
+    assert sent["timeout"][0] == _CONNECT_TIMEOUT_S
 
 
 def test_the_connection_is_reused_across_calls(answerer, monkeypatch):

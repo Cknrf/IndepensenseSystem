@@ -64,6 +64,7 @@ same failure; sending only audio that contains speech is the mitigation,
 and it belongs upstream of this driver rather than here.
 """
 import sys
+import threading
 from pathlib import Path
 
 from indepensense.net import (
@@ -106,6 +107,9 @@ class RemoteSTT:
         self._timeout_s = timeout_s
         self._compress = compress
         self._session = None
+        # Guards creation of the session only, not its use — see
+        # `_get_session`.
+        self._session_lock = threading.Lock()
         self._breaker = breaker_for(url)
         # Logged once rather than per utterance — a device that cannot
         # encode Opus would otherwise print on every command.
@@ -166,9 +170,12 @@ class RemoteSTT:
         )
 
     def close(self) -> None:
-        if self._session is not None:
-            self._session.close()
-            self._session = None
+        # Under the lock so a shutdown cannot null the session out from
+        # between another thread's check and its return in `_get_session`.
+        with self._session_lock:
+            if self._session is not None:
+                self._session.close()
+                self._session = None
 
     # -------------------------------------------------------------- internals
 
@@ -209,10 +216,15 @@ class RemoteSTT:
             return None
 
     def _get_session(self):
-        if self._session is None:
-            import requests
-            self._session = requests.Session()
-        return self._session
+        """One session for the instance. The lock guards its creation,
+        not its use — see `RemoteTTS._get_session` for the whole argument;
+        this driver reaches it from the voice thread only today, and the
+        lock costs nothing uncontended."""
+        with self._session_lock:
+            if self._session is None:
+                import requests
+                self._session = requests.Session()
+            return self._session
 
 
 class RoutedSTT:

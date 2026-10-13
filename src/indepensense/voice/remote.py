@@ -53,6 +53,7 @@ other driver's docstring.
 import array
 import io
 import sys
+import threading
 import wave
 from pathlib import Path
 
@@ -114,6 +115,9 @@ class RemoteTTS:
         self._timeout_s = timeout_s
         self._peak_dbfs = peak_dbfs
         self._session = None
+        # Guards creation of the session only, not its use — see
+        # `_get_session`.
+        self._session_lock = threading.Lock()
         # Shared with anything else talking to this host — see
         # `net.breaker_for`. Without it an unreachable endpoint costs an
         # unbounded DNS stall on the announcer thread for *every*
@@ -191,18 +195,30 @@ class RemoteTTS:
         output_path.write_bytes(audio)
 
     def close(self) -> None:
-        if self._session is not None:
-            self._session.close()
-            self._session = None
+        # Under the lock so a shutdown cannot null the session out from
+        # between another thread's check and its return in `_get_session`.
+        with self._session_lock:
+            if self._session is not None:
+                self._session.close()
+                self._session = None
 
     def _get_session(self):
         """One session for the instance, so a batch render pays the TLS
         handshake once rather than per message — `render_messages` makes
-        over a hundred calls in a row."""
-        if self._session is None:
-            import requests
-            self._session = requests.Session()
-        return self._session
+        over a hundred calls in a row.
+
+        The lock guards creation, not use: the announcer thread and a
+        voice thread can both reach synthesis at once, and unguarded they
+        each built a `Session` with one dropped unclosed. Sharing the
+        survivor is the point — every request passes its own body and
+        nothing mutates session state. `MmsTTS` takes a lock in the same
+        place for a stricter reason: torch makes no thread-safety promise
+        about a shared module, where a connection pool does."""
+        with self._session_lock:
+            if self._session is None:
+                import requests
+                self._session = requests.Session()
+            return self._session
 
 
 def normalise_peak(wav_bytes: bytes, target_dbfs: float) -> bytes:
