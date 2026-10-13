@@ -2390,11 +2390,11 @@ The comparisons are inclusive, so a threshold names the percentage
         intensity rather than direction, and that is all they are.
 
         **This runs on the 100 Hz loop, so nothing here may block.** It
-        used to: speech went through `_speak_error` (~3-4 s of synthesis
-        and playback) and the motor pulses slept inline (~0.3-0.5 s), which
-        stopped fall detection and obstacle polling for the whole of every
-        turn instruction. Speech goes to the `Announcer`, which is what
-        makes every branch here an append and a return.
+        used to: speech was synthesised and played inline (~3-4 s) and the
+        motor pulses slept inline (~0.3-0.5 s), which stopped fall
+        detection and obstacle polling for the whole of every turn
+        instruction. Speech goes to the `Announcer`, which is what makes
+        every branch here an append and a return.
         """
         try:
             if cue.kind == "announce":
@@ -2471,12 +2471,14 @@ The comparisons are inclusive, so a threshold names the percentage
         no-op rather than an error: losing an announcement is not worth
         taking down the loop that detects falls.
 
-        **Never raises**, the same contract `_speak_error` carries, and for
-        a sharper reason here. Callers interleave this with work that must
-        happen regardless: `_on_fall_detected` sends the alert that summons
-        help, and `_check_battery_and_alert` sets the latch that stops the
-        guardian SMS re-firing every ten seconds. An exception escaping
-        this would silently skip whichever of those came after it.
+        **Never raises**, the same contract every best-effort speaking
+        helper here carries — `_play_clip` and `_play_startup_notice` — and
+        for a sharper reason than either. Callers interleave this with work
+        that must happen regardless: `_on_fall_detected` sends the alert
+        that summons help, and `_check_battery_and_alert` sets the latch
+        that stops the guardian SMS re-firing every ten seconds. An
+        exception escaping this would silently skip whichever of those came
+        after it.
         """
         if self.announcer is None:
             return
@@ -3675,12 +3677,13 @@ The comparisons are inclusive, so a threshold names the percentage
         except Exception as exc:
             print(f"[PTT] voice pipeline error: {exc}", file=sys.stderr, flush=True)
             # Speak a short error so the user isn't left wondering why
-            # nothing happened. Through `_play_clip`, not `_speak_error`:
-            # this fires when the pipeline has already failed, often
-            # because an engine is unreachable, so it has to come from a
-            # pre-rendered clip and fall back to the local voice. Spoken
-            # through the remote engine it went silent exactly when the
-            # user needed to be told something had gone wrong.
+            # nothing happened. A pre-rendered clip rather than fresh
+            # synthesis, and that is the whole point: this fires when the
+            # pipeline has already failed, often because an engine is
+            # unreachable. Synthesising the apology through the engine that
+            # just failed went silent at exactly the moment the user needed
+            # to be told something had gone wrong. `_play_clip` replays a
+            # clip and falls back to the local voice.
             self._play_clip("voice.pipeline_error")
         finally:
             if stages:
