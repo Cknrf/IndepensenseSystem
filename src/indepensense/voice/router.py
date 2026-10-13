@@ -85,6 +85,19 @@ class MultiEngineTTS:
         """The engine that owns a language, or None. For diagnostics."""
         return self._engines.get(language)
 
+    def close(self) -> None:
+        """Release whichever engines hold a resource.
+
+        Only `RemoteTTS` does today — an HTTP session — but the router is
+        what `App` holds, so without this nothing downstream was ever
+        reachable at shutdown. Tolerates engines with no `close`: the
+        `TTSEngine` protocol does not require one.
+        """
+        for engine in self._engines.values():
+            closer = getattr(engine, "close", None)
+            if closer is not None:
+                closer()
+
     def synthesize(
         self,
         text: str,

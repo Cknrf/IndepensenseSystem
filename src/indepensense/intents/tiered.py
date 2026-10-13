@@ -65,6 +65,16 @@ class TieredIntentParser:
         if warm is not None:
             warm(timeout_s)
 
+    def close(self) -> None:
+        """Forward to the LLM stage, which may hold an HTTP session.
+
+        `App` holds this object, so a `close` that stopped here would
+        never reach `FallbackIntentParser` — which has one, written on
+        the assumption that something would call it."""
+        closer = getattr(self._llm, "close", None)
+        if closer is not None:
+            closer()
+
     def parse(self, transcript: str) -> IntentResult:
         match = self._try_match(transcript)
         if match is None:

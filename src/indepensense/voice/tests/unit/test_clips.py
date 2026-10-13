@@ -369,3 +369,38 @@ def test_render_first_raises_when_every_engine_fails(dirs):
         )
 
     assert list(cache.glob("*.wav")) == []
+
+
+def test_a_clip_is_flushed_before_it_is_renamed_into_place(dirs, monkeypatch):
+    """`os.replace` is atomic for the name, not the contents.
+
+    The directory entry can reach the card while the data is still in
+    page cache, so a power cut between the two leaves a correctly-named
+    clip that is empty or truncated — and `find` would return it
+    forever. This is a battery-powered device, so losing power mid-write
+    is an ordinary event rather than an exotic one.
+    """
+    import os
+
+    messages_dir, cache = dirs
+    order = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(os, "fsync", lambda fd: order.append("fsync") or real_fsync(fd))
+    monkeypatch.setattr(os, "replace", lambda a, b: order.append("replace") or real_replace(a, b))
+
+    clips.render(MockTTS(), "Emergency alert sent.", "en", VOICE, cache)
+
+    assert order == ["fsync", "replace"]
+
+
+def test_a_filesystem_that_cannot_flush_still_produces_the_clip(dirs, monkeypatch):
+    """Narrowing the window must not become a way to lose the clip that
+    was just synthesised."""
+    import os
+
+    messages_dir, cache = dirs
+    monkeypatch.setattr(os, "fsync", lambda fd: (_ for _ in ()).throw(OSError("no fsync")))
+
+    path = clips.render(MockTTS(), "Emergency alert sent.", "en", VOICE, cache)
+
+    assert path.exists()

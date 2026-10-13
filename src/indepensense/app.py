@@ -1871,6 +1871,14 @@ class App:
             ("OCR", self.ocr),
             ("SMS", self.sms),
             ("Cloud LLM", self.cloud),
+            # These hold HTTP sessions to the cloud endpoints. The
+            # process is exiting either way, so the sockets would be
+            # reclaimed — but `close` was written on both on the
+            # assumption something called it, and nothing did.
+            ("STT", self.stt),
+            ("TTS", self.tts),
+            ("TTS fallback", self.tts_local),
+            ("Intent parser", self.parser),
             ("PTT button", self.ptt_button),
             ("Emergency button", self.emergency_button),
             ("Repeat button", self.repeat_button),

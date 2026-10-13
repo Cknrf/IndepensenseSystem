@@ -226,11 +226,40 @@ def render(tts, text: str, language: str, voice: str, directory: Path) -> Path:
     scratch = scratch_dir / f"{final.stem}.{os.getpid()}.{threading.get_ident()}.wav"
     try:
         tts.synthesize(text, scratch, language=language)
+        # Flush before the rename, not after. `os.replace` is atomic for
+        # the *name*, not the contents: the directory entry can reach the
+        # card while the data is still in page cache, so a power cut
+        # between the two leaves a correctly-named clip that is empty or
+        # truncated. `find` would then return it forever, and this is a
+        # device that loses power by having its battery run out.
+        #
+        # Cheap because it is rare — only a cache miss renders, and the
+        # synthesis it follows costs 0.2-2.3 s.
+        _flush(scratch)
         os.replace(scratch, final)
     except BaseException:
         scratch.unlink(missing_ok=True)
         raise
     return final
+
+
+def _flush(path: Path) -> None:
+    """Force a file's contents to the card. Never raises.
+
+    A filesystem that cannot fsync is not a reason to lose the clip that
+    was just synthesised — the write may well still land. This narrows
+    the window, it does not close it.
+    """
+    try:
+        handle = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(handle)
+    except OSError as exc:
+        print(f"[clips] could not flush {path.name}: {exc}", file=sys.stderr)
+    finally:
+        os.close(handle)
 
 
 def sweep(directory: Path, max_bytes: int) -> int:
