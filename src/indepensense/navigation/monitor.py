@@ -45,10 +45,9 @@ onto the polyline, so a constant sideways bias of any size cancels. The
 turn counts as taken once that projection has passed the turn point by
 `advance_distance_m`.
 
-Straight-line proximity is kept as a second trigger, not as the primary
-one. It costs one comparison, it can only ever advance the cursor
-earlier, and it is the whole answer for a degenerate route whose
-polyline has fewer than two points.
+Straight-line distance remains the fallback for a degenerate route whose
+polyline has fewer than two points — there is nothing to project onto,
+and proximity is the best that can be said.
 
 The error that remains is along-*track*: a fix that jumps forward down
 the route advances the cursor early. That is the cheaper failure — by
@@ -59,16 +58,18 @@ noisy position.
 Turn verification
 -----------------
 
-Advancement is proximity-only, so a user who walks straight past a corner
-still has the cursor moved on for them, and every later cue is measured
-against a leg they are not on. Off-route detection catches it, but only
-after 30 m of sustained deviation — 15-30 s of walking the wrong way.
+Advancement cannot tell a turn taken from a corner walked straight past —
+both put the user beyond the turn point — so after either, every later
+cue is measured against a leg they may not be on. Off-route detection
+catches it, but only after 30 m of sustained deviation: 15-30 s of
+walking the wrong way.
 
-When `check()` is given a `heading`, the monitor also waits a few seconds
-after each left/right turn and compares the user's facing against the
-bearing of the next leg, emitting `missed_turn` when they do not match.
-That is a much faster signal than position, because heading changes at the
-corner while position takes tens of metres to diverge.
+When `check()` is given a `heading`, the monitor notes where the user
+stood as they reached each left/right turn, waits until they have walked
+`turn_verify_distance_m` from there, and compares their facing against
+the bearing of the next leg — emitting `missed_turn` when the two do not
+match. That is a much faster signal than position, because heading
+changes at the corner while position takes tens of metres to diverge.
 
 It is strictly additive: without a heading — which is the case whenever
 the compass is uncalibrated — advancement, announces, turn cues and
@@ -140,11 +141,32 @@ _DEFAULT_OFF_ROUTE_DISTANCE_M = 30.0
 _DEFAULT_ON_ROUTE_RECOVERY_M = 15.0
 _DEFAULT_OFF_ROUTE_DURATION_S = 15.0
 
-# Turn verification. After the cursor passes a turn, wait this long for the
-# user to actually complete it before comparing their heading against the
-# next leg — checking immediately would flag everybody, since nobody has
-# pivoted by the time they reach the corner.
-_DEFAULT_TURN_VERIFY_DELAY_S = 5.0
+# Turn verification. After the cursor passes a turn, wait until the user has
+# put this much distance between themselves and the turn point before
+# comparing their heading against the next leg. Checking immediately would
+# flag everybody, since nobody has pivoted by the time they reach the corner.
+#
+# This was a fixed 5 s delay, and a delay cannot express the thing that
+# matters, which is whether the turn has been *walked*. The timer started
+# when the cursor advanced, so the check landed `delay - advance/speed`
+# seconds after the user reached the corner: +1.4 s at 1.4 m/s, 0.0 s at
+# 1.0 m/s, and -3.3 s at 0.6 m/s — before they had got there at all. Cane
+# users walk at 0.6-0.9 m/s, so the device told them they had missed a turn
+# they were still approaching, and even a brisk walker had barely a second
+# of margin for a pivot that takes two. Simulated against this monitor with
+# perfect GPS and a correct turn, every speed at or below 1.0 m/s produced
+# a false warning.
+#
+# Distance has no such dependency: whoever the walker is and however long
+# they stand at the kerb waiting to cross, 10 m of walking is 10 m of
+# walking, and by the end of it the turn has either happened or it has not.
+#
+# It is measured as displacement from where the user stood when they
+# reached the turn, not as distance from the turn point itself. A GPS bias
+# sits in both positions and cancels in the difference, where distance from
+# a fixed point carries it in full — a user 12 m off to one side is already
+# "12 m from the corner" before they get there.
+_DEFAULT_TURN_VERIFY_DISTANCE_M = 10.0
 
 # How far off the next leg's bearing counts as "did not turn". Deliberately
 # generous: the question is whether a roughly-90° turn happened at all, not
@@ -156,6 +178,34 @@ _DEFAULT_TURN_VERIFY_TOLERANCE_DEG = 60.0
 # Below this, the next instruction is too close for the bearing between the
 # two to mean anything, so verification is skipped rather than guessed.
 _DEFAULT_TURN_VERIFY_MIN_LEG_M = 15.0
+
+# How near the turn point the user has to be for "they have reached the
+# turn" to be believed, on top of their along-route progress having got
+# there. Progress alone is not enough near a corner: once the cross-track
+# bias exceeds the along-track distance still to run, the user's nearest
+# point on the route is on the *next* leg, so their projection crosses the
+# junction while they are still short of it. Arming there starts the
+# displacement count early, and the heading is judged before they have
+# reached the corner, let alone turned — the original bug in a new costume.
+#
+# A radius on its own would be no better: wide enough to admit a biased
+# fix, it also admits an unbiased user 15 m short of the corner. It is the
+# conjunction that is right, because the two fail in opposite directions.
+#
+# At 15 m, a sweep over this monitor detects every missed turn out to a
+# 9 m bias and raises no false alarm at any bias or walking speed. The
+# ceiling is lower than the radius because the two conditions close on
+# each other: a large enough bias snaps the projection across the junction
+# early, which advances the cursor off this instruction before the user is
+# ever near enough to arm it. By 12 m nothing arms and the turn goes
+# unverified.
+#
+# That is the right way to lose it. Off-route detection is still
+# underneath, 15-30 s slower, and saying nothing is a great deal better
+# than telling somebody who turned correctly that they did not — a warning
+# the user cannot check is one they learn to ignore, including the
+# true ones.
+_DEFAULT_TURN_VERIFY_ARM_RADIUS_M = 15.0
 
 
 @dataclass(frozen=True)
@@ -256,9 +306,10 @@ class NavigationMonitor:
         off_route_distance_m: float = _DEFAULT_OFF_ROUTE_DISTANCE_M,
         on_route_recovery_m: float = _DEFAULT_ON_ROUTE_RECOVERY_M,
         off_route_duration_s: float = _DEFAULT_OFF_ROUTE_DURATION_S,
-        turn_verify_delay_s: float = _DEFAULT_TURN_VERIFY_DELAY_S,
+        turn_verify_distance_m: float = _DEFAULT_TURN_VERIFY_DISTANCE_M,
         turn_verify_tolerance_deg: float = _DEFAULT_TURN_VERIFY_TOLERANCE_DEG,
         turn_verify_min_leg_m: float = _DEFAULT_TURN_VERIFY_MIN_LEG_M,
+        turn_verify_arm_radius_m: float = _DEFAULT_TURN_VERIFY_ARM_RADIUS_M,
     ):
         self._announce_distance_m = announce_distance_m
         self._turn_now_distance_m = turn_now_distance_m
@@ -267,9 +318,10 @@ class NavigationMonitor:
         self._off_route_distance_m = off_route_distance_m
         self._on_route_recovery_m = on_route_recovery_m
         self._off_route_duration_s = off_route_duration_s
-        self._turn_verify_delay_s = turn_verify_delay_s
+        self._turn_verify_distance_m = turn_verify_distance_m
         self._turn_verify_tolerance_deg = turn_verify_tolerance_deg
         self._turn_verify_min_leg_m = turn_verify_min_leg_m
+        self._turn_verify_arm_radius_m = turn_verify_arm_radius_m
 
         self._route: Route | None = None
         self._destination_name: str = ""
@@ -298,10 +350,17 @@ class NavigationMonitor:
         self._off_route_since: float | None = None
         self._off_route_warned: bool = False
 
-        # Turn verification: set when the cursor passes a left/right turn,
+        # Turn verification: set when the user reaches a left/right turn,
         # cleared once the check has run. Holds (instruction, expected
-        # bearing after the turn, the time at which to check).
-        self._pending_turn: tuple[RouteInstruction, float, float] | None = None
+        # bearing after the turn, where the user stood when they got there).
+        self._pending_turn: tuple[
+            RouteInstruction, float, Coordinate
+        ] | None = None
+        # Which instructions have already been armed, so reaching a turn
+        # arms it once. Without this, a user standing at the junction
+        # re-arms on every tick and the reference position follows them,
+        # so the displacement below never grows and no turn is ever judged.
+        self._verify_armed: set[int] = set()
 
     # ------------------------------------------------------------------ API
 
@@ -316,6 +375,7 @@ class NavigationMonitor:
         self._off_route_since = None
         self._off_route_warned = False
         self._pending_turn = None
+        self._verify_armed.clear()
 
     def clear(self) -> None:
         """Stop tracking. Subsequent `check()` calls return no cues."""
@@ -330,6 +390,7 @@ class NavigationMonitor:
         self._off_route_since = None
         self._off_route_warned = False
         self._pending_turn = None
+        self._verify_armed.clear()
 
     def is_active(self) -> bool:
         return self._route is not None
@@ -469,7 +530,7 @@ class NavigationMonitor:
         # moves on, so a user who walked straight past a corner hears
         # about it rather than being cued for a leg they are not on.
         # Off-route detection is the backstop and takes 15-30 s longer.
-        missed = self._check_pending_turn(now, heading)
+        missed = self._check_pending_turn(position, heading)
         if missed is not None:
             cues.append(missed)
 
@@ -548,6 +609,27 @@ class NavigationMonitor:
                 self._turn_now_fired.add(self._current_index)
                 cues.append(NavigationCue(kind="turn_now", direction=instr.direction))
 
+            # Arm turn verification the moment the user reaches the turn —
+            # separately from the cursor advancing, and before it.
+            #
+            # Arming used to live in the advance branch, which no longer
+            # works now that advancing means along-route progress: a user
+            # who carries straight on past a corner makes none. Their
+            # projection pins to the junction and stays there, so the one
+            # case verification exists to catch would be the one case that
+            # never armed. Reaching the turn is the event that matters, and
+            # both a turn taken and a turn missed share it.
+            reached = (
+                distance <= (0.0 if along_route else self._advance_distance_m)
+                and haversine_m(position, instr.location)
+                <= self._turn_verify_arm_radius_m
+            )
+            if (instr.direction in ("left", "right")
+                    and self._current_index not in self._verify_armed
+                    and reached):
+                self._verify_armed.add(self._current_index)
+                self._arm_turn_verification(instr, position)
+
             # Advance once the user is `advance_distance_m` past the turn.
             # "Past" is a negative distance on the along-route measure;
             # where only the straight-line one is available there is no
@@ -557,7 +639,6 @@ class NavigationMonitor:
                 else self._advance_distance_m
             )
             if distance <= advance_at:
-                self._arm_turn_verification(instr, now)
                 self._current_index += 1
                 continue
 
@@ -566,11 +647,13 @@ class NavigationMonitor:
 
         return cues
 
-    def _arm_turn_verification(self, instr, now: float) -> None:
-        """Note that a turn was just passed, to be checked shortly.
+    def _arm_turn_verification(self, instr, position: Coordinate) -> None:
+        """Note that a turn has been reached, to be judged once walked.
 
-        Only left and right turns are worth verifying — "straight" cannot
-        be missed, and arrival is handled elsewhere.
+        `position` is where the user stood at that moment, and is what the
+        displacement in `_check_pending_turn` is measured from. Only left
+        and right turns reach here — "straight" cannot be missed, and
+        arrival is handled elsewhere.
 
         The bearing to aim at is the one from this turn to the *next*
         instruction, which is the direction the user should now be
@@ -601,30 +684,40 @@ class NavigationMonitor:
             return
 
         expected = bearing_to(instr.location, next_instr.location)
-        self._pending_turn = (instr, expected, now + self._turn_verify_delay_s)
+        self._pending_turn = (instr, expected, position)
 
     def _check_pending_turn(
         self,
-        now: float,
+        position: Coordinate,
         heading: float | None,
     ) -> NavigationCue | None:
         """Compare the user's facing against the leg they should be on.
 
         Returns a `missed_turn` cue when the heading says they carried
-        straight on, and None otherwise. Disarms either way, so this fires
-        at most once per turn — a user who knows they missed it does not
-        need telling twice.
+        straight on, and None otherwise. Disarms once it judges, so this
+        fires at most once per turn — a user who knows they missed it does
+        not need telling twice.
 
-        Waits `turn_verify_delay_s` before judging, because nobody has
-        pivoted by the time they reach the corner. A heading that is
-        unavailable when the moment comes disarms without a verdict rather
-        than guessing: an absent compass must not manufacture a warning.
+        Judges only once the user is `turn_verify_distance_m` from the turn
+        point, because nobody has pivoted by the time they reach the
+        corner. Until then it holds: a user standing at the kerb waiting
+        for traffic has not failed to turn, they have not finished
+        arriving, and no amount of elapsed time changes that. A heading
+        that is unavailable when the moment comes disarms without a verdict
+        rather than guessing — an absent compass must not manufacture a
+        warning.
+
+        The measure is blind to *which way* the user went: walking back
+        down the leg they came from also puts distance between them and
+        the corner, and would be read as a missed turn. Off-route detection
+        is the honest answer to that one, and the warning they would get
+        here is not far wrong in the meantime.
         """
         if self._pending_turn is None:
             return None
 
-        instr, expected, verify_at = self._pending_turn
-        if now < verify_at:
+        instr, expected, armed_from = self._pending_turn
+        if haversine_m(position, armed_from) < self._turn_verify_distance_m:
             return None
 
         self._pending_turn = None
