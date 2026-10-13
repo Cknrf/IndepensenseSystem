@@ -153,6 +153,15 @@ NLU   https://api.mistral.ai/v1/chat/completions
 sending audio there is a different proposition from sending it to a
 third party: no external processor, and the recordings stay in hand.
 
+**The STT endpoint has no voice-activity detection**, so silence and
+background noise come back as invented text rather than an empty string
+— verified 2026-10-13: four seconds of silence transcribed as "Thank
+you.", four seconds of hiss as a wall of Batangas place names, which is
+the endpoint's own default prompt being regurgitated. The local path
+does not have this (`vad_filter=True` in `voice/whisper.py`), so it is
+specific to the remote one. `docs/stt-server-vad-request.md` is the
+brief for the server side.
+
 **Neither `gpuer` endpoint requires authentication.** For TTS the request
 body is text the device is about to say out loud anyway. For STT it is a
 recording of a blind user's voice, and that deserves a token before this
