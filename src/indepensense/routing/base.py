@@ -73,6 +73,14 @@ class RouteInstruction:
     # perspective, this is where they need to act (turn left, turn right,
     # or arrive). `None` when the router doesn't provide interval data.
     location: Coordinate | None = None
+    # Which polyline point `location` is, as an index into `Route.points`.
+    # The same information the router already gave us, kept rather than
+    # thrown away: the navigation monitor needs to know how far along the
+    # route each turn sits, and re-deriving that by searching the polyline
+    # for a matching coordinate picks the *first* match — which is the
+    # wrong leg on any route that doubles back along a street it already
+    # used. `None` when the router gave no interval.
+    point_index: int | None = None
     # Turn semantics, derived from GraphHopper's `sign` code:
     #   "left"     — any leftward turn (slight, normal, sharp, keep-left)
     #   "right"    — any rightward turn

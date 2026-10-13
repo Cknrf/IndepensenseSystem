@@ -38,6 +38,7 @@ class MockRouter:
                 distance_m=60.0,
                 street_name="Fake St",
                 location=start,
+                point_index=0,
                 direction="straight",
             ),
             RouteInstruction(
@@ -45,6 +46,7 @@ class MockRouter:
                 distance_m=60.0,
                 street_name="Mock Avenue",
                 location=midpoint,
+                point_index=1,
                 direction="left",
             ),
             RouteInstruction(
@@ -52,6 +54,7 @@ class MockRouter:
                 distance_m=0.0,
                 street_name=None,
                 location=end,
+                point_index=2,
                 direction="arrive",
             ),
         ]

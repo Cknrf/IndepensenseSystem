@@ -61,15 +61,18 @@ def parse_graphhopper_response(payload: dict[str, Any]) -> Route:
         # interval = [start_point_index, end_point_index]. The turn/action
         # happens at the START of the segment described by this step.
         location: Coordinate | None = None
+        point_index: int | None = None
         interval = step.get("interval")
         if interval and len(interval) >= 1 and 0 <= interval[0] < len(points):
-            location = points[interval[0]]
+            point_index = interval[0]
+            location = points[point_index]
 
         instructions.append(RouteInstruction(
             text=step["text"],
             distance_m=step["distance"],
             street_name=step.get("street_name") or None,
             location=location,
+            point_index=point_index,
             direction=_direction_from_sign(step.get("sign", 0)),
         ))
 

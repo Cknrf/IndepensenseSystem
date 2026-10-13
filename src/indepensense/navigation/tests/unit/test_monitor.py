@@ -19,6 +19,15 @@ _START = Coordinate(lat=14.0000, lon=121.0000)
 _MIDPOINT = Coordinate(lat=14.0013, lon=121.0000)
 _END = Coordinate(lat=14.0026, lon=121.0000)
 
+# One degree of latitude is ~111 km everywhere; the test route runs due
+# north, so this walks a position along it by a given number of metres.
+# Negative goes back the way they came.
+_M_PER_DEG_LAT = 111_000.0
+
+
+def _metres_north_of(point: Coordinate, metres: float) -> Coordinate:
+    return Coordinate(lat=point.lat + metres / _M_PER_DEG_LAT, lon=point.lon)
+
 
 def _make_route() -> Route:
     return Route(
@@ -150,15 +159,45 @@ def test_turn_now_does_not_repeat():
 
 # --- advancement -------------------------------------------------------------
 
-def test_advance_when_close_to_turn():
+def test_advance_once_past_the_turn():
+    """The cursor moves on when the user's position *along the route* has
+    passed the turn, not when they come within a radius of it."""
     m = NavigationMonitor(advance_distance_m=5.0)
     m.set_route(_make_route(), "Test")
     assert m.current_index() == 1
 
-    # Position ~3m from midpoint — within advance threshold.
-    at_turn = Coordinate(lat=14.00127, lon=121.0000)  # ~3m from midpoint
-    m.check(at_turn)
+    m.check(_metres_north_of(_MIDPOINT, 8.0))
     assert m.current_index() == 2   # advanced to "arrive"
+
+
+def test_short_of_the_turn_does_not_advance():
+    """Standing a few metres before a corner is not taking it. The old
+    rule — within 5 m of the turn point — counted it as taken, which is
+    also what let a sideways GPS bias skip the turn entirely."""
+    m = NavigationMonitor(advance_distance_m=5.0)
+    m.set_route(_make_route(), "Test")
+
+    m.check(_metres_north_of(_MIDPOINT, -3.0))
+
+    assert m.current_index() == 1
+
+
+def test_a_sideways_gps_bias_does_not_stick_the_cursor():
+    """The failure this measure exists for. Consumer GPS in a town is
+    commonly off by more than the 5 m the cursor used to need, and the
+    error is a bias that lasts as long as the sky view does — so the user
+    walks the corner correctly, their reported position passes to one
+    side of it, and under the old rule every later turn went unspoken
+    with nothing to tell them it had happened."""
+    m = NavigationMonitor(advance_distance_m=5.0)
+    m.set_route(_make_route(), "Test")
+
+    # 12 m east of the route, which runs due north: a pure cross-track
+    # error, and never once inside the old 5 m radius of the turn.
+    biased = _metres_north_of(_MIDPOINT, 8.0)
+    m.check(Coordinate(lat=biased.lat, lon=biased.lon + 0.00011))
+
+    assert m.current_index() == 2
 
 
 def test_arrival_fires_arrive_cue_and_deactivates():
@@ -177,9 +216,9 @@ def test_arrival_fires_arrive_cue_and_deactivates():
 
 
 def test_no_arrive_cue_before_reaching_destination():
-    """Arrival uses the advance threshold (5 m), not the announce
-    threshold (100 m). Guards against speaking "you have arrived" while
-    the user is still most of a block away."""
+    """Arrival has its own radius (15 m), not the announce threshold
+    (100 m). Guards against speaking "you have arrived" while the user is
+    still most of a block away."""
     two_step = Route(
         distance_m=290.0,
         duration_s=210.0,
@@ -199,6 +238,48 @@ def test_no_arrive_cue_before_reaching_destination():
 
     assert not any(c.kind == "arrive" for c in cues)
     assert m.is_active() is True
+
+
+def test_a_destination_that_is_near_but_not_yet_walkable_does_not_arrive():
+    """The radius alone is too blunt once it is 15 m wide.
+
+    This route loops: it runs 100 m east, steps 12 m north, and comes 100 m
+    back west, so the destination ends up 12 m from where the user started
+    and 212 m away on foot. A bare radius would congratulate them on
+    arriving before they had taken a step. The along-route remainder is
+    what tells the two apart, and it costs nothing — it falls out of the
+    same projection the cursor already uses.
+    """
+    start = Coordinate(lat=14.0000, lon=121.0000)
+    east = Coordinate(lat=14.0000, lon=121.000926)        # ~100 m east
+    north = Coordinate(lat=14.000108, lon=121.000926)     # ~12 m north
+    end = Coordinate(lat=14.000108, lon=121.0000)         # ~100 m back west
+    loop = Route(
+        distance_m=212.0,
+        duration_s=160.0,
+        instructions=[
+            RouteInstruction("Head east", 100.0, None, location=start,
+                             point_index=0, direction="straight"),
+            RouteInstruction("Turn left", 12.0, None, location=east,
+                             point_index=1, direction="left"),
+            RouteInstruction("Turn left", 100.0, None, location=north,
+                             point_index=2, direction="left"),
+            RouteInstruction("Arrive", 0.0, None, location=end,
+                             point_index=3, direction="arrive"),
+        ],
+        points=[start, east, north, end],
+    )
+    m = NavigationMonitor(arrival_distance_m=15.0)
+    m.set_route(loop, "Home")
+
+    # Standing at the start: 12 m from the destination, 212 m of walking.
+    cues = m.check(start)
+
+    assert not any(c.kind == "arrive" for c in cues)
+    assert m.is_active() is True
+
+    # Having actually walked it, the same radius now means arrival.
+    assert any(c.kind == "arrive" for c in m.check(end))
 
 
 def test_arrive_cue_names_destination():
@@ -513,10 +594,23 @@ def _turning_route() -> Route:
     )
 
 
-def _at_corner(monitor, now=0.0, heading=None):
-    """Walk the user to the turn point so the cursor advances past it."""
+def _past_corner(metres: float) -> Coordinate:
+    """A position `metres` west of the corner, i.e. along the second leg.
+
+    The route turns left and runs ~97 m west, so a fraction of that
+    longitude span is a distance along it.
+    """
     corner = _turning_route().instructions[1].location
-    return monitor.check(corner, now=now, heading=heading)
+    return Coordinate(lat=corner.lat, lon=corner.lon - 0.0009 * (metres / 97.0))
+
+
+def _at_corner(monitor, now=0.0, heading=None):
+    """Walk the user past the turn point so the cursor advances past it.
+
+    Past, not up to: the cursor now advances on along-route progress, so
+    standing at the corner is not yet taking it.
+    """
+    return monitor.check(_past_corner(8.0), now=now, heading=heading)
 
 
 def test_carrying_straight_on_is_reported():

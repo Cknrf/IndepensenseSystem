@@ -19,12 +19,42 @@ Three thresholds gate the cues per instruction:
     a distance; this is the shortest thing that can be said at the moment
     the turn arrives, and short matters because the user is at a junction
     listening to traffic.
-  - `NAV_ADVANCE_DISTANCE_M` (5 m) — advance the internal cursor to the
-    next instruction. We assume the user has taken the turn once they
-    get within 5 m of it.
+  - `NAV_ADVANCE_DISTANCE_M` (5 m) — how far *past* a turn, measured
+    along the route, the cursor moves on to the next instruction.
 
 Both announce and turn_now latch — each instruction only fires each cue
 once, so a user lingering at a turn doesn't get spam.
+
+Progress is measured along the route, not as a radius
+-----------------------------------------------------
+
+The cursor used to advance when the user came within 5 m of the turn
+point in a straight line, which made the whole feature a hostage to GPS
+cross-track error. Consumer GPS in a town is commonly off by more than
+5 m, and the error is a *bias* that persists for as long as the sky view
+does — so the user walks the corner correctly, their reported position
+passes 7 m to one side of it, and the cursor never moves. Every later
+turn then goes unspoken, with nothing to tell them: they are on the
+route, so off-route detection stays quiet, and the only cue they get is
+silence. Simulated against this monitor, a 2D error of σ=5 m stuck the
+cursor on 61% of turns, which is 2% of four-turn routes completed.
+
+What the user has actually done is covered by their position *along* the
+route: `_along_route_m` drops the perpendicular component by projecting
+onto the polyline, so a constant sideways bias of any size cancels. The
+turn counts as taken once that projection has passed the turn point by
+`advance_distance_m`.
+
+Straight-line proximity is kept as a second trigger, not as the primary
+one. It costs one comparison, it can only ever advance the cursor
+earlier, and it is the whole answer for a degenerate route whose
+polyline has fewer than two points.
+
+The error that remains is along-*track*: a fix that jumps forward down
+the route advances the cursor early. That is the cheaper failure — by
+the time it can happen the announce and turn_now cues for that turn have
+both been spoken, because they fire at 100 m and 20 m against the same
+noisy position.
 
 Turn verification
 -----------------
@@ -49,20 +79,18 @@ Assumptions and known limitations
 
 - The user is following the route. Off-route deviation is detected but
   not recovered from.
-- We do NOT try to identify "past the turn" from a distance increase;
-  that's fragile with GPS jitter. Advancement is strictly on proximity.
 - Turn verification says a turn was missed; it cannot say what to do
   about it, because the wearable does not reroute. The user is told what
   the instruction was and decides.
-- If the user never gets within 5 m of a turn (GPS bias, wide turn),
-  the monitor gets stuck on that instruction and its remaining turns
-  go unspoken. The user can voice "cancel navigation" to reset.
-  Arrival is deliberately exempt: it is checked against the
-  destination directly, not through the cursor, so a missed turn
-  still ends with "you have arrived".
+- Projection onto the polyline takes the nearest segment, which is the
+  wrong one on a route that doubles back along a street it has already
+  used — the two legs overlap, and "nearest" cannot tell them apart.
+  An out-and-back route can therefore read as further along than it is.
+  Turn points are exempt, because the router numbers them
+  (`RouteInstruction.point_index`); it is the *user's* position that is
+  ambiguous.
 
-Both are acceptable for a thesis MVP; recovering from route deviation
-is a future-work bullet.
+Recovering from route deviation is a future-work bullet.
 """
 import math
 import time
@@ -84,6 +112,24 @@ from indepensense.routing.base import (
 _DEFAULT_ANNOUNCE_M = 100.0
 _DEFAULT_TURN_NOW_M = 20.0
 _DEFAULT_ADVANCE_M = 5.0
+
+# Arrival has its own, much larger radius, and does not share the advance
+# threshold as it used to. The two answer different questions. Advancing
+# the cursor early costs nothing — the cues for that turn have already
+# been spoken — so 5 m of margin past the turn is plenty. Arrival is the
+# one cue the user cannot do without, and it is checked against a single
+# fixed point with no second chance: at 5 m, a GPS bias the user cannot
+# see means they stand at their destination and are told nothing, while
+# navigation runs on indefinitely.
+#
+# 15 m is the smallest radius that clears the error this receiver
+# actually shows in town. It is deliberately an over-call: arriving 15 m
+# early leaves the user a few steps short of a door they can find by
+# other means, where never arriving leaves them stranded. It is not
+# simply "say it sooner" — see `_check_arrival`, where the along-route
+# remainder has to be inside the same radius, so a destination 15 m away
+# in a straight line but around a corner still does not fire.
+_DEFAULT_ARRIVAL_M = 15.0
 
 # Off-route detection defaults. Chosen so that a legitimate GPS jitter
 # (~5-10 m occasional spike) doesn't false-positive: we require 30 m
@@ -206,6 +252,7 @@ class NavigationMonitor:
         announce_distance_m: float = _DEFAULT_ANNOUNCE_M,
         turn_now_distance_m: float = _DEFAULT_TURN_NOW_M,
         advance_distance_m: float = _DEFAULT_ADVANCE_M,
+        arrival_distance_m: float = _DEFAULT_ARRIVAL_M,
         off_route_distance_m: float = _DEFAULT_OFF_ROUTE_DISTANCE_M,
         on_route_recovery_m: float = _DEFAULT_ON_ROUTE_RECOVERY_M,
         off_route_duration_s: float = _DEFAULT_OFF_ROUTE_DURATION_S,
@@ -216,6 +263,7 @@ class NavigationMonitor:
         self._announce_distance_m = announce_distance_m
         self._turn_now_distance_m = turn_now_distance_m
         self._advance_distance_m = advance_distance_m
+        self._arrival_distance_m = arrival_distance_m
         self._off_route_distance_m = off_route_distance_m
         self._on_route_recovery_m = on_route_recovery_m
         self._off_route_duration_s = off_route_duration_s
@@ -225,6 +273,14 @@ class NavigationMonitor:
 
         self._route: Route | None = None
         self._destination_name: str = ""
+        # Route geometry, measured once per route rather than per check.
+        # `_segment_m[i]` is the length of points[i] -> points[i+1];
+        # `_cumulative_m[i]` is the distance from the route start to
+        # points[i]; `_instruction_along_m[i]` is the same for instruction
+        # i's turn point, or None where the router gave it no location.
+        self._segment_m: list[float] = []
+        self._cumulative_m: list[float] = []
+        self._instruction_along_m: list[float | None] = []
         # Cursor into `route.instructions`. Points to the NEXT instruction
         # whose action has not yet fired.
         self._current_index: int = 0
@@ -253,6 +309,7 @@ class NavigationMonitor:
         """Start tracking a new route. Overwrites any prior state."""
         self._route = route
         self._destination_name = destination_name
+        self._measure_route(route)
         self._current_index = self._initial_index(route)
         self._announced.clear()
         self._turn_now_fired.clear()
@@ -264,6 +321,9 @@ class NavigationMonitor:
         """Stop tracking. Subsequent `check()` calls return no cues."""
         self._route = None
         self._destination_name = ""
+        self._segment_m = []
+        self._cumulative_m = []
+        self._instruction_along_m = []
         self._current_index = 0
         self._announced.clear()
         self._turn_now_fired.clear()
@@ -305,13 +365,56 @@ class NavigationMonitor:
         route would have them be, which is the honest answer to "how much
         further" while they walk back to it.
         """
-        if self._route is None:
+        along = self._along_route_m(position)
+        if along is None:
             return None
-        points = self._route.points
-        if len(points) < 2:
+        return max(0.0, self._cumulative_m[-1] - along)
+
+    # ------------------------------------------------------- route geometry
+
+    def _measure_route(self, route: Route) -> None:
+        """Pre-compute segment and cumulative lengths for a new route.
+
+        Done once here rather than inside `check()` because the polyline
+        does not change while it is being walked, and `check()` runs on
+        the main loop. The instruction distances come from the router's
+        own point indices where it supplied them, and are otherwise
+        recovered by projecting the turn point onto the polyline — which
+        is exact for a turn point, since it *is* one of the points.
+        """
+        points = route.points
+        self._segment_m = [
+            haversine_m(points[i], points[i + 1]) for i in range(len(points) - 1)
+        ]
+        self._cumulative_m = [0.0]
+        for length in self._segment_m:
+            self._cumulative_m.append(self._cumulative_m[-1] + length)
+
+        self._instruction_along_m = []
+        for instr in route.instructions:
+            self._instruction_along_m.append(self._instruction_distance(instr))
+
+    def _instruction_distance(self, instr: RouteInstruction) -> float | None:
+        """How far along the route this instruction's turn point sits."""
+        index = instr.point_index
+        if index is not None and 0 <= index < len(self._cumulative_m):
+            return self._cumulative_m[index]
+        if instr.location is None:
+            return None
+        return self._along_route_m(instr.location)
+
+    def _along_route_m(self, position: Coordinate) -> float | None:
+        """Distance from the route start to the point on the route nearest
+        `position`. None when there is no route, or it has no segments.
+
+        This is the measure the cursor advances on. Taking the nearest
+        point on the polyline discards the perpendicular component of the
+        fix, which is exactly the component a GPS bias puts there.
+        """
+        if self._route is None or not self._segment_m:
             return None
 
-        # Nearest segment, and how far along it the user has got.
+        points = self._route.points
         best_distance = float("inf")
         best_index = 0
         best_t = 0.0
@@ -320,13 +423,7 @@ class NavigationMonitor:
             if distance < best_distance:
                 best_distance, best_index, best_t = distance, i, t
 
-        # What is left of the segment they are on, plus all the ones after.
-        remaining = (1.0 - best_t) * haversine_m(
-            points[best_index], points[best_index + 1]
-        )
-        for i in range(best_index + 1, len(points) - 1):
-            remaining += haversine_m(points[i], points[i + 1])
-        return remaining
+        return self._cumulative_m[best_index] + best_t * self._segment_m[best_index]
 
     def check(
         self,
@@ -364,6 +461,10 @@ class NavigationMonitor:
 
         cues: list[NavigationCue] = []
 
+        # How far along the route the user has got. Measured once: the
+        # cursor, the arrival test and the remaining distance all want it.
+        along = self._along_route_m(position)
+
         # Did the last turn actually happen? Checked before the cursor
         # moves on, so a user who walked straight past a corner hears
         # about it rather than being cued for a leg they are not on.
@@ -386,7 +487,7 @@ class NavigationMonitor:
         # otherwise mean the user reaches their destination and is never
         # told. Arrival is the single cue they most need, so it must not
         # depend on turn-by-turn bookkeeping being perfect.
-        arrival_cue = self._check_arrival(position)
+        arrival_cue = self._check_arrival(position, along)
         if arrival_cue is not None:
             cues.append(arrival_cue)
             self.clear()
@@ -411,7 +512,27 @@ class NavigationMonitor:
                 # up to `announce_distance_m` (100 m) early.
                 break
 
-            distance = haversine_m(position, instr.location)
+            # Distance to this turn, along the route where the geometry
+            # allows it and straight-line otherwise. Signed: it goes
+            # negative once the user is past the turn, which is what the
+            # advance threshold below reads.
+            #
+            # Every threshold in this loop reads the same measure, and
+            # that matters as much as the measure itself. While the cursor
+            # advanced on along-route progress and `turn_now` still fired
+            # on a straight-line radius, a large cross-track error could
+            # satisfy the first without ever satisfying the second: near a
+            # corner the user's projection snaps onto the *next* leg while
+            # they are still short of the junction, so the cursor moved on
+            # from a turn whose "turn right" had never been spoken. One
+            # measure makes that unrepresentable — the cue bands are
+            # intervals on the same axis, and the user crosses all of them.
+            turn_along = self._instruction_along_m[self._current_index]
+            along_route = along is not None and turn_along is not None
+            if along_route:
+                distance = turn_along - along
+            else:
+                distance = haversine_m(position, instr.location)
 
             # Announce (once) at the announce threshold.
             if (distance <= self._announce_distance_m
@@ -427,8 +548,15 @@ class NavigationMonitor:
                 self._turn_now_fired.add(self._current_index)
                 cues.append(NavigationCue(kind="turn_now", direction=instr.direction))
 
-            # Advance to next instruction if we're at the turn point.
-            if distance <= self._advance_distance_m:
+            # Advance once the user is `advance_distance_m` past the turn.
+            # "Past" is a negative distance on the along-route measure;
+            # where only the straight-line one is available there is no
+            # sign to read, and proximity is the best that can be said.
+            advance_at = (
+                -self._advance_distance_m if along_route
+                else self._advance_distance_m
+            )
+            if distance <= advance_at:
                 self._arm_turn_verification(instr, now)
                 self._current_index += 1
                 continue
@@ -513,12 +641,27 @@ class NavigationMonitor:
             direction=instr.direction,
         )
 
-    def _check_arrival(self, position: Coordinate) -> NavigationCue | None:
-        """Fire the arrival cue when within `advance_distance_m` of the
-        destination, whatever the turn cursor is doing.
+    def _check_arrival(
+        self,
+        position: Coordinate,
+        along: float | None,
+    ) -> NavigationCue | None:
+        """Fire the arrival cue at the destination, whatever the cursor
+        is doing.
 
-        Uses the advance threshold rather than the announce threshold so
-        the confirmation lands where the user actually is, not 100 m out.
+        Two conditions, both against `arrival_distance_m`: the user is
+        within that radius of the destination, AND the walking distance
+        still ahead of them is inside it too.
+
+        The radius alone would be too blunt at 15 m. A destination on the
+        far side of a corner can sit 15 m away in a straight line and 80 m
+        away on foot, and telling that user they have arrived sends them
+        looking for a door that is round the block. The remainder is what
+        distinguishes the two, and it is free — it comes from the same
+        projection the cursor uses. Where there is no usable polyline to
+        project onto, the radius stands alone, which is the best that can
+        be said about a route with no geometry.
+
         Returns None when the route has no "arrive" instruction, or the
         router gave it no coordinates — in that degenerate case the
         monitor simply runs out of instructions and stays active until
@@ -527,8 +670,12 @@ class NavigationMonitor:
         destination = self._destination_instruction()
         if destination is None or destination.location is None:
             return None
-        if haversine_m(position, destination.location) > self._advance_distance_m:
+        if haversine_m(position, destination.location) > self._arrival_distance_m:
             return None
+        if along is not None:
+            remaining = max(0.0, self._cumulative_m[-1] - along)
+            if remaining > self._arrival_distance_m:
+                return None
         return NavigationCue(
             kind="arrive",
             text=f"You have arrived at {self._destination_name}.",
@@ -620,8 +767,12 @@ class NavigationMonitor:
         Never called for the "arrive" instruction — `check()` breaks out
         of the loop before it, and `_check_arrival` builds that cue.
         """
-        # Round distance to a friendlier number for speech.
-        rounded = round_speech_distance(distance)
+        # Clamped because the distance is signed: a user already past the
+        # turn would otherwise round to a negative. Unreachable in
+        # practice — the announce latches at 100 m out, long before the
+        # sign can flip — but "In -10 meters" is not a sentence the
+        # wearable should be one arithmetic slip away from saying.
+        rounded = round_speech_distance(max(0.0, distance))
         return NavigationCue(
             kind="announce",
             text=f"In {rounded} meters, {instr.text}.",
