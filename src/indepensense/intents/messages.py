@@ -1573,9 +1573,21 @@ def join_items(items: list[str], language: str) -> str:
 
 _PLACEHOLDER = re.compile(r"\{\w+\}")
 
+# Keys that are fragments of other messages rather than utterances.
+#
+# `nav.step.*` is the phrase `nav_instruction` drops into the
+# `{instruction}` slot of a longer sentence, and is never spoken on its
+# own. Several have no placeholder and so look static, but rendering them
+# would put clips in the permanent directory that nothing can ever play:
+# the announcer hashes *finished* text, and the finished text is always
+# the sentence they were embedded in. Excluded here rather than filtered
+# in the tool, because what makes them unspeakable is a property of the
+# message and not of the renderer.
+_FRAGMENT_PREFIXES = ("nav.step.",)
+
 
 def static_keys() -> list[str]:
-    """Keys whose text is fixed in every language.
+    """Keys whose text is fixed in every language and spoken on its own.
 
     "Fixed" means no `{placeholder}`, so `get()` returns the same string
     on every call and the audio for it can be rendered once and replayed
@@ -1594,7 +1606,8 @@ def static_keys() -> list[str]:
     """
     return sorted(
         key for key, entry in MESSAGES.items()
-        if not any(_PLACEHOLDER.search(text) for text in entry.values())
+        if not key.startswith(_FRAGMENT_PREFIXES)
+        and not any(_PLACEHOLDER.search(text) for text in entry.values())
     )
 
 

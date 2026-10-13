@@ -543,3 +543,21 @@ def test_an_unknown_direction_says_keep_going():
     assert messages.nav_instruction(None, None, "en") == (
         messages.get("nav.step.straight", "en")
     )
+
+
+def test_sentence_fragments_are_not_rendered_as_clips():
+    """`nav.step.*` is the phrase that goes into another message's
+    `{instruction}` slot, never an utterance. Several have no placeholder
+    and so look static, but a clip of one could never be played: the
+    announcer hashes finished text, and the finished text is always the
+    sentence they were embedded in."""
+    assert not any(k.startswith("nav.step.") for k in messages.static_keys())
+
+
+def test_the_sentences_those_fragments_go_into_are_still_covered():
+    """Excluding the fragments must not quietly exclude their frames —
+    `nav.off_route` and `generic.error` are both whole utterances with no
+    placeholder, and both are spoken when something has gone wrong."""
+    static = messages.static_keys()
+    assert "nav.off_route" in static
+    assert "generic.error" in static
