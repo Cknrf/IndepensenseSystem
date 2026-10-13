@@ -510,10 +510,19 @@ looking for a problem that was never there.
 
 ### Privacy
 
-Only the **transcript** is sent, never the recorded audio. STT already runs
-on-device, so there is no reason to ship a voice recording to a third
-party. The words a user spoke still leave the device, which belongs in the
-ethics chapter, but that is a materially smaller disclosure than their
+The cloud *answerer* sends only the **transcript**, never a recording.
+
+Speech-to-text is a separate question and the answer changed: Tagalog
+audio is uploaded to `gpuer` for transcription, because on-device
+Whisper took 5.29 s for Tagalog against 1.13 s for English. English
+audio never leaves the Pi. See `docs/cloud-services.md`.
+
+So the line to draw in the ethics chapter is not "audio stays on the
+device" — it does not, for one language — but that every recording goes
+to a machine the project controls, while the third-party provider only
+ever receives text. The words a user spoke still leave the device, which
+belongs in that chapter, but that is a materially smaller disclosure than
+their
 voice.
 
 ### Provider: Mistral

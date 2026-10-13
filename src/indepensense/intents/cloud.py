@@ -29,12 +29,21 @@ defers, measurable straight off the `unknown` rate.
 Privacy
 -------
 
-Only the **transcript** is sent — never the recorded audio. Speech-to-
-text already runs on-device, so there is no reason to ship a voice
-recording to a third party. This still means the words a user spoke
-leave the device, which belongs in the ethics chapter and in whatever
-consent the user gives, but it is a materially smaller disclosure than
-their voice.
+**This path** sends only the transcript — never the recorded audio. The
+question has already been through speech-to-text, so there is nothing to
+gain from shipping the recording with it.
+
+That is no longer the whole picture for the device, and the docstring
+used to imply it was. Tagalog speech-to-text runs on `gpuer`
+(`REMOTE_STT_ENABLED`), so Tagalog *audio* does leave the Pi — see
+`docs/cloud-services.md`. English audio does not; the exception is
+bounded to the language whose on-device quality was the measured
+problem.
+
+The distinction that survives is between **processors**, and it is the
+one worth stating in the ethics chapter. `gpuer` is under the project's
+control, so recordings stay in hand. Mistral is a third party, and the
+only thing it ever receives is text the user chose to say aloud.
 
 Implementing a provider
 -----------------------

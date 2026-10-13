@@ -122,8 +122,9 @@ class CloudAnswerer(Protocol):
     ) -> CloudAnswer:
         """Answer an open question that local intents couldn't handle.
 
-        `question` is the user's transcript — text only. The recorded
-        audio never leaves the device; see `intents/cloud.py`.
+        `question` is the user's transcript — text only. No recording
+        is sent to this provider; see `intents/cloud.py` for what does
+        and does not leave the device, which is no longer "nothing".
 
         `language` is the code the answer must come back in, so the
         provider replies in the language the user is speaking rather than
