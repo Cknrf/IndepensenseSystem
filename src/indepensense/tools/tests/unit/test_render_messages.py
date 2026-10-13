@@ -235,3 +235,43 @@ def test_a_failed_clip_leaves_no_truncated_file(target, monkeypatch):
 
     assert _clips(target) == []
     assert list((target / clips.SCRATCH_DIR_NAME).glob("*")) == []
+
+
+# --- a failed run must not delete what it could not replace -------------------
+
+def test_a_failed_render_stops_the_stale_clip_removal(target, monkeypatch):
+    """Deleting assumes the replacement set exists; after a failure it
+    does not.
+
+    Observed on 2026-10-12: a misconfigured endpoint URL failed all 66
+    Tagalog renders and this step removed 132 existing clips on the way
+    past, leaving the device with no permanent Tagalog clips at all.
+    Keeping a stale clip costs bytes the next clean run reclaims;
+    deleting a live one breaks the reason this directory is never swept —
+    the emergency-delivery messages are the least spoken and the worst to
+    have to synthesise.
+    """
+    stale = clips.render(MockTTS(), "A sentence nobody says any more.",
+                         "en", _voice("en"), target)
+
+    class _HalfBroken(MockTTS):
+        def synthesize(self, text, output_path, language=None):
+            if language == "tl":
+                raise RuntimeError("endpoint unreachable")
+            super().synthesize(text, output_path, language=language)
+
+    monkeypatch.setattr(render_messages, "build_tts",
+                        lambda **kwargs: _HalfBroken())
+
+    assert _run() == 1
+    assert stale.exists(), "a failed run deleted a clip it could not replace"
+
+
+def test_a_clean_run_still_removes_stale_clips(target):
+    """The exemption is only for failures — otherwise an edited message
+    would leave its old recording on the card forever."""
+    stale = clips.render(MockTTS(), "A sentence nobody says any more.",
+                         "en", _voice("en"), target)
+
+    assert _run() == 0
+    assert not stale.exists()

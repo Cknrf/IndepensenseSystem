@@ -136,11 +136,30 @@ def main(argv: list[str] | None = None) -> int:
                       file=sys.stderr, flush=True)
         print(f"\nRendered in {time.monotonic() - started:.0f}s.")
 
-    # Only ever prune when the full set was considered. With --language
-    # the clips for every other language look stale and would all be
-    # deleted.
+    # Only ever prune when the full set was considered *and* produced.
+    #
+    # `--language` renders a subset, so every other language's clips look
+    # stale and would all be deleted.
+    #
+    # A failed render is the same hazard wearing a different hat, and it
+    # is not hypothetical: on 2026-10-12 a misconfigured endpoint URL
+    # failed all 66 Tagalog renders, and this step cheerfully removed 132
+    # existing clips on the way past — leaving the device with no
+    # permanent Tagalog clips at all. Deleting assumes the replacement
+    # set exists, and after a failure it does not.
+    #
+    # The cost of keeping a genuinely stale clip is some bytes on the
+    # card, reclaimed by the next clean run. The cost of deleting a live
+    # one is that `clips.py`'s whole argument for a never-swept directory
+    # stops holding: the emergency-delivery messages are the least
+    # spoken and the worst to have to synthesise, which is why they are
+    # meant to be on disk before they are needed.
     if args.language:
         print("Skipping stale-clip removal (--language renders a subset).")
+    elif failures:
+        print(f"Skipping stale-clip removal — {failures} render(s) failed, "
+              f"so the clips on disk may be the only copies. Re-run when "
+              f"the failures are fixed.")
     else:
         removed = 0
         for clip in MESSAGE_AUDIO_DIR.glob("*.wav"):
