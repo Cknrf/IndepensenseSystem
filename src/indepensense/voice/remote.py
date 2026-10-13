@@ -58,7 +58,7 @@ import wave
 from pathlib import Path
 
 from indepensense.net import (
-    breaker_for, has_network_route, require_https,
+    breaker_for, breaker_reason_for, has_network_route, require_https,
 )
 
 # What `router.voice_id` names clips rendered here. Includes the voice so
@@ -166,8 +166,12 @@ class RemoteTTS:
                 json={"text": body, "model": self._model, "voice": self.voice},
                 timeout=(_CONNECT_TIMEOUT_S, self._timeout_s),
             )
-        except BaseException:
-            self._breaker.record_failure()
+        except BaseException as exc:
+            # Shared with every other cloud driver — two endpoints backing
+            # off differently is not a policy anyone could defend.
+            reason = breaker_reason_for(exc)
+            if reason:
+                self._breaker.record_failure(reason)
             raise
         self._breaker.record_success()
 

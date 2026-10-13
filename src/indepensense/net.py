@@ -96,9 +96,89 @@ def probe_reachable(url: str, timeout_s: float = 2.0) -> bool:
         breaker.record_success()
         return True
     except requests.RequestException as exc:
-        breaker.record_failure()
+        # Always `UNREACHABLE`: this is a bare reachability probe, so any
+        # failure of it genuinely is "no working path to this host".
+        breaker.record_failure(UNREACHABLE)
         print(f"[net] probe to {url} failed: {exc}", file=sys.stderr)
         return False
+
+
+# Why a host is being skipped. Only `UNREACHABLE` means "there is no
+# working path to this service" — the others mean it answered, and said
+# something that makes trying again soon a waste. The distinction is not
+# bookkeeping: `intents/cloud.py` turns it into a spoken sentence, and
+# only one of these makes "I need an internet connection" a true thing
+# to say.
+UNREACHABLE = "unreachable"   # no route, DNS dead, connection refused
+SLOW = "slow"                 # answered, but past the read budget
+BACKOFF = "backoff"           # 429 — explicitly asked for less traffic
+REJECTED = "rejected"         # other 4xx — bad key, bad request
+
+BREAKER_REASONS = (UNREACHABLE, SLOW, BACKOFF, REJECTED)
+
+
+def breaker_reason_for(exc: BaseException) -> str | None:
+    """Which `BREAKER_REASONS` an exception is evidence of, or None.
+
+    None means "do not open the breaker". Read the whole thing as *this
+    endpoint wasted the user's time, or told us to stop* — not *the
+    request failed*. The distinction matters because `record_failure`
+    opens on a single failure rather than counting, so one unlucky reply
+    costs 30 s of cloud service, and the local models it falls back to
+    are materially worse: 82.3% against the cloud's 98.7% for intent
+    parsing, and 5.29 s against 0.72 s for Tagalog speech-to-text.
+
+    Opens the breaker:
+      - `ConnectionError`, and `ConnectTimeout` which subclasses it —
+        the dead link and the unbounded DNS stall this was built for.
+      - `ReadTimeout` — the most expensive failure there is, because the
+        caller waits out the whole read budget before falling back.
+      - HTTP 429 — the server explicitly asking for less traffic.
+        Retrying per utterance spends quota to be refused again.
+      - Other 4xx — a bad key or a malformed request fails identically
+        forever. The cooldown does not fix it; it stops the device
+        paying for the same refusal every time someone speaks.
+
+    Does not:
+      - HTTP 5xx — answered fast and plausibly transient, so the next
+        utterance may well succeed. One wasted round trip of a few
+        hundred ms is cheaper than 30 s on the local model.
+      - A reply whose JSON or shape is wrong. The host is reachable and
+        answering; the body is the problem, and skipping the endpoint
+        does not make the next body better.
+
+    `JSONDecodeError` is checked first because it inherits from *both*
+    `RequestException` and `ValueError` — ordering is the only thing
+    keeping a junk body out of the transport bucket, so do not reorder
+    these without reading that sentence twice.
+
+    Lives here rather than in one driver so all four share a single
+    policy. Two endpoints backing off differently is not something
+    anyone could defend, and the first version of this had exactly that:
+    a 429 opened the breaker for intent parsing but not for speech.
+    """
+    import requests  # lazy: keeps the module importable off-device
+
+    if isinstance(exc, requests.exceptions.JSONDecodeError):
+        return None
+    if isinstance(exc, requests.HTTPError):
+        response = getattr(exc, "response", None)
+        if response is None:
+            return UNREACHABLE
+        status = response.status_code
+        if 500 <= status < 600:
+            return None
+        if status == 429:
+            return BACKOFF
+        return REJECTED
+    if isinstance(exc, requests.exceptions.ReadTimeout):
+        return SLOW
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return UNREACHABLE
+    if isinstance(exc, requests.RequestException):
+        return UNREACHABLE
+    # Anything else is a shape error off an already-parsed payload.
+    return None
 
 
 class HostBreaker:
@@ -134,6 +214,7 @@ class HostBreaker:
     def __init__(self, cooldown_s: float = 30.0):
         self._cooldown_s = cooldown_s
         self._open_until = 0.0
+        self._reason: str | None = None
         self._lock = threading.Lock()
 
     def allow(self) -> bool:
@@ -144,18 +225,36 @@ class HostBreaker:
     def record_success(self) -> None:
         with self._lock:
             self._open_until = 0.0
+            self._reason = None
 
-    def record_failure(self) -> None:
-        """One failure is enough.
+    def record_failure(self, reason: str = UNREACHABLE) -> None:
+        """One failure is enough, and the breaker remembers which kind.
 
         Not a counter: the failure mode being defended against is a link
         that is simply gone, where every attempt costs tens of seconds.
         Requiring two failures before protecting the user would mean two
         of those, and the cost of being wrong is only that the device
         runs on its local models for `cooldown_s` — degraded, not broken.
+
+        **The reason is kept because one caller speaks it aloud.** The
+        cloud answerer tells the user "I need an internet connection"
+        when it cannot reach the provider, and that sentence is acted on
+        — a blind user walks somewhere else to find signal. Skipping the
+        host because it answered 429, or because a classification ran
+        past its 2.5 s budget, is not the same fact, and saying it would
+        send someone across a road for nothing. See `BREAKER_REASONS`.
         """
         with self._lock:
             self._open_until = time.monotonic() + self._cooldown_s
+            self._reason = reason
+
+    @property
+    def reason(self) -> str | None:
+        """Why the breaker is open, or None while it is closed."""
+        with self._lock:
+            if time.monotonic() >= self._open_until:
+                return None
+            return self._reason
 
 
 _breakers: dict[str, HostBreaker] = {}

@@ -151,3 +151,85 @@ def test_the_route_check_has_no_cooldown(monkeypatch):
     assert net.has_network_route() is False
     state["up"] = True
     assert net.has_network_route() is True
+
+
+# --- one policy, shared by every driver ---------------------------------------
+
+def _http_error(status):
+    import requests
+    response = requests.Response()
+    response.status_code = status
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        return exc
+
+
+@pytest.mark.parametrize("label,exc,expected", [
+    ("connection refused", None, net.UNREACHABLE),
+    ("read timeout",       None, net.SLOW),
+    ("rate limited",       429,  net.BACKOFF),
+    ("bad key",            401,  net.REJECTED),
+    ("bad request",        400,  net.REJECTED),
+    ("server error",       500,  None),
+    ("bad gateway",        502,  None),
+])
+def test_what_each_failure_is_evidence_of(label, exc, expected):
+    import requests
+    if label == "connection refused":
+        exc = requests.ConnectionError("no route")
+    elif label == "read timeout":
+        exc = requests.ReadTimeout("past the budget")
+    else:
+        exc = _http_error(exc)
+
+    assert net.breaker_reason_for(exc) == expected
+
+
+def test_a_junk_body_does_not_open_the_breaker():
+    """`JSONDecodeError` inherits from both `RequestException` and
+    `ValueError`, so only the ordering inside `breaker_reason_for` keeps
+    it out of the transport bucket. Reordering those checks would make a
+    malformed reply disable the endpoint for 30 s."""
+    import requests
+
+    assert net.breaker_reason_for(
+        requests.exceptions.JSONDecodeError("x", "y", 0)
+    ) is None
+
+
+def test_a_shape_error_off_the_payload_does_not_open_the_breaker():
+    """The host answered; our indexing of the reply is what failed."""
+    assert net.breaker_reason_for(KeyError("choices")) is None
+    assert net.breaker_reason_for(TypeError("not subscriptable")) is None
+
+
+def test_every_driver_classifies_a_rate_limit_the_same_way():
+    """All four cloud drivers share `breaker_reason_for`. Two endpoints
+    backing off differently is not a policy anyone could defend, and the
+    first version of this had exactly that: a 429 opened the breaker for
+    intent parsing but not for speech."""
+    import inspect
+
+    from indepensense.intents import mistral
+    from indepensense.voice import remote, remote_stt
+
+    for module in (mistral, remote, remote_stt):
+        source = inspect.getsource(module)
+        assert "breaker_reason_for" in source, (
+            f"{module.__name__} does not use the shared classifier"
+        )
+        assert "_trips_the_breaker" not in source, (
+            f"{module.__name__} still has a private copy of the policy"
+        )
+
+
+def test_the_breaker_reports_why_it_is_open():
+    breaker = net.HostBreaker(cooldown_s=30.0)
+    assert breaker.reason is None
+
+    breaker.record_failure(net.BACKOFF)
+    assert breaker.reason == net.BACKOFF
+
+    breaker.record_success()
+    assert breaker.reason is None

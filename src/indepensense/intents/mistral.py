@@ -76,7 +76,9 @@ from pathlib import Path
 
 from indepensense.intents.base import CloudAnswer, Intent, IntentResult
 from indepensense.intents.parser import parse_llm_response
-from indepensense.net import breaker_for, has_network_route
+from indepensense.net import (
+    breaker_for, breaker_reason_for, has_network_route,
+)
 
 # Sent as the system message. Written for a device that speaks its output
 # aloud to a blind user, which drives every constraint here:
@@ -288,59 +290,6 @@ class MistralAnswerer:
 _MAX_OUTPUT_TOKENS = 128
 
 
-def _trips_the_breaker(exc: BaseException) -> bool:
-    """Whether `exc` is evidence the endpoint should be skipped for a while.
-
-    Read `HostBreaker` as *this endpoint wasted the user's time, or told
-    us to stop* — not *the request failed*. The distinction matters
-    because `record_failure` opens on a single failure rather than
-    counting (see `net.py`), so one unlucky reply costs 30 s of cloud
-    parsing, and the local model it falls back to scores 82.3% against
-    the cloud's 98.7% — on the adversarial set, 66.7% against 100%. That
-    is the set where a misclassification acts rather than annoys, which
-    is what makes 30 s of it worth avoiding.
-
-    Trips:
-      - `ConnectionError`, and `ConnectTimeout` which subclasses it — the
-        dead link and the unbounded DNS stall this was built for.
-      - `ReadTimeout` — the most expensive failure there is. The caller
-        waits out the whole read budget before falling back, so
-        rediscovering a stalled endpoint on every utterance costs more
-        than any other case here.
-      - HTTP 429 — the server explicitly asking for less traffic.
-        Retrying per utterance spends quota to be refused again, and with
-        some providers extends the window.
-      - Other 4xx — a bad key or a malformed request fails identically
-        forever. The cooldown does not fix it; it stops the device paying
-        for the same refusal every time someone speaks. The log line is
-        what gets this noticed.
-
-    Does not trip:
-      - HTTP 5xx — answered fast and plausibly transient, so the next
-        utterance may well succeed. One wasted round trip of a few
-        hundred ms is cheaper than 30 s on the local model.
-      - A reply whose JSON or shape is wrong. The host is reachable and
-        answering; the body is the problem, and skipping the endpoint
-        does not make the next body better.
-
-    Checked before the general `RequestException` case because
-    `requests.exceptions.JSONDecodeError` inherits from *both* it and
-    `ValueError` — ordering is what keeps a junk body out of the
-    transport bucket.
-    """
-    import requests  # lazy: keeps the module importable off-device
-
-    if isinstance(exc, requests.exceptions.JSONDecodeError):
-        return False
-    if isinstance(exc, requests.HTTPError):
-        if exc.response is None:
-            return True
-        return not 500 <= exc.response.status_code < 600
-    # Anything left that is not a transport error is a shape error —
-    # KeyError, IndexError, TypeError off the parsed payload.
-    return isinstance(exc, requests.RequestException)
-
-
 class MistralIntentParser:
     """An `IntentParser` backed by Mistral, for use in front of Ollama.
 
@@ -457,7 +406,7 @@ class MistralIntentParser:
             # Recorded the moment a reply arrives, before its status is
             # examined: a reply of any status proves the host resolved and
             # connected, which is what the breaker is really tracking.
-            # `_trips_the_breaker` below may still reopen it — a 429 is a
+            # `net.breaker_reason_for` below may still reopen it — a 429 is a
             # reachable host telling us to stop — but the clearing has to
             # happen first, or a run of 5xx would never let the cooldown
             # from an earlier dead link expire.
@@ -467,12 +416,13 @@ class MistralIntentParser:
         except (requests.RequestException, ValueError, KeyError, IndexError,
                 TypeError) as exc:
             # Not every failure here means "skip this endpoint for 30 s" —
-            # see `_trips_the_breaker` for which do and why. Timeouts land
+            # see `net.breaker_reason_for` for which do and why. Timeouts land
             # here too, and are the common case rather than the
             # exceptional one: the deadline is set to fall back, not to
             # signal a fault.
-            if _trips_the_breaker(exc):
-                self._breaker.record_failure()
+            reason = breaker_reason_for(exc)
+            if reason:
+                self._breaker.record_failure(reason)
             print(f"[mistral] NLU request failed: {exc}", file=sys.stderr)
             return IntentResult(
                 intent=Intent.UNKNOWN,
