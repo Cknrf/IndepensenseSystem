@@ -293,3 +293,117 @@ def test_a_failed_warmup_is_reported_not_raised(parser, monkeypatch):
     _capture(monkeypatch, raises=requests.ConnectionError("down"))
 
     assert parser.warm_up(timeout_s=10.0) is False
+
+
+# --- what opens the circuit breaker ------------------------------------------
+#
+# `HostBreaker.record_failure` opens on a *single* failure and keeps the
+# endpoint skipped for 30 s, so which exceptions reach it is a decision
+# about how long the device runs on the weaker local model — 82.3%
+# against the cloud's 98.7%, and 66.7% against 100% on the adversarial
+# set. The rule is "this endpoint wasted the user's time, or told us to
+# stop", not "the request failed"; these pin each half of it.
+#
+# Every case below must still return `failure="transport"` either way.
+# The breaker decides what the *next* utterance does, never this one.
+
+def _breaker():
+    from indepensense.net import breaker_for
+    from indepensense.intents.mistral import _DEFAULT_URL
+    return breaker_for(_DEFAULT_URL)
+
+
+def test_a_server_error_does_not_skip_the_endpoint(parser, monkeypatch):
+    """A 5xx is answered fast and may well not recur. Thirty seconds of
+    local-only parsing costs more than one wasted round trip."""
+    _capture(monkeypatch, _response(status_code=503))
+
+    result = parser.parse("what time is it")
+
+    assert result.failure == "transport"
+    assert _breaker().allow()
+
+
+def test_rate_limiting_does_skip_the_endpoint(parser, monkeypatch):
+    """429 is the server asking for less traffic. Retrying on every
+    utterance spends quota to be refused again."""
+    _capture(monkeypatch, _response(status_code=429))
+
+    assert parser.parse("what time is it").failure == "transport"
+    assert not _breaker().allow()
+
+
+def test_a_rejected_key_skips_the_endpoint(parser, monkeypatch):
+    """401 fails identically forever. The cooldown does not fix it, it
+    stops the device paying for the same refusal on every utterance."""
+    _capture(monkeypatch, _response(status_code=401))
+
+    assert parser.parse("what time is it").failure == "transport"
+    assert not _breaker().allow()
+
+
+def test_an_unreachable_host_skips_the_endpoint(parser, monkeypatch):
+    """The dead link the breaker was built for."""
+    _capture(monkeypatch, raises=requests.ConnectionError("no route"))
+
+    assert parser.parse("what time is it").failure == "transport"
+    assert not _breaker().allow()
+
+
+def test_a_read_timeout_skips_the_endpoint(parser, monkeypatch):
+    """The most expensive failure there is: the caller waits out the whole
+    read budget before falling back, so rediscovering a stalled endpoint
+    every utterance costs more than any other case."""
+    _capture(monkeypatch, raises=requests.ReadTimeout("slow"))
+
+    assert parser.parse("what time is it").failure == "transport"
+    assert not _breaker().allow()
+
+
+def test_a_junk_body_does_not_skip_the_endpoint(parser, monkeypatch):
+    """`requests.exceptions.JSONDecodeError` inherits from both
+    `RequestException` and `ValueError`, so without an explicit check it
+    would be classed as a transport failure. The host answered — the body
+    is the problem, and skipping it does not make the next body better."""
+    response = _response()
+    response._content = b"<html>502 Bad Gateway</html>"
+
+    _capture(monkeypatch, response)
+
+    assert parser.parse("what time is it").failure == "transport"
+    assert _breaker().allow()
+
+
+def test_a_reply_missing_its_choices_does_not_skip_the_endpoint(
+    parser, monkeypatch,
+):
+    """A shape error, not a transport one."""
+    _capture(monkeypatch, _response(payload={"unexpected": True}))
+
+    assert parser.parse("what time is it").failure == "transport"
+    assert _breaker().allow()
+
+
+def test_an_open_breaker_sends_no_request_at_all(parser, monkeypatch):
+    """What the cooldown buys: the next utterance costs nothing instead
+    of paying connect plus read to rediscover the same failure. Asserted
+    on the absence of a request rather than on timing, which is the only
+    way to state it without a clock."""
+    sent = _capture(monkeypatch, _response(payload=_content('{"intent": "system.time"}')))
+    _breaker().record_failure()
+
+    result = parser.parse("what time is it")
+
+    assert sent == {}
+    assert result.failure == "transport"
+
+
+def test_a_good_reply_clears_the_breaker(parser, monkeypatch):
+    """Nothing probes — the first call after the cooldown is the probe,
+    so its success is what has to reopen the endpoint."""
+    _capture(monkeypatch, _response(payload=_content('{"intent": "system.time"}')))
+
+    result = parser.parse("what time is it")
+
+    assert result.intent is Intent.SYSTEM_TIME
+    assert _breaker().allow()
