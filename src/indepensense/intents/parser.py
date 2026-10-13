@@ -243,19 +243,47 @@ def parse_llm_response(
     users asking things the model correctly declined. See `IntentResult`
     for why only one of the two blocks the cloud fallback.
     """
+    # Two ways the reply can fail to be a JSON object, and both land here.
+    #
+    # `TypeError` covers `raw` not being text at all — a provider that
+    # answered `"content": null` hands this function `None`.
+    #
+    # The `isinstance` is the one that was actually missing. `json.loads`
+    # succeeds on any JSON *value*, so `[]`, `"unknown"` and `42` all parse
+    # cleanly and then meet `payload.get(...)` below, which only exists on
+    # a dict — the model replying with a bare string or a list of one
+    # intent is an ordinary enough failure, and it raised `AttributeError`
+    # straight out of the parser. That skipped the whole failure taxonomy:
+    # instead of `malformed` reaching `FallbackIntentParser` and being
+    # retried locally, it reached the voice pipeline's generic handler and
+    # the user heard an error.
+    #
+    # Checked rather than caught. `except AttributeError` around the block
+    # below would cover this case and also silently swallow a genuine bug
+    # in `_normalise_parameters`, which is where the reply becomes a
+    # decision the device acts on.
     try:
         payload = json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
+        payload = None
+
+    if not isinstance(payload, dict):
+        # `str(raw)` rather than slicing `raw` directly: the `TypeError`
+        # branch above exists precisely because `raw` may not be a string,
+        # and `None[:40]` would raise inside the handler meant to contain
+        # it. `raw_llm_response` is typed `str` and is the audit trail, so
+        # it takes the same coercion rather than a None.
+        excerpt = str(raw)
         print(
             f"[parser] malformed JSON from model, treating as unknown: "
-            f"{raw[:_LOG_EXCERPT_CHARS]!r}",
+            f"{excerpt[:_LOG_EXCERPT_CHARS]!r}",
             file=sys.stderr,
         )
         return IntentResult(
             intent=Intent.UNKNOWN,
             parameters={},
             raw_transcript=transcript,
-            raw_llm_response=raw,
+            raw_llm_response=excerpt,
             failure="malformed",
             source=source,
         )

@@ -116,16 +116,32 @@ def build_tts(
     used to build `PiperTTS(voices=PIPER_VOICES)` inline, which after the
     split would have quietly given them an English-only engine and let
     Tagalog go untested on the one machine that can test it.
+
+    **A language the remote serves gets no local engine built for it.**
+    The remote entries used to be applied last, overwriting the local
+    ones — which is the right *precedence* but was reached by
+    constructing the loser first. `MmsTTS.__init__` loads a VITS
+    checkpoint eagerly, so with `REMOTE_TTS_ENABLED` the Tagalog model was
+    read off the SD card into memory and then immediately made
+    unreachable, while `App._try_open_local_tts` built a second router and
+    loaded it again for the fallback. One full model load and its memory,
+    for an engine nothing could ever call.
+
+    The ordering comment it replaces still applies to `voice_id`, which
+    mirrors this precedence and must keep agreeing with it — a name the
+    router would not use files every clip under the wrong voice.
     """
+    remote_served = set(remote.voices) if remote else set()
+
     engines: dict[str, TTSEngine] = {
         language: PiperTTS(voices={language: path})
         for language, path in piper_voices.items()
+        if language not in remote_served
     }
     for language, model_dir in mms_voices.items():
+        if language in remote_served:
+            continue
         engines[language] = MmsTTS(model_dir=model_dir, language=language)
-    # Last, so a remotely-served language overrides the local engine for
-    # it. `voice_id` applies the same order; the two must agree or clips
-    # are filed under a voice the router would not have used.
     for language, voice in (remote.voices if remote else {}).items():
         engines[language] = RemoteTTS(
             url=remote.url, language=language, voice=voice,

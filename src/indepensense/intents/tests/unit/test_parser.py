@@ -5,6 +5,8 @@ into a normalised `IntentResult`. No LLM or Ollama server is required.
 """
 import json
 
+import pytest
+
 from indepensense.intents.base import Intent
 from indepensense.intents.mock import MockIntentParser
 from indepensense.intents.parser import _normalise_parameters, parse_llm_response
@@ -67,6 +69,64 @@ def test_malformed_json_maps_to_unknown():
     assert result.parameters == {}
     assert result.raw_transcript == "some transcript"
     assert result.raw_llm_response == "this is not JSON"
+
+
+# --- replies that parse but are not an object --------------------------------
+#
+# `json.loads` succeeds on any JSON *value*, so a model answering with a
+# bare string, a list or a number produced a clean parse and then met
+# `payload.get(...)`, which only dicts have. That raised `AttributeError`
+# out of the parser, skipping the failure taxonomy entirely: instead of
+# `malformed` reaching `FallbackIntentParser` to be retried locally, it
+# reached the voice pipeline's generic handler and the user heard an
+# error. Each of these is a plausible thing for a small model to emit.
+
+@pytest.mark.parametrize("raw", [
+    '"system.time"',                    # just the label, quoted
+    '["system.time"]',                  # wrapped in a list
+    '[{"intent": "system.time"}]',      # the right object, in a list
+    '42',
+    'null',
+    'true',
+])
+def test_a_reply_that_is_not_an_object_maps_to_unknown(raw):
+    result = parse_llm_response(raw, "what time is it")
+
+    assert result.intent is Intent.UNKNOWN
+    assert result.failure == "malformed"
+    assert result.parameters == {}
+
+
+def test_a_non_string_reply_maps_to_unknown():
+    """A provider answering `"content": null` hands this function `None`,
+    which `json.loads` rejects with `TypeError` rather than
+    `JSONDecodeError` — a different exception for the same situation."""
+    result = parse_llm_response(None, "what time is it")
+
+    assert result.intent is Intent.UNKNOWN
+    assert result.failure == "malformed"
+
+
+def test_a_non_string_reply_is_still_recorded_for_the_audit_trail():
+    """`raw_llm_response` is typed `str` and is what `journalctl` shows
+    when someone asks why a command failed. The branch that handles a
+    non-string reply must not put a None in it, and must not raise trying
+    to slice one for the log."""
+    result = parse_llm_response(None, "what time is it")
+
+    assert isinstance(result.raw_llm_response, str)
+
+
+def test_a_malformed_reply_is_distinguishable_from_a_decline():
+    """The whole reason `failure` exists. A model that correctly declines
+    returns `unknown` with no failure and must reach the cloud; a model
+    emitting junk must not be mistaken for one."""
+    declined = parse_llm_response('{"intent": "unknown"}', "mumble")
+    junk = parse_llm_response('["unknown"]', "mumble")
+
+    assert declined.intent is junk.intent is Intent.UNKNOWN
+    assert declined.failure is None
+    assert junk.failure == "malformed"
 
 
 def test_missing_parameters_field_defaults_to_empty():

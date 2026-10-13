@@ -4364,6 +4364,11 @@ The comparisons are inclusive, so a threshold names the percentage
         takes seconds, and the first thing that speaks is the startup
         greeting — a lazy load would put that cost in front of the user
         every time they switched language instead.
+
+        With `REMOTE_TTS_ENABLED` this loads *no* local engine for the
+        remotely-served languages — `build_tts` skips them rather than
+        building and overwriting — so the only MMS load is the fallback
+        one in `_try_open_local_tts`.
         """
         return build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES,
                          remote=_remote_spec())
@@ -4395,11 +4400,27 @@ The comparisons are inclusive, so a threshold names the percentage
         start: without it a Tagalog sentence that is not already a clip
         cannot be spoken while the endpoint is unreachable, which is bad
         but is not worse than failing to boot.
+
+        **The `try` is load-bearing now, where it used not to be.** While
+        `_open_tts` also built MMS, a missing or corrupt checkpoint failed
+        there first — fatally, and correctly, since that engine was the
+        only Tagalog voice. Now `build_tts` skips the engines the remote
+        serves, so this is the only MMS load, and letting it propagate
+        would mean a bad local checkpoint stopping a device whose remote
+        endpoint can speak Tagalog perfectly well. Returning `None` leaves
+        exactly the degradation the docstring promises: remote speech
+        works, pre-rendered clips work, and a novel Tagalog sentence
+        during an outage does not.
         """
         if _remote_spec() is None:
             return None
-        return build_tts(piper_voices=PIPER_VOICES, mms_voices=MMS_VOICES,
-                         remote=None)
+        try:
+            return build_tts(piper_voices=PIPER_VOICES,
+                             mms_voices=MMS_VOICES, remote=None)
+        except Exception as exc:
+            print(f"  Local TTS fallback unavailable ({exc}). Remote only.",
+                  flush=True)
+            return None
 
     def _open_parser(self) -> TieredIntentParser:
         """The intent parser: semantic fast path in front of the LLM.

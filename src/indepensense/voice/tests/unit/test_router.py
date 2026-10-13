@@ -70,3 +70,91 @@ def test_engine_for_exposes_the_mapping():
 
     assert tts.engine_for("en") is english
     assert tts.engine_for("tl") is None
+
+
+# --- build_tts: which engines actually get constructed -----------------------
+#
+# `MmsTTS.__init__` loads a VITS checkpoint eagerly, so *constructing* an
+# engine is the expensive act, not calling it. The remote entries used to
+# be applied last and simply overwrite the local ones — right precedence,
+# reached by building the loser first. With `REMOTE_TTS_ENABLED` that read
+# the Tagalog model off the SD card and made it unreachable in the same
+# breath, while `App._try_open_local_tts` built a second router and loaded
+# it again for the fallback.
+#
+# These patch the constructors rather than the filesystem: the assertion
+# is about what was built, and a real load would need the checkpoints.
+
+class _Ctor:
+    """Stands in for an engine class, recording how it was constructed."""
+
+    def __init__(self):
+        self.languages: list[str] = []
+
+    def __call__(self, *args, language=None, voices=None, **kwargs):
+        self.languages.append(language or next(iter(voices or {"?": None})))
+        return RecordingEngine()
+
+
+@pytest.fixture
+def ctors(monkeypatch):
+    from indepensense.voice import router
+
+    piper, mms, remote = _Ctor(), _Ctor(), _Ctor()
+    monkeypatch.setattr(router, "PiperTTS", piper)
+    monkeypatch.setattr(router, "MmsTTS", mms)
+    monkeypatch.setattr(router, "RemoteTTS", remote)
+    return piper, mms, remote
+
+
+def _build(ctors_unused=None, remote=None):
+    from indepensense.voice.router import RemoteSpec, build_tts
+
+    return build_tts(
+        piper_voices={"en": Path("/models/en.onnx")},
+        mms_voices={"tl": Path("/models/mms-tl")},
+        remote=RemoteSpec(url="https://tts.test", voices=remote or {}),
+    )
+
+
+def test_a_remotely_served_language_loads_no_local_model(ctors):
+    """The fix. Loading a VITS checkpoint to overwrite it immediately is
+    one full model load and its memory for an engine nothing can call."""
+    piper, mms, remote = ctors
+
+    _build(remote={"tl": "07"})
+
+    assert mms.languages == [], "MMS should not be built for a remote language"
+    assert remote.languages == ["tl"]
+    assert piper.languages == ["en"], "English is unaffected"
+
+
+def test_the_local_model_is_still_built_when_nothing_is_remote(ctors):
+    """`_try_open_local_tts` builds exactly this router for the fallback,
+    so the skip must be conditional on the remote spec, not permanent."""
+    piper, mms, remote = ctors
+
+    _build(remote={})
+
+    assert mms.languages == ["tl"]
+    assert remote.languages == []
+
+
+def test_the_remote_engine_wins_the_language_either_way(ctors):
+    """Precedence is unchanged — only how it is reached. A regression here
+    would have the router speak Tagalog locally while `voice_id` named the
+    remote voice, filing every clip under a voice that never spoke."""
+    _, _, remote = ctors
+
+    tts = _build(remote={"tl": "07"})
+
+    assert tts.engine_for("tl") is not None
+    assert sorted(tts._engines) == ["en", "tl"]
+
+
+def test_the_default_language_is_unchanged_by_the_skip(ctors):
+    """`MultiEngineTTS` takes the first inserted language as its default,
+    and the skip moves insertion order around. English must stay first."""
+    tts = _build(remote={"tl": "07"})
+
+    assert next(iter(tts._engines)) == "en"
