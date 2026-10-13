@@ -118,8 +118,18 @@ Three mechanisms cover it, and every path out must pass all three:
   all*. No cooldown, so a reconnect is used on the very next command.
 - `net.HostBreaker` — remembers the first failure, skips that host for
   30 s. Per host, so a Mistral outage does not stop the device using its
-  own server. Trips on unreachability only; a server answering 429 or
-  500 proves there is no stall to avoid.
+  own server. Opens on a connection error, a read timeout, a 429 and
+  other 4xx; **not** on 5xx or a malformed body, where the host answered
+  quickly and the next utterance may well succeed.
+  `net.breaker_reason_for` is the one policy all four drivers share.
+
+  It also records *why*, because `intents/cloud.py` turns that into a
+  spoken sentence. `cloud.offline` says "I need an internet connection",
+  which a blind user answers by walking somewhere else to find signal,
+  and the answerer shares a breaker with the intent parser — same host.
+  So only `UNREACHABLE` is spoken as offline; a rate limit, a rejected
+  key or a slow reply are `cloud.error` instead. A message the user acts
+  on has to be true.
 - `RES_OPTIONS=timeout:1 attempts:1` in `indepensense.service` — bounds
   the lookup to 2 s. In the unit rather than `/etc/resolv.conf`, which
   Tailscale owns and rewrites.
