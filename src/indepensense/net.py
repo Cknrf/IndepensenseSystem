@@ -278,16 +278,27 @@ def breaker_for(url: str, cooldown_s: float = 30.0) -> HostBreaker:
 
 
 def reset_breakers() -> None:
-    """Forget every host's failure state.
+    """Forget every host's failure state, in place.
 
     Two callers. The tests, which must not let one case's failure leak
     into the next through module-level state. And anything that learns
     the link is back — a modem reconnect, an interface coming up — where
     waiting out a cooldown that is already stale costs the user a slow
     utterance for no reason.
+
+    **Clears the existing objects rather than dropping them**, because
+    every driver holds the breaker it was handed at construction. Empty
+    the registry instead and `breaker_for` starts minting new ones: the
+    drivers keep their old instances, a failure in one is no longer
+    visible to the other, and the per-host sharing that lets an STT
+    failure protect TTS quietly stops working — with nothing raising to
+    say so. Today only the tests call this, which is exactly why the
+    trap was worth closing before the modem hook this docstring
+    advertises ever exists.
     """
     with _breakers_lock:
-        _breakers.clear()
+        for breaker in _breakers.values():
+            breaker.record_success()
 
 
 # RFC 5737 documentation space. Never assigned to a real host, so it

@@ -233,3 +233,22 @@ def test_the_breaker_reports_why_it_is_open():
 
     breaker.record_success()
     assert breaker.reason is None
+
+
+def test_reset_keeps_the_breaker_objects_drivers_already_hold():
+    """Every driver keeps the breaker it was handed at construction.
+
+    Emptying the registry instead would leave `breaker_for` minting new
+    ones: the drivers keep their old instances, a failure in one stops
+    being visible to the other, and the per-host sharing that lets an
+    STT failure protect TTS quietly stops working — with nothing raising
+    to say so.
+    """
+    held = net.breaker_for("https://gpuer.example:8700/tts")
+    held.record_failure(net.UNREACHABLE)
+
+    net.reset_breakers()
+
+    assert net.breaker_for("https://gpuer.example:8700/tts") is held
+    assert held.allow()
+    assert held.reason is None

@@ -984,6 +984,19 @@ class Announcer:
         with self._lock:
             return self._preempt_epoch != epoch
 
+    def note_cache_render(self) -> None:
+        """Count a cache render made by someone else.
+
+        The counter lives here because the announcer does almost all the
+        rendering, but it is really a property of the *cache*, not of
+        this thread. `App._clip_for_text` renders cloud answers straight
+        into the same directory, and every one of those is unique text —
+        so they were accumulating without ever moving the counter that
+        triggers the sweep, leaving the cache bounded only by the sweep
+        at startup.
+        """
+        self._after_render()
+
     def _after_render(self) -> None:
         """Keep the cache under its cap. Never raises.
 
@@ -4004,9 +4017,20 @@ The comparisons are inclusive, so a threshold names the percentage
         replays these recordings to produce the thesis's STT and NLU
         timings — see `config.VOICE_RECORDING_MAX_BYTES` for why the cap
         is where it is, and for the zero-retention setting.
+
+        **A zero cap sweeps every time, and that exemption is the whole
+        point of it.** Batching is an optimisation for a cap that permits
+        a backlog; at zero there is no permitted backlog, and batching
+        would leave up to `VOICE_RECORDING_SWEEP_EVERY - 1` recordings of
+        the user's voice on the card until the count happened to come
+        round — surviving a power-off, since nothing sweeps on the way
+        down. `config.py` calls that setting "a working privacy switch",
+        and a privacy switch that retains 24 recordings is worse than
+        none, because it is believed.
         """
         self._recordings_since_sweep += 1
-        if self._recordings_since_sweep < VOICE_RECORDING_SWEEP_EVERY:
+        if (VOICE_RECORDING_MAX_BYTES > 0
+                and self._recordings_since_sweep < VOICE_RECORDING_SWEEP_EVERY):
             return
         self._recordings_since_sweep = 0
         try:
@@ -4062,10 +4086,25 @@ The comparisons are inclusive, so a threshold names the percentage
             clips.filename(text, language, voice) in self._static_names
             for voice in chain
         )
-        return clips.render_first(
+        rendered = clips.render_first(
             self._tts_attempts(language), text, language,
             MESSAGE_AUDIO_DIR if static else CLIP_CACHE_DIR,
         )
+        # Counts toward the same sweep the announcer's renders do. Cloud
+        # answers land here and every one is unique text, so without this
+        # the cache grew between boots and was bounded only by the sweep
+        # in `start()`.
+        #
+        # Guarded because this is bookkeeping and the caller is holding a
+        # sentence the user is waiting for. The announcer is `None` until
+        # the voice stack attaches one, and letting that raise took the
+        # *shutdown* path down with it — the goodbye failed, so the
+        # `finally` cleared `_shutdown_requested` and the device stayed
+        # on. A missed count costs a slightly later sweep; nothing else.
+        announcer = getattr(self, "announcer", None)
+        if not static and announcer is not None:
+            announcer.note_cache_render()
+        return rendered
 
     def _play_startup_notice(self) -> None:
         """Play the startup message. Never raises.
@@ -4415,11 +4454,24 @@ The comparisons are inclusive, so a threshold names the percentage
         works, pre-rendered clips work, and a novel Tagalog sentence
         during an outage does not.
         """
-        if _remote_spec() is None:
+        remote = _remote_spec()
+        if remote is None:
             return None
         try:
-            return build_tts(piper_voices=PIPER_VOICES,
-                             mms_voices=MMS_VOICES, remote=None)
+            # Only the remotely-served languages. A language the main
+            # router already serves locally needs no fallback — it *is*
+            # the fallback — and building one anyway loaded a second
+            # Piper for English: a redundant ~1 s of SD-card reads during
+            # the boot stage already measured as the slowest, and a
+            # second resident copy for a voice that can never be asked
+            # for, since `_tts_attempts` only reaches this router for a
+            # language whose chain has two entries.
+            served = set(remote.voices)
+            return build_tts(
+                piper_voices={k: v for k, v in PIPER_VOICES.items() if k in served},
+                mms_voices={k: v for k, v in MMS_VOICES.items() if k in served},
+                remote=None,
+            )
         except Exception as exc:
             print(f"  Local TTS fallback unavailable ({exc}). Remote only.",
                   flush=True)
