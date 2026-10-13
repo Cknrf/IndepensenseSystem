@@ -12,6 +12,13 @@ synthesise — is replayed from WAVs already on disk. Every push-to-talk
 press writes one to `config.VOICE_TEST_DIR`, so a prototype session leaves
 a corpus behind.
 
+That corpus is **bounded, not permanent**. The app sweeps the directory
+to `config.VOICE_RECORDING_MAX_BYTES` — oldest first, ~500 commands at
+the default — so a long-running device holds its most recent sessions
+rather than everything ever said to it. Benchmark the Pi before the cap
+has had time to discard what you wanted measured, and if a specific
+recording matters, copy it out of `VOICE_TEST_DIR` first.
+
 What it measures, per clip and per repetition:
 
     STT    faster-whisper transcribe   (the suspected dominant cost)

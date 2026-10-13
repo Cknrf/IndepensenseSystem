@@ -201,6 +201,30 @@ The two latches exist because the service restarts on failure: without
 them, a Pi crash-looping on a dying battery would re-alert every boot,
 texting every guardian each time.
 
+### Recorded speech, and how long it is kept
+
+Every push-to-talk press writes the user's recording to
+`data/test/voice/` as `{timestamp}_command.wav` — 16 kHz mono PCM, about
+32 KB per second of speech. It is kept rather than deleted after
+transcription because `latency_bench` replays these files to produce the
+thesis's STT and NLU timings, and `stt_test` transcribes the most recent
+one; a pipeline that tidied up after itself would take the quantitative
+latency claim with it.
+
+**Retention is capped, not indefinite.** The directory is swept
+oldest-first to `config.VOICE_RECORDING_MAX_BYTES` (64 MB, roughly 500
+commands, on the order of two weeks of ordinary use) — once per boot and
+every `VOICE_RECORDING_SWEEP_EVERY` utterances. What that bounds is how
+much of a blind user's recorded speech sits on a device that can be lost
+or stolen, by someone who cannot see what it is storing. Set the cap to
+`0` to keep nothing: the sweep runs after the recording has been
+transcribed, so zero is a working privacy switch rather than a race, at
+the cost of the two tools above.
+
+Synthesised replies are *not* kept here. They live in the content-addressed
+clip store, so a sentence said twice is read from disk instead of
+synthesised twice, and templated ones are swept with the rest of the cache.
+
 **Design conventions** worth knowing before touching code (see also `CLAUDE.md`):
 
 - **One synchronous main loop plus a fixed, named set of background threads** — voice, announcer, heartbeat, telemetry retry, GPS cache, and short-lived per-event haptic workers. The rule is *never block the main loop*, not *never use threads*; adding a new long-lived one is a structural change. No asyncio.

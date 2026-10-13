@@ -300,6 +300,8 @@ from indepensense.config import (
     CLIP_CACHE_DIR,
     CLIP_CACHE_MAX_BYTES,
     CLIP_CACHE_SWEEP_EVERY,
+    VOICE_RECORDING_MAX_BYTES,
+    VOICE_RECORDING_SWEEP_EVERY,
     VOICE_TEST_DIR,
     WAITING_CUE_DELAY_S,
     WAITING_CUE_INTERVAL_S,
@@ -1105,6 +1107,9 @@ class App:
         # where a fixed sentence and a filled-in template are
         # indistinguishable without it. See `_static_clip_names`.
         self._static_names = _static_clip_names(self.language.supported)
+        # Recordings swept every `VOICE_RECORDING_SWEEP_EVERY` utterances
+        # rather than on each one — see `_after_recording`.
+        self._recordings_since_sweep = 0
 
         # Voice concurrency: one voice thread at a time; a second PTT
         # press while _voice_active is set is ignored. `_voice_cancel`
@@ -1664,6 +1669,18 @@ class App:
                     print(f"  Swept {freed / 1e6:.1f} MB of cached speech.", flush=True)
             except Exception as exc:
                 print(f"[clips] startup sweep failed: {exc}", file=sys.stderr, flush=True)
+            # Same split for the push-to-talk recordings: `_after_recording`
+            # covers a device left running, this covers one switched off
+            # before it reaches the count. Separate try, because the two
+            # directories fail independently and bounding one must not be
+            # skipped because the other could not be read.
+            try:
+                freed = clips.sweep(VOICE_TEST_DIR, VOICE_RECORDING_MAX_BYTES)
+                if freed:
+                    print(f"  Swept {freed / 1e6:.1f} MB of recordings.", flush=True)
+            except Exception as exc:
+                print(f"[voice] startup recording sweep failed: {exc}",
+                      file=sys.stderr, flush=True)
         except Exception:
             self._close_stage()
             raise
@@ -3690,6 +3707,11 @@ The comparisons are inclusive, so a threshold names the percentage
             # command instead — "what time is it", answered, then dark.
             self._shutdown_requested = False
             self._voice_active.clear()
+            # In the `finally` because a cancelled or failed cycle still
+            # wrote a recording — counting only the cycles that finished
+            # would let a user who keeps stopping the device fill the card
+            # without the cap ever being consulted.
+            self._after_recording()
 
     def _orient_towards_route(self) -> None:
         """Turn the user to face the start of the route before they walk.
@@ -3960,6 +3982,37 @@ The comparisons are inclusive, so a threshold names the percentage
             play(path)
         except Exception as exc:
             print(f"[clips] could not speak {key!r}: {exc}",
+                  file=sys.stderr, flush=True)
+
+    def _after_recording(self) -> None:
+        """Keep retained push-to-talk recordings under their cap.
+
+        Never raises. A full or read-only card must not cost the user the
+        answer they just asked for — and by the time this runs they have
+        already heard it.
+
+        Counted rather than swept per utterance for the reason
+        `_after_render` gives: a sweep stats every file in the directory,
+        which is not worth doing after every command. The sweep in
+        `start()` covers the device switched off nightly that never
+        reaches the count; this covers one left running for weeks.
+
+        Deliberately not a delete. `voice.tests.manual.latency_bench`
+        replays these recordings to produce the thesis's STT and NLU
+        timings — see `config.VOICE_RECORDING_MAX_BYTES` for why the cap
+        is where it is, and for the zero-retention setting.
+        """
+        self._recordings_since_sweep += 1
+        if self._recordings_since_sweep < VOICE_RECORDING_SWEEP_EVERY:
+            return
+        self._recordings_since_sweep = 0
+        try:
+            freed = clips.sweep(VOICE_TEST_DIR, VOICE_RECORDING_MAX_BYTES)
+            if freed:
+                print(f"[voice] swept {freed / 1e6:.1f} MB of recordings",
+                      flush=True)
+        except Exception as exc:
+            print(f"[voice] recording sweep failed: {exc}",
                   file=sys.stderr, flush=True)
 
     def _clip_for_text(self, text: str, language: str) -> Path:

@@ -1035,6 +1035,37 @@ REMOTE_STT_TIMEOUT_S = 4.0
 
 VOICE_TEST_DIR = PROJECT_ROOT / "data" / "test" / "voice"
 
+# Cap on retained push-to-talk recordings. Until this existed the
+# directory grew without limit: one `{timestamp}_command.wav` per
+# utterance, 16 kHz mono PCM_16 — 32 KB per second of speech, so a
+# typical four-second command is ~130 KB and nothing ever reclaimed any
+# of it.
+#
+# **The recordings are not debris, which is why this is a cap and not a
+# delete.** `voice.tests.manual.latency_bench` replays `*_command.wav`
+# to produce the thesis's STT and NLU timings, and `stt_test` transcribes
+# the most recent one; both exist because a prototype session leaves a
+# corpus behind. Deleting after transcription would be better for privacy
+# and would take the quantitative latency claim with it.
+#
+# 64 MB is ~500 commands — far more corpus than `latency_bench` needs for
+# a median and a p95, and about two weeks of ordinary use. What it bounds
+# is how much of a user's recorded speech sits on a device that can be
+# lost or stolen, which is the part that belongs in the ethics section:
+# retention is capped and stated, rather than indefinite by omission.
+#
+# Set to 0 to keep nothing. The sweep runs after the recording has been
+# transcribed, so a zero cap is a working privacy switch and not a race —
+# at the cost of the two tools above.
+VOICE_RECORDING_MAX_BYTES = 64 * 1024 * 1024
+
+# Sweep after this many recordings, on top of the sweep at startup. Same
+# split as `CLIP_CACHE_SWEEP_EVERY` and for the same reason: a sweep
+# stats every file in the directory, which is not worth doing per
+# utterance, and the startup sweep alone would miss a device left running
+# for weeks. 25 commands is ~3 MB between sweeps.
+VOICE_RECORDING_SWEEP_EVERY = 25
+
 # Rendered speech, named after the sentence it contains. See the module
 # docstring in `voice/clips.py` for the naming scheme and why there are
 # two directories rather than one.

@@ -243,9 +243,17 @@ def sweep(directory: Path, max_bytes: int) -> int:
     sharpened to the nearest 24 hours. Rendered-oldest is at least a
     fact.
 
-    Only ever point this at the cache directory. Everything in it is
-    reproducible from a template at the cost of one synthesis; nothing
-    in `data/audio/messages/` is, within the boot that needs it.
+    Two callers, and the rule that admits both is **never point this at
+    `data/audio/messages/`**. Everything in the clip cache is
+    reproducible from a template at the cost of one synthesis, and every
+    push-to-talk recording in `VOICE_TEST_DIR` is disposable by the time
+    it has been transcribed. The static messages are neither, within the
+    boot that needs them — the emergency-delivery failures are the
+    least-spoken clips on the device and the ones there is no time to
+    synthesise.
+
+    Oldest-first suits both: a clip not needed lately, and a recording
+    old enough that no benchmark run still wants it.
 
     Abandoned temporaries are removed unconditionally — one that
     outlived its process is debris from a crash, and no running writer
