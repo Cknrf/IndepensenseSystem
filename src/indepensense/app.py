@@ -3611,6 +3611,15 @@ The comparisons are inclusive, so a threshold names the percentage
                     intent_result.intent is Intent.UNKNOWN
                     and intent_result.failure is None
                     and self.cloud is not None
+                    # Asked before the cue, not after. `cloud.thinking`
+                    # buys patience for a slow answer; playing it and
+                    # then saying "I need an internet connection" spends
+                    # the user's attention to tell them to keep waiting
+                    # for something that was never going to arrive.
+                    # `OfflineGuard`'s own docstring gives this as the
+                    # reason it checks up front — the check was there,
+                    # the cue just ran first.
+                    and self._cloud_is_worth_waiting_for()
                 ):
                     self._speak_thinking()
                     if self._voice_cancel.is_set():
@@ -4292,6 +4301,25 @@ The comparisons are inclusive, so a threshold names the percentage
         boots without working audio must still boot.
         """
         self._play_clip("language.greeting")
+
+    def _cloud_is_worth_waiting_for(self) -> bool:
+        """Whether a cloud question has any chance of being answered.
+
+        Only used to decide whether the "let me think" cue is honest.
+        The guard still makes the real decision — this cannot replace it,
+        because the link can drop between the two — but it stops the
+        device asking for patience it is about to refuse to use.
+
+        Cheap by construction: a route check is ~0.2 ms and the breaker
+        is a timestamp comparison. Neither touches the network.
+        """
+        guard_reason = getattr(self.cloud, "_unavailable_reason", None)
+        if guard_reason is None:
+            return True
+        try:
+            return guard_reason() is None
+        except Exception:   # noqa: BLE001 - a cue decision, never fatal
+            return True
 
     def _speak_thinking(self) -> None:
         """Tell the user we're working before a slow cloud call. Never raises.
