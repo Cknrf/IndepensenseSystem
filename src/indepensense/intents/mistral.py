@@ -159,6 +159,10 @@ class MistralAnswerer:
         # Guards creation of the session only, not its use — see
         # `_get_session`.
         self._session_lock = threading.Lock()
+        # Same host as `MistralIntentParser`, so the same breaker. A
+        # failed classification already tells this class not to bother,
+        # and a question that times out here should spare the next one.
+        self._breaker = breaker_for(url)
 
     def answer(
         self,
@@ -197,6 +201,15 @@ class MistralAnswerer:
             "temperature": 0.3,
         }
 
+        if not self._breaker.allow():
+            # Skipped without a request: the endpoint is known to be
+            # unavailable, and the alternative is paying the full read
+            # budget to discover it again. `OfflineGuard` has already
+            # turned the breaker's reason into the right spoken message.
+            print("[mistral] answer skipped: host failed recently",
+                  file=sys.stderr)
+            return CloudAnswer(text=None, reason="error")
+
         try:
             response = self._get_session().post(
                 self._url,
@@ -214,10 +227,19 @@ class MistralAnswerer:
         except requests.RequestException as exc:
             # OfflineGuard already ruled out "no internet", so reaching
             # here means the provider specifically is unreachable or slow.
+            #
+            # Recorded so the *next* question does not rediscover it the
+            # expensive way: without this a 10 s timeout cost the user
+            # another full 10 s on the question after it.
+            reason = breaker_reason_for(exc)
+            if reason:
+                self._breaker.record_failure(reason)
             print(f"[mistral] request failed: {exc}", file=sys.stderr)
             return CloudAnswer(text=None, reason="error")
 
+        self._breaker.record_success()
         if not response.ok:
+            self._record_status_failure(response)
             body = response.text[:200] if response.text else "(empty)"
             print(
                 f"[mistral] HTTP {response.status_code}: {body}",
@@ -257,6 +279,16 @@ class MistralAnswerer:
                 import requests
                 self._session = requests.Session()
             return self._session
+
+    def _record_status_failure(self, response) -> None:
+        """Carry a bad status into the shared policy — see the identical
+        helper in the voice drivers. A 429 here should back off; a 500
+        should not, because the next worker may be healthy."""
+        import requests
+
+        reason = breaker_reason_for(requests.HTTPError(response=response))
+        if reason:
+            self._breaker.record_failure(reason)
 
     @staticmethod
     def _extract(response) -> CloudAnswer:
