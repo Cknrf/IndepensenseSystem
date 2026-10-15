@@ -143,3 +143,41 @@ cd ~/photon
 rm -rf photon_data/
 # Re-download the latest .jsonl.zst and re-run the import pipeline.
 ```
+
+After updating the index, rebuild the gazetteer from the same dump (next
+section) so the two agree.
+
+## Gazetteer — correcting misheard place names
+
+Whisper spells a place name it has never learned by how it sounds:
+"Sambaht" for Sambat, "Bauwan" for Bauan. Photon then finds nothing, or
+the wrong thing. `routing/gazetteer.py` corrects the transcript against a
+list of the names that actually exist in the deployment area, using
+RapidFuzz string similarity — no AI model, so a correction can only ever
+be a real name.
+
+The list is `data/gazetteer/batangas.txt`, one name per line, committed to
+the repo. It is built **on the Mac** from the same dump the index is
+imported from, so every name in it is one Photon can find:
+
+```bash
+wget https://download1.graphhopper.com/public/asia/philippines/photon-dump-philippines-1.0-latest.jsonl.zst
+zstd -dc photon-dump-philippines-1.0-latest.jsonl.zst \
+  | python -m indepensense.tools.build_gazetteer --province Batangas
+```
+
+The 2026-10-10 dump gives 15,803 names (15,653 after folding case and
+punctuation); loading takes ~50 ms and a correction ~0.6 ms on the Mac.
+
+How it is used, in `IntentExecutor._find_destination`:
+
+1. The transcript is geocoded as heard, as before.
+2. If the best candidate contains every word that was heard, it is used
+   — a transcript that already names a real place is never touched.
+3. Otherwise the closest name on the list is geocoded instead, if it
+   scores at least `GAZETTEER_MIN_SCORE` and does not tie with another.
+4. Either way, the destination is read back for confirmation.
+
+"Nearest X" requests skip correction: they name a category, which Photon
+matches on the feature type rather than the name. A missing list file, or
+a missing `rapidfuzz` package, only turns correction off.

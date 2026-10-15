@@ -23,7 +23,7 @@ import sys
 import time
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from indepensense.intents import messages
 from indepensense.intents.base import CloudAnswerer, Intent, IntentResult
@@ -37,13 +37,23 @@ from indepensense.routing.base import (
     haversine_m,
 )
 from indepensense.routing.places import SavedPlaces
-from indepensense.routing.ranking import rank_candidates
+from indepensense.routing.ranking import (
+    name_match_score,
+    normalise_name,
+    rank_candidates,
+)
 from indepensense.navigation.monitor import NavigationMonitor
 from indepensense.power.base import BatteryReader
 from indepensense.sensors.base import GPSSensor
 from indepensense.telemetry.base import AlertEvent, EventType, TelemetryClient
 from indepensense.vision.base import Camera, Detection, Detector, OCR
 from indepensense.voice.volume import VolumeState
+
+if TYPE_CHECKING:
+    # Type only: the gazetteer imports rapidfuzz, and `app.py` opens it
+    # in a factory that degrades when that is missing. Importing it here
+    # would make a missing optional library stop the executor loading.
+    from indepensense.routing.gazetteer import Gazetteer
 
 
 def _place_parts(hit: GeocodingResult, *fields: str) -> list[str]:
@@ -341,6 +351,10 @@ class IntentExecutor:
         # falls back to geocoding every destination, which is what the
         # wearable did before this existed.
         places: SavedPlaces | None = None,
+        # Known place names, for correcting a misheard destination that
+        # Photon could not match (`routing/gazetteer.py`). None geocodes
+        # the transcript as heard, which is what the wearable did before.
+        gazetteer: "Gazetteer | None" = None,
         # Speaker volume. None means the wearable cannot change it —
         # it stays at whatever the OS default is and says so.
         volume: VolumeState | None = None,
@@ -388,6 +402,7 @@ class IntentExecutor:
         self._confirmer = confirmer
         self._shutdown = shutdown
         self._places = places
+        self._gazetteer = gazetteer
         self._volume = volume
         self._heading = heading
         self._obstacle_ahead = obstacle_ahead
@@ -488,15 +503,10 @@ class IntentExecutor:
         destination = self._saved_destination(location)
 
         if destination is None:
-            # Ask for several candidates and decide locally. Photon's own
-            # ordering blends text relevance with an opaque location bias, so
-            # taking its first result means accepting a choice we cannot
-            # inspect — which is how "Jollibee" resolved to a branch 700 km
-            # away. `near` still biases the search; ranking decides the answer.
-            hits = self._geocoder.geocode(
-                location, limit=self._geocode_candidate_limit, near=start,
+            destination = self._find_destination(
+                location, start, nearest=bool(result.parameters.get("nearest", False)),
             )
-            if not hits:
+            if destination is None:
                 # Say so explicitly when the user keeps a list of their
                 # own and this was not on it. They cannot glance at that
                 # list, so without this a misheard label is
@@ -507,14 +517,6 @@ class IntentExecutor:
                     else "nav.place_not_found"
                 )
                 return messages.get(key, self._lang, location=location)
-
-            ranked = rank_candidates(
-                hits,
-                origin=start,
-                query=location,
-                prefer_nearest=bool(result.parameters.get("nearest", False)),
-            )
-            destination = ranked[0]
 
             # Read the choice back before committing to it. Ranking makes the
             # right pick far more likely but cannot make it certain — the user
@@ -1436,6 +1438,69 @@ class IntentExecutor:
             city=None,
             feature_type="saved_place",
         )
+
+    def _find_destination(
+        self,
+        location: str,
+        start: Coordinate,
+        nearest: bool,
+    ) -> GeocodingResult | None:
+        """Geocode what the user said, correcting it if it names nothing.
+
+        The transcript goes to Photon as heard first. Only when the best
+        candidate fails to contain every word of it — Photon found
+        something, but not what was said — or nothing came back at all,
+        is it checked against the gazetteer and the corrected name
+        geocoded instead. Raw first is deliberate: the list covers one
+        province, so correcting before asking would rewrite a perfectly
+        good "SM Megamall" into whichever Batangas name it sounds
+        nearest to. A transcript that already names a real place is
+        never touched.
+
+        "Nearest X" is never corrected. It names a category, which
+        Photon matches on the feature type rather than the name, so
+        "hospital" missing the word "hospital" in every result is the
+        normal case, not a mishearing — and correcting it into one
+        particular hospital would discard the user's request for the
+        closest.
+        """
+        ranked = self._geocode_ranked(location, start, nearest)
+        if nearest or self._gazetteer is None:
+            return ranked[0] if ranked else None
+        if ranked and name_match_score(location, ranked[0].name) >= 1.0:
+            return ranked[0]
+
+        correction = self._gazetteer.correct(location)
+        if correction is None or normalise_name(correction.name) == normalise_name(location):
+            return ranked[0] if ranked else None
+        corrected = self._geocode_ranked(correction.name, start, nearest=False)
+        print(
+            f"[nav] corrected {location!r} -> {correction.name!r} "
+            f"(score {correction.score:.0f}, {len(corrected)} hit(s))",
+            flush=True,
+        )
+        if corrected:
+            return corrected[0]
+        return ranked[0] if ranked else None
+
+    def _geocode_ranked(
+        self,
+        query: str,
+        start: Coordinate,
+        nearest: bool,
+    ) -> list[GeocodingResult]:
+        """Photon's candidates for `query`, best first for a user at `start`.
+
+        Ask for several candidates and decide locally. Photon's own
+        ordering blends text relevance with an opaque location bias, so
+        taking its first result means accepting a choice we cannot
+        inspect — which is how "Jollibee" resolved to a branch 700 km
+        away. `near` still biases the search; ranking decides the answer.
+        """
+        hits = self._geocoder.geocode(
+            query, limit=self._geocode_candidate_limit, near=start,
+        )
+        return rank_candidates(hits, origin=start, query=query, prefer_nearest=nearest)
 
     def _confirm_destination(
         self,

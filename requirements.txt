@@ -1,6 +1,10 @@
 pytest>=8.0
 requests>=2.32
 
+# Fuzzy matching of misheard destinations against known place names
+# (routing/gazetteer.py). Compiled wheels for macOS and aarch64 Linux.
+rapidfuzz>=3.0
+
 # Voice
 piper-tts>=1.2
 faster-whisper>=1.0

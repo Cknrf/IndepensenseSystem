@@ -169,7 +169,7 @@ The runtime lives under `src/indepensense/`. Each folder is one domain, each shi
 | `voice/` | Push-to-talk flow, local and remote STT behind one router, Piper + MMS + remote TTS behind another, the content-addressed clip store, speaker volume |
 | `intents/` | LLM-based intent classification + per-intent handlers (navigation, vision, device status, emergency, language switching, help, saved places, volume), bilingual response catalogue, cloud LLM fallback |
 | `navigation/` | GPS-to-route monitoring, off-route detection, turn-by-turn cueing, remaining-distance, compass turn verification, and turn-to-face orientation logic |
-| `routing/` | GraphHopper + Photon HTTP clients, local candidate ranking, geo helpers (distance and bearing), and the user's own saved places |
+| `routing/` | GraphHopper + Photon HTTP clients, local candidate ranking, correction of misheard place names against a gazetteer, geo helpers (distance and bearing), and the user's own saved places |
 | `feedback/` | Buzzer, vibration motors, PTT + SOS buttons |
 | `safety/` | Fall detection via accelerometer thresholds; still / walking classification for obstacle re-alerts |
 | `power/` | Waveshare UPS HAT driver, low-battery alerts |
@@ -384,6 +384,7 @@ a SIM whose plan permits SMS — a data-only plan fails at the send step.
 | Render every fixed message to audio — run after editing `intents/messages.py` | `python -m indepensense.tools.render_messages` — ~4 min, ~15 MB into `data/audio/messages/` (measured: 122 clips, 247 s) |
 | List what would be rendered, without loading a voice (works on a Mac) | `python -m indepensense.tools.render_messages --dry-run` |
 | Re-render everything, e.g. after changing a voice model | `python -m indepensense.tools.render_messages --force` |
+| Rebuild the place-name list misheard destinations are corrected against — on the Mac, after updating the Photon index | `zstd -dc photon-dump-philippines-1.0-latest.jsonl.zst \| python -m indepensense.tools.build_gazetteer --province Batangas` — see [`docs/photon.md`](docs/photon.md#gazetteer--correcting-misheard-place-names) |
 | Fetch every Hub-hosted model into `models/` — once after install, and after changing `WHISPER_MODELS`, `NLU_EMBEDDING_MODEL` or `MMS_VOICE_REPOS` | `python -m indepensense.tools.fetch_models` (`--dry-run` lists without network, `--force` refetches) |
 
 Optional: anything missing is synthesised on demand, and a fixed message

@@ -846,6 +846,26 @@ PHOTON_URL = "http://127.0.0.1:2322"
 # branches than this in one city.
 GEOCODE_CANDIDATE_LIMIT = 10
 
+# Known place names that a misheard destination is corrected against
+# (`routing/gazetteer.py`). Whisper spells a name it has never learned by
+# how it sounds — a barangay comes back as a near miss that Photon cannot
+# place. The list is built from the same dump the Photon index is, by
+# `python -m indepensense.tools.build_gazetteer`, and committed: it is
+# reference data, not per-user state, so it lives under `data/gazetteer/`
+# rather than `var/`.
+GAZETTEER_PATH = PROJECT_ROOT / "data" / "gazetteer" / "batangas.txt"
+
+# Least `fuzz.ratio` (0-100) a known name must score against the
+# transcript to replace it. NOT tuned against real transcripts — there is
+# no labelled set of misheard destinations yet. On a hand-written sanity
+# set of 36 phrasings against the Batangas list, right corrections scored
+# 82-96 ("lemeri" -> Lemery 83, "rosaryo" -> Rosario 86, "sambaht" ->
+# Sambat 92) and the best wrong match 78 ("st lukes" -> Saint Luke). 85
+# sits above that gap rather than in it, trading the two lowest right
+# corrections for margin: a wrong correction is still read back for
+# confirmation, but it makes the user decline before they can retry.
+GAZETTEER_MIN_SCORE = 85.0
+
 # Voice — see docs/voice.md for model downloads.
 #
 # TTS is two engines, not one. Piper has no Filipino/Tagalog voice, so the

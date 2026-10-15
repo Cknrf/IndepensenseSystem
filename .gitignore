@@ -32,7 +32,13 @@ htmlcov/
 
 # Local logs and data
 *.log
-data/
+data/*
+
+# ...except the gazetteer: reference data built from the Photon dump, not
+# a local recording. Committed so the Pi receives the exact list the
+# thesis describes, and a rebuild shows up as a diff. `data/*` above
+# rather than `data/` for the reason given under `var/*` below.
+!data/gazetteer/
 
 # Runtime state written by the device (guardian contact cache, GPS surveys).
 # Machine-local and regenerated — never committed.

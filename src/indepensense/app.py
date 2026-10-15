@@ -166,6 +166,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
+from typing import TYPE_CHECKING
 
 from indepensense.config import (
     VOICE_STACK_LOAD_ATTEMPTS,
@@ -206,6 +207,8 @@ from indepensense.config import (
     DYP_A22_TOP_PORT,
     EMERGENCY_BUTTON_GPIO,
     EMERGENCY_REARM_S,
+    GAZETTEER_MIN_SCORE,
+    GAZETTEER_PATH,
     GEOCODE_CANDIDATE_LIMIT,
     GRAPHHOPPER_URL,
     GUARDIAN_CACHE_PATH,
@@ -386,6 +389,10 @@ from indepensense.voice.router import (
 from indepensense.voice.volume import VolumeState
 from indepensense.voice.remote_stt import RemoteSTT, RoutedSTT
 from indepensense.voice.whisper import FasterWhisperSTT
+
+if TYPE_CHECKING:
+    # Imported for real in `_try_open_gazetteer`, which says why.
+    from indepensense.routing.gazetteer import Gazetteer
 
 
 FALL_LOOP_INTERVAL_S = 0.01     # 100 Hz — matches ThresholdFallDetector's tuning
@@ -1437,6 +1444,7 @@ class App:
 
         self.places = self._open_saved_places()
         print(f"  {len(self.places)} saved place(s).", flush=True)
+        gazetteer = self._try_open_gazetteer()
 
         self._stage("Loading device credential")
         self.credential = self._load_credential()
@@ -1508,6 +1516,7 @@ class App:
             confirmer=self._confirm_destination,
             shutdown=self._request_shutdown,
             places=self.places,
+            gazetteer=gazetteer,
             volume=self.volume,
             heading=self.trusted_heading,
             obstacle_ahead=self.obstacle_ahead_cm,
@@ -4750,6 +4759,32 @@ The comparisons are inclusive, so a threshold names the percentage
         list, both handled inside `SavedPlaces`.
         """
         return SavedPlaces(SAVED_PLACES_PATH)
+
+    def _try_open_gazetteer(self) -> "Gazetteer | None":
+        """Load the place names misheard destinations are corrected against.
+
+        Degraded, not fatal: without it every destination is geocoded as
+        heard, which is how navigation worked before the list existed.
+        Not a device, but `_try_` for the same contract — log, return
+        None, and the executor handles None.
+
+        The import is here rather than at the top for the same reason:
+        `rapidfuzz` is new, and a Pi updated by rsync before `pip install`
+        would otherwise fail to start at all — fall detection included —
+        over a navigation nicety.
+        """
+        try:
+            from indepensense.routing.gazetteer import Gazetteer
+            gazetteer = Gazetteer.load(GAZETTEER_PATH, min_score=GAZETTEER_MIN_SCORE)
+        except Exception as exc:
+            print(
+                f"  Gazetteer unavailable ({exc}). Destinations will be "
+                "geocoded as heard, with no correction.",
+                flush=True,
+            )
+            return None
+        print(f"  {len(gazetteer)} known place name(s).", flush=True)
+        return gazetteer
 
     def _open_router(self) -> GraphHopperRouter:
         return GraphHopperRouter(base_url=GRAPHHOPPER_URL)
