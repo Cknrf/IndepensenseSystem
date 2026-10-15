@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IndepenSense Block Diagrams</title>
+<style>
+  :root { --fg:#1d1d1f; --muted:#5f6368; --line:#d9d9de; --bg:#ffffff; --panel:#f6f6f8; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:2rem; margin:0 0 .25rem; }
+  h2 { font-size:1.4rem; margin:3rem 0 .5rem; padding-top:1.5rem; border-top:1px solid var(--line); }
+  .lede { color:var(--muted); margin-top:0; }
+  code { font:.9em ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--panel); padding:1px 5px; border-radius:4px; }
+  table { border-collapse:collapse; margin:1rem 0; width:100%; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:var(--panel); }
+  figure { margin:1.5rem 0; padding:16px; border:1px solid var(--line); border-radius:8px; overflow-x:auto; background:#fff; }
+  figure pre.mermaid { margin:0; display:flex; justify-content:center; }
+  figure pre.mermaid svg { max-width:100%; height:auto; }
+  ul { padding-left:1.25rem; }
+  li { margin:.35rem 0; }
+  .note { color:var(--muted); font-size:.9rem; }
+  @media print {
+    main { max-width:none; padding:0; }
+    h2 { page-break-before:always; border-top:none; }
+    figure { border:none; page-break-inside:avoid; }
+  }
+</style>
+</head>
+<body>
+<main>
+<h1>IndepenSense — Block Diagrams</h1>
+<p class="lede">What the system is made of and how its parts connect. The flowcharts show <em>when</em> things happen. These diagrams show <em>what talks to what</em>.</p>
+
+<p>The diagrams are <strong>levelled</strong>. Each one zooms into a block of the one above it.</p>
+<table>
+  <tr><th>Level</th><th>Diagram</th><th>Shows</th></tr>
+  <tr><td>0</td><td><a href="#d0">System context</a></td><td>The wearable as one block, with the people and services it talks to</td></tr>
+  <tr><td>1</td><td><a href="#d1">Hardware</a></td><td>Every physical component, the bus it sits on, and how power reaches it</td></tr>
+  <tr><td>2</td><td><a href="#d2">Software</a></td><td>The runtime's domains, grouped into input, processing and output</td></tr>
+</table>
+
+<p>Every diagram reads <strong>left to right: input → processing → output</strong>. Arrow labels name the interface: a bus, a protocol, or the data that crosses it.</p>
+<table>
+  <tr><th>Arrow</th><th>Meaning</th></tr>
+  <tr><td>Solid</td><td>Data or control, every time the system runs</td></tr>
+  <tr><td>Thick</td><td>Power</td></tr>
+  <tr><td>Dotted</td><td>Optional path. Cloud services with a local fallback, or a fallback used only when the primary path fails</td></tr>
+</table>
+<p class="note">Pins, addresses and ports match <code>docs/hardware.md</code> and <code>config.py</code>. <code>hardware.md</code> stays the single source of truth for wiring.</p>
+
+<h2 id="d0">0 System context</h2>
+<p>The wearable is one block here. Everything outside it is a person or a service it depends on.</p>
+<figure><pre class="mermaid">---
+title: 0 · IndepenSense system context
+---
+flowchart LR
+    U([&quot;Wearer&lt;br/&gt;visually impaired&quot;])
+    G([&quot;Guardian&lt;br/&gt;family or carer&quot;])
+
+    W[&quot;&lt;b&gt;IndepenSense wearable&lt;/b&gt;&lt;br/&gt;Raspberry Pi 5 on a cane&lt;br/&gt;&lt;i&gt;runs fully offline&lt;/i&gt;&quot;]
+
+    subgraph CLOUD[&quot;Internet (optional)&quot;]
+        direction TB
+        BE[&quot;Backend API&lt;br/&gt;indepensense-api&quot;]
+        DB[&quot;Guardian dashboard&lt;br/&gt;&lt;i&gt;separate repository&lt;/i&gt;&quot;]
+        MI[&quot;Mistral API&lt;br/&gt;intent parsing, open questions&quot;]
+        GP[&quot;gpuer&lt;br/&gt;Tagalog STT + TTS&quot;]
+    end
+
+    U --&gt;|&quot;voice, 3 buttons, motion, surroundings&quot;| W
+    W --&gt;|&quot;speech, vibration, buzzer&quot;| U
+    W --&gt;|&quot;heartbeat + alerts&lt;br/&gt;HTTPS over 4G&quot;| BE
+    BE --&gt; DB --&gt; G
+    W --&gt;|&quot;emergency SMS&lt;br/&gt;cellular, no data needed&quot;| G
+    W -.-&gt;|&quot;HTTPS, local fallback&quot;| MI
+    W -.-&gt;|&quot;HTTPS, local fallback&quot;| GP</pre></figure>
+<p><strong>Why the cloud box is dotted.</strong> Every remote stage has a local fallback, and routing and geocoding run on the Pi itself (GraphHopper, Photon). With no network the device still detects falls and obstacles, navigates and speaks. Only two things need the network: guardian telemetry, and the open-question answerer. Alerts also go by SMS, which needs cellular signal but no data bearer.</p>
+
+<h2 id="d1">1 Hardware block diagram</h2>
+<p>The wearable from level 0, broken into physical components. The Pi sits in the middle, inputs are on the left, outputs on the right, and power is below.</p>
+<figure><pre class="mermaid">---
+title: 1 · IndepenSense hardware
+---
+flowchart LR
+    subgraph IN[&quot;INPUT&quot;]
+        direction TB
+        US1[&quot;DYP-A22 ultrasonic · TOP&lt;br/&gt;head-level obstacles&quot;]
+        US2[&quot;DYP-A22 ultrasonic · BOTTOM&lt;br/&gt;ground-level obstacles&quot;]
+        IMU[&quot;MPU6050 IMU&lt;br/&gt;accel + gyro&quot;]
+        MAG[&quot;QMC5883P magnetometer&lt;br/&gt;heading&quot;]
+        CAM[&quot;Pi Camera Module 3&quot;]
+        BTN[&quot;3 push buttons&lt;br/&gt;PTT · Repeat/Stop · Emergency&quot;]
+        MIC[&quot;Headset microphone&quot;]
+    end
+
+    subgraph CPU[&quot;PROCESSING&quot;]
+        PI[&quot;&lt;b&gt;Raspberry Pi 5&lt;/b&gt;&lt;br/&gt;Raspberry Pi OS Trixie&lt;br/&gt;Python 3.13&quot;]
+    end
+
+    subgraph OUT[&quot;OUTPUT&quot;]
+        direction TB
+        DRV1[&quot;3× NPN transistor&quot;] --&gt; MOT[&quot;3 vibration motors&lt;br/&gt;in the cane handle&quot;]
+        DRV2[&quot;NPN transistor&quot;] --&gt; BUZ[&quot;Active buzzer&lt;br/&gt;emergency only&quot;]
+        SPK[&quot;Headset speaker&lt;br/&gt;open-ear&quot;]
+    end
+
+    subgraph COMMS[&quot;COMMUNICATION + POSITION&quot;]
+        SIM[&quot;SIM7600G-H 4G dongle&lt;br/&gt;cellular data · SMS · GPS&quot;]
+    end
+
+    subgraph PWR[&quot;POWER&quot;]
+        direction TB
+        BAT[&quot;4× 21700 Li-ion&lt;br/&gt;4S1P, 14.4 V nominal&quot;]
+        UPS[&quot;Waveshare UPS HAT (E)&lt;br/&gt;charger + fuel gauge&quot;]
+        BAT ==&gt; UPS
+    end
+
+    US1 --&gt;|&quot;UART0 · 115200&quot;| PI
+    US2 --&gt;|&quot;UART4 · 115200&quot;| PI
+    IMU --&gt;|&quot;I2C1 · 0x68 · 100 Hz&quot;| PI
+    MAG --&gt;|&quot;I2C4 · 0x2C&quot;| PI
+    CAM --&gt;|&quot;CSI ribbon · CAM0&quot;| PI
+    BTN --&gt;|&quot;GPIO 23 / 24 / 25&quot;| PI
+    MIC --&gt;|&quot;USB Audio&quot;| PI
+
+    PI --&gt;|&quot;GPIO 17 / 27 / 22&quot;| DRV1
+    PI --&gt;|&quot;GPIO 18&quot;| DRV2
+    PI --&gt;|&quot;USB Audio&quot;| SPK
+
+    PI &lt;--&gt;|&quot;USB&quot;| SIM
+    SIM -.-&gt;|&quot;GPS NMEA · 1 Hz&quot;| PI
+
+    UPS ==&gt;|&quot;5 V · pogo pins&quot;| PI
+    UPS --&gt;|&quot;I2C1 · 0x2D&lt;br/&gt;battery %, voltage&quot;| PI</pre></figure>
+<p><strong>Design decisions this diagram shows:</strong></p>
+<ul>
+  <li><strong>Two I²C buses.</strong> The compass has I2C4 to itself. On I2C1 its third set of pull-ups made the bus unreliable.</li>
+  <li><strong>Transistors between the GPIO and every motor or buzzer.</strong> Each motor draws 60–100 mA, well above what a GPIO pin can source.</li>
+  <li><strong>Microphone and speaker are one USB device.</strong> The Pi 5 has no 3.5 mm jack. A USB Audio Class headset is full duplex, which the Bluetooth earphones it replaced were not.</li>
+  <li><strong>The 4G dongle is on USB, not a HAT.</strong> The 40-pin header is fully used, and a HAT would cover it.</li>
+  <li><strong>The UPS HAT uses no header pins.</strong> It powers the Pi through pogo pins underneath and shares only I2C1.</li>
+  <li><strong>The three motors are drawn as one output.</strong> They are mounted in the same handle, so the wearer feels one vibrator with three intensity steps, not three directions.</li>
+</ul>
+
+<h2 id="d2">2 Software functional block diagram</h2>
+<p>The Raspberry Pi block from level 1, broken into the runtime's domains (<code>src/indepensense/&lt;domain&gt;/</code>). Each block names its module. Drivers are drawn with their hardware. Everything else is application logic that depends only on a driver's <code>Protocol</code>, never on the driver itself.</p>
+<figure><pre class="mermaid">---
+title: 2 · IndepenSense software (runtime on the Pi)
+---
+flowchart LR
+    subgraph IN[&quot;INPUT · drivers&quot;]
+        direction TB
+        S_US[&quot;sensors/&lt;br/&gt;DYP-A22 ×2&quot;]
+        S_IMU[&quot;sensors/&lt;br/&gt;MPU6050&quot;]
+        S_MAG[&quot;sensors/&lt;br/&gt;QMC5883P&quot;]
+        S_GPS[&quot;sensors/&lt;br/&gt;GPS via SIM7600&quot;]
+        S_BTN[&quot;feedback/&lt;br/&gt;buttons&quot;]
+        S_CAM[&quot;vision/&lt;br/&gt;camera&quot;]
+        S_MIC[&quot;voice/&lt;br/&gt;push-to-talk recorder&quot;]
+        S_UPS[&quot;power/&lt;br/&gt;UPS HAT&quot;]
+    end
+
+    subgraph CORE[&quot;PROCESSING · app.py&quot;]
+        direction TB
+        LOOP[&quot;&lt;b&gt;Main loop · 100 Hz&lt;/b&gt;&lt;br/&gt;never blocks&quot;]
+        SAFE[&quot;safety/&lt;br/&gt;fall detector&lt;br/&gt;still / walking&quot;]
+        OBS[&quot;Obstacle tiers&lt;br/&gt;proximity rhythm&quot;]
+        NAV[&quot;navigation/&lt;br/&gt;route monitor, off-route,&lt;br/&gt;turn-to-face&quot;]
+
+        subgraph VOICE[&quot;Voice pipeline · voice thread&quot;]
+            direction TB
+            STT[&quot;voice/&lt;br/&gt;STT router&quot;]
+            NLU[&quot;intents/&lt;br/&gt;tiered intent parser&quot;]
+            EXE[&quot;intents/&lt;br/&gt;executor + handlers&quot;]
+            STT --&gt; NLU --&gt; EXE
+        end
+
+        VIS[&quot;vision/&lt;br/&gt;YOLOv8 · Tesseract OCR&quot;]
+        RT[&quot;routing/&lt;br/&gt;GraphHopper + Photon clients&lt;br/&gt;saved places&quot;]
+        MSG[&quot;intents/messages.py&lt;br/&gt;bilingual responses&quot;]
+    end
+
+    subgraph OUT[&quot;OUTPUT&quot;]
+        direction TB
+        ANN[&quot;Announcer thread&lt;br/&gt;voice/ TTS router + clip store&quot;]
+        HAP[&quot;feedback/&lt;br/&gt;motors · buzzer&lt;br/&gt;haptic worker threads&quot;]
+        TEL[&quot;telemetry/&lt;br/&gt;heartbeat + alert sender&quot;]
+        SMS[&quot;messaging/&lt;br/&gt;SMS via mmcli&quot;]
+    end
+
+    subgraph LOCAL[&quot;Local services on the Pi&quot;]
+        direction TB
+        GH[(&quot;GraphHopper :8989&lt;br/&gt;offline routing&quot;)]
+        PH[(&quot;Photon :2322&lt;br/&gt;offline geocoding&quot;)]
+        OL[(&quot;Ollama :11434&lt;br/&gt;Qwen 3 1.7B&quot;)]
+    end
+
+    subgraph NETW[&quot;Internet (optional)&quot;]
+        direction TB
+        C_STT[(&quot;gpuer · STT&quot;)]
+        C_LLM[(&quot;Mistral&quot;)]
+        C_TTS[(&quot;gpuer · TTS&quot;)]
+        C_BE[(&quot;Backend API&quot;)]
+    end
+
+    S_IMU --&gt; LOOP
+    S_US --&gt; LOOP
+    S_UPS --&gt; LOOP
+    S_GPS --&gt;|&quot;cached fix&quot;| LOOP
+    S_MAG --&gt; NAV
+    LOOP --&gt; SAFE
+    LOOP --&gt; OBS
+    LOOP --&gt; NAV
+
+    S_BTN --&gt;|&quot;PTT press&quot;| S_MIC --&gt; STT
+    S_BTN --&gt;|&quot;emergency&quot;| TEL
+    EXE --&gt; VIS
+    S_CAM --&gt; VIS
+    EXE --&gt; RT
+    RT --&gt; GH
+    RT --&gt; PH
+    EXE --&gt; NAV
+
+    STT -.-&gt;|&quot;Tagalog&quot;| C_STT
+    NLU -.-&gt;|&quot;escalated utterances&quot;| C_LLM
+    NLU -.-&gt;|&quot;when cloud fails&quot;| OL
+    ANN -.-&gt;|&quot;Tagalog, templated&quot;| C_TTS
+
+    OBS --&gt; HAP
+    SAFE --&gt;|&quot;fall&quot;| HAP
+    SAFE --&gt;|&quot;fall&quot;| TEL
+    NAV --&gt; MSG
+    EXE --&gt; MSG
+    MSG --&gt; ANN
+    TEL --&gt; C_BE
+    TEL --&gt; SMS</pre></figure>
+<p><strong>What this diagram shows:</strong></p>
+<ul>
+  <li><strong>The main loop only reads and decides.</strong> Speech goes to the announcer thread and haptic patterns to short-lived worker threads, so fall and obstacle detection never wait on output.</li>
+  <li><strong>Voice runs on its own thread.</strong> A push-to-talk press starts it, so transcription and inference (seconds) never touch the 100 Hz loop.</li>
+  <li><strong>Intent parsing is three-stage.</strong> An on-device embedding matcher answers about 52% of utterances in about 30 ms. The rest go to Mistral, and Ollama is used only when the cloud fails.</li>
+  <li><strong>Every spoken word passes through <code>messages.py</code>.</strong> No user-facing text lives in the logic blocks. That is what keeps English and Tagalog in step.</li>
+  <li><strong>Every dotted arrow to the internet has a local block beside it.</strong> Ollama backs Mistral. Local Whisper and Piper/MMS (inside the STT and TTS routers) back gpuer. GraphHopper and Photon never needed the cloud at all.</li>
+  <li><strong>An alert leaves by two paths.</strong> HTTPS to the backend for the dashboard, and SMS for when there is signal but no data.</li>
+</ul>
+</main>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose",
+                       flowchart: { htmlLabels: true, curve: "basis" } });
+  await mermaid.run();
+</script>
+</body>
+</html>
