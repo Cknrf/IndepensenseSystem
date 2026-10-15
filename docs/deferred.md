@@ -326,8 +326,12 @@ Options, none free of caveats:
 * **PWM the supply** to lower the average voltage. Probably works, but the
   oscillator has a minimum start voltage, so the usable range may be only
   100%→60% before it stutters or falls silent. gpiozero on the Pi 5 uses
-  *software* PWM whose jitter can itself be audible; GPIO 18 is a hardware
-  PWM pin but reaching it needs `dtoverlay` and sysfs, not gpiozero.
+  *software* PWM whose jitter can itself be audible, and reaching a
+  hardware PWM channel needs `dtoverlay` and sysfs, not gpiozero. This
+  option also got more expensive on 2026-10-15: the buzzer moved off
+  GPIO 18, which *was* a hardware PWM pin, onto GPIO 20, which is not.
+  **GPIO 19 (pin 35) is the only hardware PWM pin left**, so taking this
+  route now means a wire move as well as the overlay.
 * **Series resistor** — reliable, but hardware rework on a fabricated unit.
 * **Physical damping** (tape or foam over the sound port) — several dB,
   free, reversible, and the fabricator can do it in a minute.

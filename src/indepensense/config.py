@@ -1205,12 +1205,14 @@ VOLUME_STATE_PATH = PROJECT_ROOT / "var" / "volume"
 # GPIO 24 is physical pin 18; GPIO 25 is physical pin 22. The test
 # asserts both against the Pi 5 header so they cannot quietly disagree
 # again.
-PTT_BUTTON_GPIO = 23         # physical pin 16 — push-to-talk (click to start, click to stop)
+PTT_BUTTON_GPIO = 21         # physical pin 40 — push-to-talk (click to start, click to stop)
 EMERGENCY_BUTTON_GPIO = 25   # physical pin 22, FRONT button — fires emergency.trigger
 REPEAT_BUTTON_GPIO = 24      # physical pin 18, LEFT button — repeats, or stops speech
 
-# Active buzzer — direct GPIO drive (see feedback/gpio_buzzer.py for the
-# current-draw caveat if the Pi shows undervoltage warnings).
+# Active buzzer — driven through an NPN transistor like the motors, not
+# straight from the pin. Both this file and docs/hardware.md described it
+# as direct GPIO drive until 2026-10-15; the assembled unit has always had
+# the fourth transistor.
 #
 # **Emergency only.** The buzzer is the one output a *bystander* can
 # perceive, so it carries exactly one meaning: this person needs help.
@@ -1219,7 +1221,7 @@ REPEAT_BUTTON_GPIO = 24      # physical pin 18, LEFT button — repeats, or stop
 # obstacle and an emergency teaches a bystander nothing by its presence
 # and trains the wearer to ignore it. Obstacles are haptic-only; see the
 # feedback matrix in `App._play_warning_pattern`.
-BUZZER_GPIO = 18             # physical pin 12
+BUZZER_GPIO = 20             # physical pin 38
 
 # How long the wearable waits for the user to approve a destination before
 # it starts routing. A press within this window means yes; silence means no.
@@ -1246,9 +1248,16 @@ PTT_MAX_RECORDING_S = 30.0
 # Vibration motors — driven through NPN transistors (motors draw more
 # current than a GPIO can safely source). See docs/hardware.md for the
 # transistor + flyback-diode circuit each motor needs.
-VIBRATION_FRONT_GPIO = 17    # physical pin 11
+#
+# Front and left moved off GPIO 17/22 (pins 11/15) on 2026-10-15: both
+# channels were dead from the GPIO side while the perfboard tested good
+# when VCC was injected at the base resistor. Right was never affected and
+# stays on GPIO 27. The vacated pins are not reused until their pads are
+# confirmed healthy — the fault was never isolated to the pin itself, and
+# a wire or a crimp remains the likelier cause.
+VIBRATION_FRONT_GPIO = 16    # physical pin 36
 VIBRATION_RIGHT_GPIO = 27    # physical pin 13
-VIBRATION_LEFT_GPIO = 22     # physical pin 15
+VIBRATION_LEFT_GPIO = 26     # physical pin 37
 
 # Fall detection thresholds (starting from the literature; tune empirically)
 FALL_FREEFALL_THRESHOLD_G = 0.5

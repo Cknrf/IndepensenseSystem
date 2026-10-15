@@ -8,16 +8,23 @@ exact circuit.
 
 Wiring per motor:
     Motor +     → 5V rail (Pi pin 2 or 4)
-    Motor −     → NPN transistor collector (e.g. 2N2222, 2N3904)
+    Motor −     → NPN transistor collector (2N2222A as built)
     NPN emitter → GND rail
     NPN base    → 1 kΩ resistor → Pi GPIO (the pin passed to this driver)
-    Flyback diode (1N4001) across the motor:
+    Flyback diode (1N4007 as built) across the motor:
         cathode (striped end) → Motor +
         anode                 → Motor −
 
 The flyback diode is critical — a spinning motor generates a voltage
 spike (back-EMF) when de-energised, and without the diode that spike
 can damage the transistor or, in the worst case, the Pi.
+
+Note that `off()` drives the pin low, but `close()` — and process exit,
+and a crash — return it to *input*, which leaves the transistor base
+high-impedance rather than grounded. See `docs/hardware.md` for the
+base-to-emitter pull-down that fixes this in hardware; it is not
+something this driver can solve, because the states that need covering
+are the ones where no Python is running.
 """
 import time
 

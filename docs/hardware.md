@@ -24,11 +24,7 @@ Pin 6  (GND)              DYP-A22 TOP          GND
 Pin 8  (GPIO 14 / TX)     DYP-A22 TOP          RX
 Pin 9  (GND)              MPU6050              GND
 Pin 10 (GPIO 15 / RX)     DYP-A22 TOP          TX
-Pin 11 (GPIO 17)          Vibration motor      FRON T
-Pin 12 (GPIO 18)          Active buzzer        +
 Pin 13 (GPIO 27)          Vibration motor      RIGHT
-Pin 15 (GPIO 22)          Vibration motor      LEFT
-Pin 16 (GPIO 23)          Button               PTT
 Pin 17 (3V3)              DYP-A22 BOTTOM       VCC
 Pin 18 (GPIO 24)          Button               REPEAT / STOP
 Pin 21 (GPIO 9 / SCL4)    QMC5883P compass     SCK   — I2C4, its own bus
@@ -38,9 +34,20 @@ Pin 30 (GND)              DYP-A22 BOTTOM       GND
 Pin 32 (GPIO 12 / TX)     DYP-A22 BOTTOM       RX
 Pin 33 (GPIO 13 / RX)     DYP-A22 BOTTOM       TX
 Pin 34 (GND)              QMC5883P compass     GND
+Pin 36 (GPIO 16)          Vibration motor      FRONT
+Pin 37 (GPIO 26)          Vibration motor      LEFT
+Pin 38 (GPIO 20)          Active buzzer        base (via transistor)
+Pin 40 (GPIO 21)          Button               PTT
 ```
 
-Free GND pins for the shared ground rail: **14, 20, 25, 39**.
+Free GND pins for the shared ground rail: **14, 20, 25, 39**. Pin 39 sits
+inside the feedback cluster at 36-40 and is the natural ground for it.
+
+**Pins 11, 12, 15 and 16 are deliberately empty.** The feedback outputs and
+PTT moved to the 36-40 block on 2026-10-15 — see the vibration-motor section
+for what prompted it. Don't fill 11 or 15 back in without first proving those
+pads drive to 3.3 V, because the fault that emptied them was never isolated
+to the Pi.
 
 **Shared rails.** Both 3.3 V pins (1 and 17) are consumed by the two DYP-A22s,
 but the three buttons and the compass also need 3.3 V. The build therefore has
@@ -168,7 +175,7 @@ its own GPIO:
 Push-to-talk (PTT)          RIGHT on the enclosure
     3.3 V rail  (VCC)
     GND rail    (GND)       pins 20, 25, 34 or 39
-    Pin 16      (OUT)       GPIO 23
+    Pin 40      (OUT)       GPIO 21
 
 Emergency                   FRONT on the enclosure
     3.3 V rail  (VCC)
@@ -292,28 +299,43 @@ python -m indepensense.feedback.tests.manual.button_test 24        # any pin
 The GPIO drives a transistor base, never the motor directly:
 
 ```
-Front (turn ahead)
-    Pin 11      GPIO 17 → 1 kΩ resistor → NPN base
+Front
+    Pin 36      GPIO 16 → 1 kΩ resistor → NPN base
 
-Right (turn right)
+Right
     Pin 13      GPIO 27 → 1 kΩ resistor → NPN base
 
-Left (turn left)
-    Pin 15      GPIO 22 → 1 kΩ resistor → NPN base
+Left
+    Pin 37      GPIO 26 → 1 kΩ resistor → NPN base
 ```
 
-Directional cueing, body-relative as worn. Each motor needs its own NPN
-transistor circuit because the motors draw 60-100 mA each — well above the
-Pi's per-pin GPIO source limit (~16 mA).
+Each motor needs its own NPN transistor circuit because the motors draw
+60-100 mA each — well above the Pi's per-pin GPIO source limit (~16 mA).
+
+**The names are mounting positions, not signals.** All three motors sit in
+the one cane handle and their vibration couples through its shell, so the
+wearer cannot tell which fired — the runtime uses them as a single vibrator
+with two intensity steps (front alone, then all three below
+`OBSTACLE_DANGER_CM`). Don't read the labels as directional cueing; see the
+motor paragraph in `CLAUDE.md` for why navigation stopped using them that
+way.
+
+**Front and left moved on 2026-10-15,** from pins 11 and 15 (GPIO 17 and 22).
+Both channels were dead when driven from the GPIO while the perfboard worked
+when VCC was injected at the base resistor, which exonerates the resistor,
+transistor, diode, motor and grounds and leaves the pin, the jumper wire or
+the crimp. The fault was never narrowed further than that, so **treat pins 11
+and 15 as unproven rather than dead** — if you ever want them back, drive them
+with `pinctrl set 17 op dh` and confirm 3.3 V at the header before soldering.
 
 **Per-motor circuit (repeat 3 times):**
 
 ```
 Motor +     → 5V rail (Pi physical pin 2 or 4)
-Motor −     → NPN transistor collector (2N2222 or 2N3904)
+Motor −     → NPN transistor collector (2N2222A as built)
 NPN emitter → GND rail
-NPN base    → 1 kΩ resistor → Pi GPIO (pin 11 / 13 / 15)
-Flyback diode (1N4001):
+NPN base    → 1 kΩ resistor → Pi GPIO (pin 36 / 13 / 37)
+Flyback diode (1N4007 as built; 1N4001 is equally fine):
     cathode (striped end) → Motor +
     anode                 → Motor −
 ```
@@ -324,6 +346,30 @@ motor stops can otherwise destroy the transistor or the Pi's GPIO.
 Pins configurable via `VIBRATION_FRONT_GPIO`, `VIBRATION_RIGHT_GPIO`,
 and `VIBRATION_LEFT_GPIO` in `indepensense.config`.
 
+**Two known weaknesses in this circuit, neither yet fixed on the board:**
+
+*Base drive is marginal.* 1 kΩ from a 3.3 V pin gives about 2.5 mA of base
+current. The 2N2222A's saturation voltage is specified at a forced β of 10, so
+that guarantees only ~25 mA of collector current, against 60-100 mA running
+and 150-250 mA to break static friction at startup. The transistor therefore
+leaves saturation during spin-up and acts as a current source, which is enough
+for a free-running motor and not enough for a stiff one — unit-to-unit friction
+decides, which is a bad place for a safety output to sit. **330 Ω** gives
+7.3 mA (≈73 mA guaranteed, well inside the Pi's 16 mA per-pin limit, ~22 mA
+across the three motors against a ~50 mA header budget). Confirm by measuring
+collector-to-emitter while energised: saturated is < 0.3 V, and 1.5-2 V means
+starved.
+
+*The base floats when nothing drives it.* gpiozero returns a pin to input on
+close, on crash, and during boot before any software runs, and a
+high-impedance base on an NPN is an antenna — enough leakage to turn the
+transistor partly on. On a motor that is an inaudible few milliamps; on the
+buzzer it is a faint continuous tone, which is how it was found. The fix is a
+**10 kΩ resistor from base to emitter** on every channel, which holds the base
+at 0 V whenever the GPIO is hi-Z and costs only ~80 µA of base current when
+driving. Doing it in hardware rather than software is deliberate: it covers
+the three states the software does not control.
+
 Manual test:
 
 ```bash
@@ -333,13 +379,40 @@ python -m indepensense.feedback.tests.manual.vibration_test
 # 5. Active Buzzer — STATUS: working
 
 ```
-Pin 12   (+)      GPIO 18 — PWM-capable, useful later if swapped for a passive buzzer
-GND rail (−)      pins 20, 25, 34 or 39
+Pin 38            GPIO 20 → 1 kΩ resistor → NPN base
+Buzzer +          supply rail — CONFIRM AGAINST THE UNIT, see below
+Buzzer −          NPN transistor collector
+NPN emitter       GND rail
 ```
 
-Standard hobby active buzzer, driven directly from a GPIO pin. GPIO HIGH
-sounds the tone; LOW is silent. Active buzzers contain their own
-oscillator so no PWM is needed.
+⚠️ **The buzzer's supply rail is unverified in this table.** The transistor
+was documented after the fact, from the parts list rather than from the board,
+and nobody has yet confirmed whether `Buzzer +` taps 3.3 V or the motors' 5 V.
+Most hobby active buzzers accept either. Check it before relying on this
+section, and delete this warning once you have.
+
+Standard hobby active buzzer. GPIO HIGH sounds the tone; LOW is silent.
+Active buzzers contain their own oscillator so no PWM is needed.
+
+**It is driven through a transistor, not straight from the pin.** This
+section and `config.py` both said direct GPIO drive until 2026-10-15; the
+assembled unit has always had a fourth 2N2222A alongside the three motor
+channels. Same circuit as the motors, same two weaknesses — read the base-drive
+and floating-base paragraphs in the vibration-motor section above, because the
+floating base is **more** consequential here: a few milliamps of leakage is
+silent on a motor and audible on a buzzer, which is what exposed it.
+
+**Moved from pin 12 (GPIO 18) on 2026-10-15.** GPIO 18 is also PCM_CLK and
+PWM0, so an audio overlay claiming that pin was a live hypothesis for the
+faint tone and the move retires it. Note that pins 35-40 — GPIO 19, 20, 21 —
+are the rest of the same I2S block (PCM_FS, PCM_DIN, PCM_DOUT), so this does
+not escape the group; it was verified clear with `pinctrl get 18,19,20,21`
+before the move. If a DAC overlay is ever added to `config.txt`, every one of
+these pins is at risk and the buzzer wants GPIO 10 or 11 instead.
+
+Moving off GPIO 18 also spends the project's last PWM-capable pin on a plain
+digital output. **GPIO 19 (pin 35) is now the only one left** — keep it free
+if a passive buzzer or true motor amplitude control is still wanted.
 
 **It sounds for emergencies and nothing else** — the SOS button and a
 detected fall, both through `App._play_emergency_feedback`. Obstacle
@@ -358,17 +431,17 @@ nothing by its presence. Reserving it is what makes it legible. See
 
 Pin configurable via `BUZZER_GPIO` in `indepensense.config`.
 
-Current draw caveat: most hobby active buzzers pull 15-25 mA at 3.3 V,
-which is at the edge of the Pi's per-pin GPIO source limit (~16 mA). If
-`vcgencmd get_throttled` shows non-zero after adding the buzzer, add an
-NPN transistor between the GPIO and the buzzer's + pin (same pattern as
-the vibration motors above).
+Current draw: most hobby active buzzers pull 15-25 mA, which would sit right
+at the Pi's ~16 mA per-pin source limit if the buzzer were driven directly.
+The transistor is what removes that concern — the pin now sources only base
+current. This paragraph used to end by advising a transistor *if*
+`vcgencmd get_throttled` went non-zero; the unit already has one.
 
 Manual test:
 
 ```bash
-python -m indepensense.feedback.tests.manual.buzzer_test              # default GPIO 18
-python -m indepensense.feedback.tests.manual.buzzer_test 21           # any pin
+python -m indepensense.feedback.tests.manual.buzzer_test              # default GPIO 20
+python -m indepensense.feedback.tests.manual.buzzer_test 10           # any pin
 ```
 
 # 6. MPU6050 IMU — STATUS: working

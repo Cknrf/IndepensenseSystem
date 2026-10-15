@@ -26,7 +26,7 @@ These are inconsistencies in `G5_O4AB_IndepenSense.pdf` that the slides cannot p
 |---|---|---|---|
 | 1 | Title page | The paper's title is *"Development of an IoT-Based **Wearable Navigation and Safety Assistance System** with Computer Vision and Guardian Monitoring"*. The defense title is *"Design and Implementation of an IoT-Based **Smart Cane** … **Remote** Guardian Monitoring"*. | Use one title on both. The panel checks the slide title against the approved title. |
 | 2 | Ch. 2 vs build | The paper says GPS comes from a **u-blox NEO-F10N**. The build reads GNSS from the **SIM7600G-H** (`sensors/gps.py`, NMEA `$GN` sentences). The BOM still lists the u-blox at ₱219. | State that the GNSS comes from the SIM7600G-H. Drop the u-blox, or mark it as an unused or backup part. |
-| 3 | Ch. 2 | The vibration motor count varies: "**Four** vibration motors" (Methods), **1** (BOM and power table), and **3** in the build (GPIO 17/27/22). | Use **3 motors** everywhere. |
+| 3 | Ch. 2 | The vibration motor count varies: "**Four** vibration motors" (Methods), **1** (BOM and power table), and **3** in the build (GPIO 16/27/26). | Use **3 motors** everywhere. |
 | 4 | Ch. 2 vs build | The paper says **YOLOv8n**. The build loads **YOLOv8m, Open Images V7 weights** (`yolov8m-oiv7.pt`, confidence 0.3). | Name the model the device actually runs. This also strengthens the quantization recommendation. |
 | 5 | Ch. 2 vs build | The paper says images go to a **cloud LLM over the SIM7600 for scene description**. In the build, vision runs **entirely on the device** (YOLO plus Tesseract OCR). The cloud LLM (Mistral) does **intent classification and open questions**, not vision. | Rewrite the hybrid edge–cloud paragraphs to match. |
 | 6 | Ch. 2 | The paper says the camera wakes "when a fall is detected". The build activates the camera **only on a voice intent**. | Remove the fall trigger. |
@@ -365,9 +365,9 @@ These are inconsistencies in `G5_O4AB_IndepenSense.pdf` that the slides cannot p
 **[TEMPLATE LAYOUT MAPPING]:** 2x2 Grid: Haptic · Buzzer · Buttons · Audio.
 
 **[LEFT COLUMN / CONTENT FIELD 1]:**
-- **Haptic: 3× flat vibration motors** ⚑ on **GPIO 17 / 27 / 22** ⚑, each switched by a **2N2222 NPN** with a **1N4007 flyback diode**
+- **Haptic: 3× flat vibration motors** ⚑ on **GPIO 16 / 27 / 26** ⚑, each switched by a **2N2222A NPN** with a **1N4007 flyback diode**
   - Front motor alone = **warning**, all three = **danger (< 50 cm)** ⚑
-- **Buzzer: piezo tone buzzer** on **GPIO 18** ⚑
+- **Buzzer: piezo tone buzzer** on **GPIO 20** ⚑, switched by a **fourth 2N2222A** on the same pattern
   - **Reserved for emergencies only** ⚑, the one output a **bystander** can perceive
 
 **[RIGHT COLUMN / CONTENT FIELD 2]:**

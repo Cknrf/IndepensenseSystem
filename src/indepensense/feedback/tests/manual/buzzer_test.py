@@ -3,7 +3,8 @@
 Run on a Raspberry Pi 5 with an active buzzer wired to `BUZZER_GPIO`.
 
 Wiring:
-    buzzer + → Pi physical pin 12 (GPIO 18)   — configurable via --pin
+    GPIO → 1 kΩ → NPN base; Pi physical pin 38 (GPIO 20), see
+    docs/hardware.md for the rest of the circuit — configurable via --pin
     buzzer - → any Pi GND (physical pin 6, 9, 14, 20, 25, 30, 34, or 39)
 
 Run from repo root:

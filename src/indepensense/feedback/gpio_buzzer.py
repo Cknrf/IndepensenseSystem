@@ -4,16 +4,19 @@ Wraps `gpiozero.Buzzer`. An active buzzer contains its own oscillator, so
 driving the pin HIGH produces a tone at the buzzer's factory-tuned
 frequency (usually ~2-4 kHz). No PWM required.
 
-Wiring:
-    buzzer + → Pi GPIO pin (default GPIO 18, physical pin 12)
-    buzzer - → any Pi GND
+Wiring (default GPIO 20, physical pin 38):
+    Pi GPIO     → 1 kΩ resistor → NPN base
+    buzzer +    → supply rail
+    buzzer -    → NPN transistor collector
+    NPN emitter → GND
 
-Current draw considerations: most hobby active buzzers pull 15-25 mA at
-3.3 V, which is at the edge of what a single Pi GPIO can safely source
-(~16 mA per pin). Most buzzers work directly from GPIO in practice; if
-the Pi shows undervoltage warnings (`vcgencmd get_throttled` non-zero)
-after adding the buzzer, drive it through an NPN transistor instead. The
-Buzzer protocol is unchanged either way — only the wiring differs.
+The buzzer is driven through a transistor, the same as the vibration
+motors. This docstring described direct GPIO drive until 2026-10-15,
+which was wrong about the assembled unit: a hobby active buzzer pulls
+15-25 mA against the Pi's ~16 mA per-pin limit, so the transistor was
+always the right call and the build had one. See `docs/hardware.md` for
+the circuit and the two weaknesses it shares with the motor channels.
+The Buzzer protocol is unaffected either way; only the wiring differs.
 """
 import time
 

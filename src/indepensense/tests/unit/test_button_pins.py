@@ -53,14 +53,22 @@ from indepensense.config import (
 # Reproduced from the 40-pin diagram in `docs/hardware.md`, which is in
 # turn the Raspberry Pi's own fixed pinout. Not exhaustive: the pins we
 # touch are the pins worth guarding.
+#
+# GPIO 17, 18, 22 and 23 stay in the table after the 2026-10-15 move off
+# them. They cost nothing, and the mapping is what a future edit back onto
+# a vacated pin would be checked against.
 _BCM_TO_PHYSICAL_PIN = {
+    16: 36,
     17: 11,
     18: 12,
-    27: 13,
+    20: 38,
+    21: 40,
     22: 15,
     23: 16,
     24: 18,
     25: 22,
+    26: 37,
+    27: 13,
 }
 
 # (constant, expected GPIO, physical pin, role) exactly as
@@ -73,7 +81,7 @@ _BCM_TO_PHYSICAL_PIN = {
 # Verified against the assembled unit, which is the only authority that
 # settles it.
 _BUTTONS = [
-    (PTT_BUTTON_GPIO, 23, 16, "PTT"),
+    (PTT_BUTTON_GPIO, 21, 40, "PTT"),
     (EMERGENCY_BUTTON_GPIO, 25, 22, "Emergency"),
     (REPEAT_BUTTON_GPIO, 24, 18, "Repeat"),
 ]
