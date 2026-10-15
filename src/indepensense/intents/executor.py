@@ -568,10 +568,11 @@ class IntentExecutor:
         return messages.get(
             "nav.started",
             self._lang,
+            battery=self._battery_notice(),
             destination=destination.name,
             distance=messages.speak_distance(route.distance_m, self._lang),
             first_action=_first_action_description(route, self._lang),
-        )
+        ).strip()      # `{battery}` is empty when there is nothing to say
 
     def _handle_navigation_stop(self, result: IntentResult) -> str:
         """Stop tracking, if anything is being tracked.
@@ -817,6 +818,35 @@ class IntentExecutor:
             return self._describe_cellular_signal()
 
         return messages.get("generic.unknown_status_field", self._lang, field=field)
+
+    def _battery_notice(self) -> str:
+        """The charge level as it opens a route announcement, or "".
+
+        Awareness rather than an answer: the user asked to go somewhere,
+        not how much battery is left, and the number is here because
+        setting off on a walk is when they would want to have checked.
+
+        Silent whenever there is nothing trustworthy to say — no reader
+        wired, or the I²C read failed. `_describe_battery` speaks those
+        cases because someone asked it a direct question and deserves a
+        reply; prefixing a route with "I couldn't read the battery
+        status" would be an apology for something the user did not ask
+        about, in front of the thing they did. The direct question is
+        still there, and still reports the failure.
+
+        Same two messages as the startup announcement, so the device
+        has one way of saying this rather than two.
+        """
+        if self._battery is None:
+            return ""
+        try:
+            reading = self._battery.read()
+        except Exception:
+            return ""
+        if reading is None:
+            return ""
+        key = "battery.charging" if reading.is_charging else "battery.level"
+        return messages.get(key, self._lang, percent=reading.percentage)
 
     def _describe_battery(self) -> str:
         """Build a spoken description of current battery state.

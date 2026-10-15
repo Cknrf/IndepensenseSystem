@@ -281,9 +281,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "{label} is saved at latitude {lat}, longitude {lon}.",
         "tl": "Ang {label} ay naka-save sa latitude {lat}, longitude {lon}.",
     },
+    # `{battery}` is the charge level, spoken before anything else or left
+    # empty — see `IntentExecutor._battery_notice`. Setting off is the
+    # moment the number matters: the user is about to walk somewhere on
+    # it and cannot glance at a gauge. It opens the sentence rather than
+    # closing it because by the end of this message they are already
+    # being told which way to turn, and a percentage arriving on top of
+    # that is a number landing while they are acting on a different one.
+    #
+    # A slot rather than a second utterance so the whole announcement is
+    # one synthesis: both halves are templated, so neither replays from
+    # a clip, and two renders would cost two round trips to the Tagalog
+    # voice instead of one. The empty case leaves a leading space, which
+    # the caller strips.
     "nav.started": {
-        "en": "Navigating to {destination}. Total distance {distance}. {first_action}",
-        "tl": "Papunta na tayo sa {destination}. Ang kabuuang distansya ay {distance}. {first_action}",
+        "en": "{battery} Navigating to {destination}. Total distance {distance}. {first_action}",
+        "tl": "{battery} Papunta na tayo sa {destination}. Ang kabuuang distansya ay {distance}. {first_action}",
     },
     "nav.none_active": {
         "en": "You don't have an active navigation.",

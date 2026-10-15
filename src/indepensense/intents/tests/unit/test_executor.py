@@ -1561,13 +1561,18 @@ def test_locating_without_a_label_asks_again(places):
 # spoken again in the meantime.
 
 class _BatteryStub:
-    def __init__(self, time_to_empty_min: int, percentage: int = 42):
+    def __init__(
+        self,
+        time_to_empty_min: int,
+        percentage: int = 42,
+        charging_state: str = "discharging",
+    ):
         self._reading = BatteryReading(
             voltage_mv=13928,
-            current_ma=-377,
+            current_ma=600 if charging_state == "charging" else -377,
             percentage=percentage,
             remaining_mah=1200,
-            charging_state="discharging",
+            charging_state=charging_state,
             cell_voltages_mv=(3455, 3530, 3495, 3447),
             time_to_empty_min=time_to_empty_min,
             time_to_full_min=0,
@@ -1612,6 +1617,74 @@ def test_the_percentage_is_still_reported():
     answer = _status(150)
 
     assert answer == messages.get("battery.level", "en", percent=42)
+
+
+# --- the charge level opens a route announcement -----------------------------
+#
+# Setting off is the moment the number matters — the user is about to
+# walk somewhere on this battery and cannot glance at a gauge — so the
+# route announcement leads with it. Silent whenever there is nothing
+# trustworthy to say: this is awareness the user did not ask for, and an
+# apology in front of the route they did ask for is worse than nothing.
+
+def _navigating(battery=None) -> str:
+    executor = IntentExecutor(
+        router=MockRouter(),
+        geocoder=MockGeocoder(),
+        gps=_StaticGPS(),
+        monitor=NavigationMonitor(),
+        battery=battery,
+    )
+    return executor.execute(IntentResult(
+        Intent.NAVIGATION_START, {"location": "Jollibee", "nearest": False}
+    ))
+
+
+def test_navigation_start_opens_with_the_battery_level():
+    response = _navigating(_BatteryStub(150, percentage=42))
+
+    assert response.startswith(messages.get("battery.level", "en", percent=42))
+    assert "Navigating" in response
+    assert "Jollibee" in response
+
+
+def test_navigation_start_says_so_when_the_pack_is_charging():
+    """The same distinction the startup announcement makes: 42 percent
+    on the way up is a different decision from 42 percent on the way
+    down."""
+    response = _navigating(
+        _BatteryStub(0, percentage=42, charging_state="charging")
+    )
+
+    assert response.startswith(messages.get("battery.charging", "en", percent=42))
+
+
+def test_navigation_start_without_a_battery_reader_adds_nothing():
+    """No reader is the development case and the whole mock runtime. It
+    must leave neither a gap nor a stray space in front of the route."""
+    assert _navigating().startswith("Navigating")
+
+
+def test_navigation_start_stays_silent_when_the_battery_read_fails():
+    class _Failing:
+        def read(self):
+            raise OSError("i2c read failed")
+
+        def close(self):
+            pass
+
+    assert _navigating(_Failing()).startswith("Navigating")
+
+
+def test_navigation_start_stays_silent_on_a_transient_none_reading():
+    class _Transient:
+        def read(self):
+            return None
+
+        def close(self):
+            pass
+
+    assert _navigating(_Transient()).startswith("Navigating")
 
 
 def test_the_answer_does_not_depend_on_the_estimate():
