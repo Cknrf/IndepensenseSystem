@@ -26,7 +26,6 @@ Pin 9  (GND)              MPU6050              GND
 Pin 10 (GPIO 15 / RX)     DYP-A22 TOP          TX
 Pin 13 (GPIO 27)          Vibration motor      RIGHT
 Pin 17 (3V3)              DYP-A22 BOTTOM       VCC
-Pin 18 (GPIO 24)          Button               REPEAT / STOP
 Pin 21 (GPIO 9 / SCL4)    QMC5883P compass     SCK   — I2C4, its own bus
 Pin 22 (GPIO 25)          Button               EMERGENCY
 Pin 24 (GPIO 8 / SDA4)    QMC5883P compass     SDA   — I2C4, its own bus
@@ -34,6 +33,7 @@ Pin 30 (GND)              DYP-A22 BOTTOM       GND
 Pin 32 (GPIO 12 / TX)     DYP-A22 BOTTOM       RX
 Pin 33 (GPIO 13 / RX)     DYP-A22 BOTTOM       TX
 Pin 34 (GND)              QMC5883P compass     GND
+Pin 35 (GPIO 19)          Button               REPEAT / STOP
 Pin 36 (GPIO 16)          Vibration motor      FRONT
 Pin 37 (GPIO 26)          Vibration motor      LEFT
 Pin 38 (GPIO 20)          Active buzzer        base (via transistor)
@@ -43,11 +43,13 @@ Pin 40 (GPIO 21)          Button               PTT
 Free GND pins for the shared ground rail: **14, 20, 25, 39**. Pin 39 sits
 inside the feedback cluster at 36-40 and is the natural ground for it.
 
-**Pins 11, 12, 15 and 16 are deliberately empty.** The feedback outputs and
-PTT moved to the 36-40 block on 2026-10-15 — see the vibration-motor section
-for what prompted it. Don't fill 11 or 15 back in without first proving those
-pads drive to 3.3 V, because the fault that emptied them was never isolated
-to the Pi.
+**Pins 11, 12, 15, 16 and 18 are deliberately empty.** The feedback outputs
+and both of the moved buttons went to the 35-40 block on 2026-10-15 — see the
+vibration-motor section for what prompted it. Pins 12, 16 and 18 are proven
+good (the buzzer, PTT and repeat all worked on them) and are free to reuse.
+**Pins 11 and 15 are not proven** — don't fill them back in without first
+driving them with `pinctrl` and confirming 3.3 V at the header, because the
+fault that emptied them was never isolated to the Pi.
 
 **Shared rails.** Both 3.3 V pins (1 and 17) are consumed by the two DYP-A22s,
 but the three buttons and the compass also need 3.3 V. The build therefore has
@@ -185,13 +187,16 @@ Emergency                   FRONT on the enclosure
 Repeat / stop speech        LEFT on the enclosure
     3.3 V rail  (VCC)
     GND rail    (GND)
-    Pin 18      (OUT)       GPIO 24
+    Pin 35      (OUT)       GPIO 19
 ```
 
-**Emergency and repeat do not run in enclosure order** — the front button
-is on the *later* pin. Nothing is wrong with that; it is simply how the
-harness was routed, and it is worth stating because it looks like a
-transcription error every time somebody reads this table fresh.
+**The pin numbers tell you nothing about enclosure position.** PTT is on
+pin 40, emergency on 22, repeat on 35, and no reading of that order says
+which button sits where. Until 2026-10-15 the warning here was narrower —
+emergency and repeat ran "backwards" across pins 18 and 22, which looked
+enough like a transcription error that an audit tried to correct it. The
+move scattered them further and the general rule is what survives: read the
+position from this table, never from the pin order.
 
 This entry was wrong until 2026-10-07, listing emergency on pin 18 and
 repeat on pin 22. Commit 88aa4d5 had already corrected `config.py` to the
@@ -291,7 +296,7 @@ Manual test:
 
 ```bash
 python -m indepensense.feedback.tests.manual.button_test           # PTT pin
-python -m indepensense.feedback.tests.manual.button_test 24        # any pin
+python -m indepensense.feedback.tests.manual.button_test 19        # any pin
 ```
 
 # 4. Vibration Motors (3x) — STATUS: wired

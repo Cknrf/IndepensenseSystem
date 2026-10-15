@@ -54,13 +54,14 @@ from indepensense.config import (
 # turn the Raspberry Pi's own fixed pinout. Not exhaustive: the pins we
 # touch are the pins worth guarding.
 #
-# GPIO 17, 18, 22 and 23 stay in the table after the 2026-10-15 move off
-# them. They cost nothing, and the mapping is what a future edit back onto
-# a vacated pin would be checked against.
+# GPIO 17, 18, 22, 23 and 24 stay in the table after the 2026-10-15 move
+# off them. They cost nothing, and the mapping is what a future edit back
+# onto a vacated pin would be checked against.
 _BCM_TO_PHYSICAL_PIN = {
     16: 36,
     17: 11,
     18: 12,
+    19: 35,
     20: 38,
     21: 40,
     22: 15,
@@ -75,15 +76,18 @@ _BCM_TO_PHYSICAL_PIN = {
 # `docs/hardware.md` § "3. Push Buttons" records it. Change this table and
 # that table together, never one alone.
 #
-# Emergency and repeat do not run in enclosure order — the FRONT button is
-# on the later pin, 22, and the LEFT button on pin 18. That reads like a
-# transcription error and is not one; it is how the harness was routed.
+# The three buttons follow no pin order at all — PTT on 40, emergency on
+# 22, repeat on 35 — and no ordering should ever be read into them. That
+# used to be a narrower warning: emergency and repeat ran "backwards",
+# front on the later pin, and it looked enough like a transcription error
+# that an audit tried to correct it. The 2026-10-15 move scattered them
+# further and the general form of the lesson is the one that survives.
 # Verified against the assembled unit, which is the only authority that
 # settles it.
 _BUTTONS = [
     (PTT_BUTTON_GPIO, 21, 40, "PTT"),
     (EMERGENCY_BUTTON_GPIO, 25, 22, "Emergency"),
-    (REPEAT_BUTTON_GPIO, 24, 18, "Repeat"),
+    (REPEAT_BUTTON_GPIO, 19, 35, "Repeat"),
 ]
 
 

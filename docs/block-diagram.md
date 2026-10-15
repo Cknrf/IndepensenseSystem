@@ -106,7 +106,7 @@ flowchart LR
     IMU -->|"I2C1 · 0x68 · 100 Hz"| PI
     MAG -->|"I2C4 · 0x2C"| PI
     CAM -->|"CSI ribbon · CAM0"| PI
-    BTN -->|"GPIO 21 / 24 / 25"| PI
+    BTN -->|"GPIO 21 / 19 / 25"| PI
     MIC -->|"USB Audio"| PI
 
     PI -->|"GPIO 16 / 27 / 26"| DRV1

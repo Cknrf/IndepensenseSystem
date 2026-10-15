@@ -1187,9 +1187,12 @@ VOLUME_STATE_PATH = PROJECT_ROOT / "var" / "volume"
 # As worn, user facing forward: PTT is on the RIGHT, emergency on the
 # FRONT, repeat/stop on the LEFT.
 #
-# **The front button is on GPIO 25 and the left on GPIO 24, which is the
-# reverse of what the enclosure drawing would suggest.** That is wiring,
-# not a typo, and it has caught us once already in each direction:
+# **The GPIO numbers carry no information about enclosure position** —
+# PTT is on 21, emergency on 25, repeat on 19, and no reading of that
+# order tells you which button is where. Until 2026-10-15 the pair that
+# looked wrong was emergency on the later pin of 18/22; that specific
+# oddity is gone and the general rule replaced it, because the specific
+# one caught us once in each direction:
 #
 #   * Commit 88aa4d5, "temporary change the button number", set these to
 #     the values below after the assembled unit turned out to be wired
@@ -1202,12 +1205,12 @@ VOLUME_STATE_PATH = PROJECT_ROOT / "var" / "volume"
 #
 # So the pin comments below are load-bearing, not decoration — they were
 # false for five days and that is what made the swap look like a mistake.
-# GPIO 24 is physical pin 18; GPIO 25 is physical pin 22. The test
-# asserts both against the Pi 5 header so they cannot quietly disagree
-# again.
+# GPIO 21 is physical pin 40; GPIO 25 is physical pin 22; GPIO 19 is
+# physical pin 35. The test asserts all three against the Pi 5 header so
+# they cannot quietly disagree again.
 PTT_BUTTON_GPIO = 21         # physical pin 40 — push-to-talk (click to start, click to stop)
 EMERGENCY_BUTTON_GPIO = 25   # physical pin 22, FRONT button — fires emergency.trigger
-REPEAT_BUTTON_GPIO = 24      # physical pin 18, LEFT button — repeats, or stops speech
+REPEAT_BUTTON_GPIO = 19      # physical pin 35, LEFT button — repeats, or stops speech
 
 # Active buzzer — driven through an NPN transistor like the motors, not
 # straight from the pin. Both this file and docs/hardware.md described it
