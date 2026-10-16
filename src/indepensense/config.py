@@ -80,8 +80,12 @@ _load_env_file(ENV_FILE)
 #           cane can't sweep the air above them.
 # - BOTTOM: foot-level obstacles (curbs, walls, planters). Supplements
 #           what the cane already detects by touch.
-DYP_A22_TOP_PORT = "/dev/ttyAMA0"
-DYP_A22_BOTTOM_PORT = "/dev/ttyAMA4"
+#
+# The two sensors were swapped on the header on 2026-10-16, so TOP is now
+# UART4 and BOTTOM is UART0 — the mount position is what the runtime reasons
+# about, so the port follows the sensor rather than the other way round.
+DYP_A22_TOP_PORT = "/dev/ttyAMA4"
+DYP_A22_BOTTOM_PORT = "/dev/ttyAMA0"
 DYP_A22_BAUDRATE = 115200
 
 # Obstacle detection threshold. Both sensors use continuous distance-to-frequency

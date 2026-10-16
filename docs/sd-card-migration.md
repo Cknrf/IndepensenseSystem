@@ -1021,8 +1021,8 @@ What was on the old card, for comparison after the swap.
 | `i2c-1` | `0x68` | MPU6050 IMU (`config.MPU6050_ADDRESS`) |
 | `i2c-1` | `0x2d` | Waveshare UPS HAT (E) (`config.UPS_HAT_I2C_ADDRESS`) |
 | `i2c-4` (GPIO 8/9, software) | `0x2c` | magnetometer (`config.MAG_ADDRESS`) |
-| `/dev/ttyAMA0` | — | DYP-A22 ultrasonic, top |
-| `/dev/ttyAMA4` | — | DYP-A22 ultrasonic, bottom |
+| `/dev/ttyAMA0` | — | DYP-A22 ultrasonic, bottom |
+| `/dev/ttyAMA4` | — | DYP-A22 ultrasonic, top |
 | USB `1e0e:9001` | `ttyUSB0-4`, `cdc-wdm0`, `wwan0` | SIM7600G-H (GPS on `ttyUSB1`, AT on `ttyUSB2/3`) |
 | USB `0020:0b21` | card 0 | "EarPods" USB audio — playback **and** capture |
 | CSI | — | `imx708_wide` (Camera Module 3 Wide, 4608×2592) |

@@ -15,23 +15,23 @@ Every occupied pin on the 40-pin header, in physical pin order. Find your pin
 here, then read that component's section.
 
 ```
-Pin 1  (3V3)              DYP-A22 TOP          VCC   — also feeds the 3.3 V rail
+Pin 1  (3V3)              DYP-A22 BOTTOM       VCC   — also feeds the 3.3 V rail
 Pin 2  (5V)               MPU6050              VCC   — and the motors' 5 V rail
 Pin 3  (GPIO 2 / SDA)     shared I2C1          SDA   — MPU6050, UPS HAT
 Pin 4  (5V)               Perfboard
 Pin 5  (GPIO 3 / SCL)     shared I2C1          SCL   — MPU6050, UPS HAT
-Pin 6  (GND)              DYP-A22 TOP          GND
-Pin 8  (GPIO 14 / TX)     DYP-A22 TOP          RX
+Pin 6  (GND)              DYP-A22 BOTTOM       GND
+Pin 8  (GPIO 14 / TX)     DYP-A22 BOTTOM       RX
 Pin 9  (GND)              MPU6050              GND
-Pin 10 (GPIO 15 / RX)     DYP-A22 TOP          TX
+Pin 10 (GPIO 15 / RX)     DYP-A22 BOTTOM       TX
 Pin 13 (GPIO 27)          Vibration motor      RIGHT
-Pin 17 (3V3)              DYP-A22 BOTTOM       VCC
+Pin 17 (3V3)              DYP-A22 TOP          VCC
 Pin 21 (GPIO 9 / SCL4)    QMC5883P compass     SCK   — I2C4, its own bus
 Pin 22 (GPIO 25)          Button               EMERGENCY
 Pin 24 (GPIO 8 / SDA4)    QMC5883P compass     SDA   — I2C4, its own bus
-Pin 30 (GND)              DYP-A22 BOTTOM       GND
-Pin 32 (GPIO 12 / TX)     DYP-A22 BOTTOM       RX
-Pin 33 (GPIO 13 / RX)     DYP-A22 BOTTOM       TX
+Pin 30 (GND)              DYP-A22 TOP          GND
+Pin 32 (GPIO 12 / TX)     DYP-A22 TOP          RX
+Pin 33 (GPIO 13 / RX)     DYP-A22 TOP          TX
 Pin 34 (GND)              QMC5883P compass     GND
 Pin 35 (GPIO 19)          Button               REPEAT / STOP
 Pin 36 (GPIO 16)          Vibration motor      FRONT
@@ -68,7 +68,7 @@ destroyed by copying the MPU6050's Pin 2.
 ## Raspberry Pi 5 — 40-pin GPIO header
 
 ```
-       3V3  (1) (2)  5V
+       3V3  (1) (2)  5V 
      GPIO2  (3) (4)  5V
      GPIO3  (5) (6)  GND
      GPIO4  (7) (8)  GPIO14 / UART0 TX
@@ -118,7 +118,14 @@ out why it cannot be.
 
 ---
 
-# 1. DYP-A22 Ultrasonic — TOP sensor — STATUS: working
+**The two sensors were swapped on the header on 2026-10-16.** The sensor
+mounted high on the cane now runs on UART4 (pins 17/30/32/33) and the low one
+on UART0 (pins 1/6/8/10) — the reverse of how they were wired until then. The
+sections below are still in pin order, so section 1 is now the BOTTOM sensor.
+`config.py` was swapped to match: the runtime reasons about mount position, so
+`DYP_A22_TOP_PORT` follows the sensor rather than keeping its old port.
+
+# 1. DYP-A22 Ultrasonic — BOTTOM sensor — STATUS: working
 
 UART port: `/dev/ttyAMA0` (UART0, default Pi UART).
 Baud: 115200.
@@ -133,14 +140,13 @@ Pin 10 (TX)       sensor TX → Pi RX
 RX and TX cross over: the label is the *sensor's* pin, so the sensor's RX goes
 to the Pi's TX and vice versa.
 
-Cane-mounted, forward-facing, positioned high on the cane to detect
-head-level obstacles (branches, low signage, awnings). This sensor
-provides the wearable's unique value — the user's cane already sweeps
-low obstacles by touch, but nothing else catches head-level danger.
+Cane-mounted, forward-facing, positioned low on the cane to detect
+foot-level obstacles (curbs, planters, walls). Supplements what the
+cane already senses by touch — advance warning at ~1 m.
 
-Port configurable via `DYP_A22_TOP_PORT` in `indepensense.config`.
+Port configurable via `DYP_A22_BOTTOM_PORT` in `indepensense.config`.
 
-# 2. DYP-A22 Ultrasonic — BOTTOM sensor — STATUS: working
+# 2. DYP-A22 Ultrasonic — TOP sensor — STATUS: working
 
 UART port: `/dev/ttyAMA4` (UART4).
 Baud: 115200.
@@ -152,14 +158,15 @@ Pin 32 (RX)       sensor RX ← Pi TX
 Pin 33 (TX)       sensor TX → Pi RX
 ```
 
-Cane-mounted, forward-facing, positioned low on the cane to detect
-foot-level obstacles (curbs, planters, walls). Supplements what the
-cane already senses by touch — advance warning at ~1 m.
+Cane-mounted, forward-facing, positioned high on the cane to detect
+head-level obstacles (branches, low signage, awnings). This sensor
+provides the wearable's unique value — the user's cane already sweeps
+low obstacles by touch, but nothing else catches head-level danger.
 
 UART4 does not exist until `dtoverlay=uart4` is in
 `/boot/firmware/config.txt` — see the one-time setup section at the end.
 
-Port configurable via `DYP_A22_BOTTOM_PORT` in `indepensense.config`.
+Port configurable via `DYP_A22_TOP_PORT` in `indepensense.config`.
 
 Manual tests:
 
@@ -835,7 +842,7 @@ sudo usermod -aG dialout $USER
 
 ## `/boot/firmware/config.txt` additions
 
-For the secondary UART (DYP-A22 BOTTOM) and the compass's own I²C bus:
+For the secondary UART (DYP-A22 TOP) and the compass's own I²C bus:
 
 ```
 dtoverlay=uart4
